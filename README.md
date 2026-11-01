@@ -141,21 +141,23 @@ Two independent settings decide how a deploy runs:
 
 ## Commands
 
-| Task                 | Command                                            |
-| -------------------- | -------------------------------------------------- |
-| Check readiness      | `compoza check <folder> --json`                    |
-| Preview / deploy     | `compoza deploy <folder> [--dry-run]`              |
-| Inspect services     | `compoza status <folder>`                          |
-| Follow logs          | `compoza logs <folder> --service <name> --follow`  |
-| Stop / resume        | `compoza stop <folder>` / `compoza start <folder>` |
-| Reuse an older image | `compoza deploy <folder> --tag <image-tag>`        |
-| Remove a stack       | `compoza delete <folder> [--volumes]`              |
-| Mirror content       | `compoza publish <folder> <section> <source>`      |
-| Set up host ingress  | `compoza setup-proxy <host> [--dry-run]`           |
+| Task                 | Command                                                                       |
+| -------------------- | ----------------------------------------------------------------------------- |
+| Check readiness      | `compoza check <folder> --json`                                               |
+| Preview / deploy     | `compoza deploy <folder> [--dry-run]`                                         |
+| Inspect services     | `compoza status <folder>`                                                     |
+| Follow logs          | `compoza logs <folder> --service <name> --follow`                             |
+| Stop / resume        | `compoza stop <folder>` / `compoza start <folder>`                            |
+| Reuse an older image | `compoza deploy <folder> --tag <image-tag>`                                   |
+| Remove a stack       | `compoza delete <folder> [--volumes]`                                         |
+| Mirror content       | `compoza publish <folder> <section> <source>`                                 |
+| Set up host ingress  | `compoza setup-proxy <host> [--ingress caddy\|cloudflare-tunnel] [--dry-run]` |
 
 Use `compoza <command> --help` for all flags. `stop`, `start`, `delete` and `publish` also accept `--dry-run`.
 
 `<folder>` holds `deploy.yaml` (or is the file itself) and defaults to the working directory, except for `publish`, which requires it. Every app command accepts `--destination <name>`. `delete` is also available as `down`.
+
+A host can configure both Caddy and Cloudflare Tunnel. Each app selects one; use `setup-proxy <host> --ingress caddy` or `--ingress cloudflare-tunnel` to set up one provider on a shared host. See the [combined host example](docs/examples.md#one-host-with-caddy-and-cloudflare-tunnel).
 
 ## Operational notes
 

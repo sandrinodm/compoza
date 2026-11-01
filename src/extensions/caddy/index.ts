@@ -13,9 +13,9 @@ import { checkScript, routeScript, setupScript, siteFile, unrouteScript } from '
  * Requires host settings compatible with the selected Caddy extension before creating mutation scripts.
  */
 function caddyProxy(host: HostConfig): ProxyConfig {
-  const proxy = ingressConfigOf(host);
-  if (proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy-sites')) {
-    throw new Error('caddy-sites requires a host proxy configured for the Caddy ingress extension');
+  const proxy = ingressConfigOf(host, 'caddy');
+  if (proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy')) {
+    throw new Error('caddy requires a host proxy configured for the Caddy ingress extension');
   }
 
   return proxy;
@@ -26,7 +26,7 @@ function caddyProxy(host: HostConfig): ProxyConfig {
  */
 function settings(app: App) {
   const ingress = ingressOf(app.config);
-  if (ingress?.mode !== 'caddy-sites') {
+  if (ingress?.mode !== 'caddy') {
     throw new Error('Invalid Caddy ingress selection');
   }
 
@@ -40,7 +40,7 @@ function settings(app: App) {
  * lifecycle metadata.
  */
 export const caddyIngress: IngressExtension = {
-  id: 'caddy-sites',
+  id: 'caddy',
   plan: (app, host) => {
     const proxy = caddyProxy(host);
     const ingress = settings(app);
@@ -71,14 +71,14 @@ export const caddyIngress: IngressExtension = {
     };
   },
   domain: (app, host) => {
-    const proxy = ingressConfigOf(host);
-    return proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy-sites')
+    const proxy = ingressConfigOf(host, 'caddy');
+    return proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy')
       ? undefined
       : settings(app).domain;
   },
   probe: (app, host) => {
-    const proxy = ingressConfigOf(host);
-    return proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy-sites')
+    const proxy = ingressConfigOf(host, 'caddy');
+    return proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy')
       ? undefined
       : checkScript({ proxy, name: projectNameOf(app) });
   },

@@ -18,7 +18,7 @@ const app: App = {
     host: 'atlas',
     targets: [],
     composeFiles: ['compose.yaml'],
-    ingress: { mode: 'caddy-sites', domain: 'demo.example.com', upstream: 'demo:80', healthPath: '/ready' },
+    ingress: { mode: 'caddy', domain: 'demo.example.com', upstream: 'demo:80', healthPath: '/ready' },
   },
 };
 
@@ -54,7 +54,7 @@ describe('bundled extensions', () => {
   });
 
   it('keeps legacy Caddy selection and explicit host selection equivalent', () => {
-    const explicit: HostConfig = { ...host, proxy: { ...host.proxy!, provider: 'caddy-sites' } };
+    const explicit: HostConfig = { ...host, proxy: { ...host.proxy!, provider: 'caddy' } };
     const extension = ingressFor(app)!;
     assert.strictEqual(hostIngress(host), extension);
     assert.strictEqual(hostIngress(explicit), extension);

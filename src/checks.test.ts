@@ -14,7 +14,7 @@ const app: App = {
     host: 'atlas',
     targets: ['web'],
     composeFiles: ['compose.yaml'],
-    ingress: { mode: 'caddy-sites', domain: 'demo.example.com', upstream: 'demo-web:80' },
+    ingress: { mode: 'caddy', domain: 'demo.example.com', upstream: 'demo-web:80' },
   },
 };
 
@@ -35,7 +35,7 @@ const ready = {
   container_health: 'none',
   network: 'yes',
   site_sha256: sha256(
-    siteFile('demo', { mode: 'caddy-sites', domain: 'demo.example.com', upstream: 'demo-web:80' }, host.proxy!),
+    siteFile('demo', { mode: 'caddy', domain: 'demo.example.com', upstream: 'demo-web:80' }, host.proxy!),
   ),
   registry_login: 'yes',
 };
@@ -113,7 +113,7 @@ describe('evaluateChecks', () => {
     assert.strictEqual(checks[1]?.fix, 'manual');
   });
 
-  it('blocks a caddy-sites app on a host without a proxy entry', () => {
+  it('blocks a caddy app on a host without a proxy entry', () => {
     const { proxy: _proxy, ...bare } = host;
     const checks = evaluateChecks(app, bare, [], { registry_login: 'yes' });
     assert.deepStrictEqual(

@@ -1,7 +1,7 @@
 import type { Check } from '../checks.ts';
 import type { App } from '../config/deploy.ts';
 import type { HostConfig } from '../config/hosts.ts';
-import type { ResolvedIngress, SecretsConfig } from './config.ts';
+import type { IngressId, ResolvedIngress, SecretsConfig } from './config.ts';
 
 import { shellQuote } from '../command.ts';
 import { ingressOf } from '../config/deploy.ts';
@@ -112,7 +112,7 @@ export interface IngressExtension {
  * The bundled ingress extensions; additional implementations register here alongside their configuration schemas.
  */
 export const ingressExtensions = {
-  'caddy-sites': caddyIngress,
+  caddy: caddyIngress,
   'cloudflare-tunnel': cloudflareIngress,
 } as const satisfies Readonly<Record<Exclude<ResolvedIngress['mode'], 'none'>, IngressExtension>>;
 
@@ -137,15 +137,19 @@ export function ingressFor(app: App): IngressExtension | undefined {
 }
 
 /**
- * Resolves host setup, preserving Caddy as the default for existing proxy entries without a provider selector.
+ * Selects one host setup operation; legacy proxy entries without a provider still select Caddy.
  */
-export function hostIngress(host: HostConfig): IngressExtension {
-  const proxy = ingressConfigOf(host);
+export function hostIngress(host: HostConfig, provider?: IngressId): IngressExtension {
+  const proxy = ingressConfigOf(host, provider);
   if (proxy === undefined) {
-    throw new Error('Host has no proxy entry; configure an ingress extension before setup-proxy');
+    throw new Error(
+      provider === undefined
+        ? 'Host has no proxy entry; configure an ingress extension before setup-proxy'
+        : `Host has no ${provider} ingress configured`,
+    );
   }
 
-  return ingressExtension(proxy.provider ?? 'caddy-sites');
+  return ingressExtension(proxy.provider ?? 'caddy');
 }
 
 /**

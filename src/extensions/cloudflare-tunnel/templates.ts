@@ -63,7 +63,7 @@ export const loadCloudflareHostFiles = Effect.fn('loadCloudflareHostFiles')(func
 
   const result = { ...selected, ...(provision === undefined ? {} : { provision }), templates };
   return named
-    ? { ...host, ingress: { 'cloudflare-tunnel': result } }
+    ? { ...host, ingress: { ...host.ingress, 'cloudflare-tunnel': result } }
     : { ...host, proxy: { ...result, provider: 'cloudflare-tunnel' as const } };
 });
 

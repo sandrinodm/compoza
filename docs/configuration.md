@@ -51,12 +51,12 @@ borealis:
     mode: remote-build
 ```
 
-| Field       | Description                                                                                          |
-| ----------- | ---------------------------------------------------------------------------------------------------- |
-| `ssh`       | SSH destination. The Docker endpoint is `ssh://<ssh>`. Key authentication is required (`BatchMode`). |
-| `platform`  | Platform each target is built for, such as `linux/arm64`.                                            |
-| `transport` | How images reach the host; see [Image transports](#image-transports).                                |
-| `ingress`   | Exactly one named extension and its host settings; see [Ingress](ingress.md).                        |
+| Field       | Description                                                                                             |
+| ----------- | ------------------------------------------------------------------------------------------------------- |
+| `ssh`       | SSH destination. The Docker endpoint is `ssh://<ssh>`. Key authentication is required (`BatchMode`).    |
+| `platform`  | Platform each target is built for, such as `linux/arm64`.                                               |
+| `transport` | How images reach the host; see [Image transports](#image-transports).                                   |
+| `ingress`   | One or both named providers (`caddy`, `cloudflare-tunnel`), or `none` alone; see [Ingress](ingress.md). |
 
 ### External host files
 
@@ -196,7 +196,7 @@ All destinations share `workingDirectory`; it cannot be overridden per destinati
 
 ### Ingress
 
-Host `ingress` settings describe shared infrastructure; app `ingress` settings describe a route. Select one extension per block: `caddy`, `cloudflare-tunnel`, or `none: {}`. Destinations replace the complete ingress selection.
+Host `ingress` settings describe shared infrastructure; app `ingress` settings describe a route. An app selects exactly one of `caddy`, `cloudflare-tunnel`, or `none: {}`. A host can configure both Caddy and Cloudflare Tunnel; `none` is valid only on its own. Destinations replace the app’s complete ingress selection. On a host with both providers, `setup-proxy <host>` requires `--ingress caddy` or `--ingress cloudflare-tunnel`; setup never runs both implicitly. See the [combined host example](examples.md#one-host-with-caddy-and-cloudflare-tunnel).
 
 See the [Ingress guide](ingress.md) for provider selection, host and app settings, setup commands, migration, and lifecycle behavior. For custom Caddyfiles and site blocks, see [Caddy templates](caddy-templates.md).
 

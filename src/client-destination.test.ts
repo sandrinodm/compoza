@@ -49,7 +49,7 @@ it.effect('uses the destination project identity consistently for client route c
     proxy: { dir: '/srv/proxy', container: 'caddy', network: 'edge' },
   };
 
-  const ingress = { mode: 'caddy-sites' as const, domain: 'app.example.com', upstream: 'web:80' };
+  const ingress = { mode: 'caddy' as const, domain: 'app.example.com', upstream: 'web:80' };
   const probe = {
     proxy_dir: 'present',
     caddyfile_import: 'yes',

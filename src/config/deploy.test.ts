@@ -32,7 +32,7 @@ const valid = {
   host: 'atlas',
   targets: ['builder', 'web'],
   composeFiles: ['compose.yaml', 'compose.production.yaml'],
-  ingress: { mode: 'caddy-sites', domain: 'demo.example.com', upstream: 'demo-web:80', healthPath: '/healthz' },
+  ingress: { mode: 'caddy', domain: 'demo.example.com', upstream: 'demo-web:80', healthPath: '/healthz' },
   directories: ['/srv/demo/data'],
   content: { demo: '/srv/demo/data/demo' },
   environment: { DEMO_PORT: '8090' },
@@ -48,7 +48,7 @@ describe('DeployConfig', () => {
       assert.deepStrictEqual(composeFilesOf(config, false), ['compose.yaml', 'compose.production.yaml']);
       assert.deepStrictEqual(composeFilesOf(config, true), ['compose.yaml']);
       assert.deepStrictEqual(environmentOf(config, true), { DEMO_PORT: '8090', DEMO_SOURCES_PATH: '../sources' });
-      assert.strictEqual(ingressOf(config).mode, 'caddy-sites');
+      assert.strictEqual(ingressOf(config).mode, 'caddy');
     }),
   );
 

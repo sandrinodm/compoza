@@ -66,6 +66,12 @@ writeFileSync(
   transport:
     mode: ssh-load
   ingress:
+    caddy:
+      dir: /srv/fixture-caddy
+      container: caddy
+      network: fixture-caddy-edge
+      provision:
+        image: caddy:2
     cloudflare-tunnel:
       accountId: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       tunnelId: 12345678-1234-1234-1234-123456789abc
@@ -80,10 +86,25 @@ writeFileSync(
 `,
 );
 
-const preview = execFileSync(executable, ['--hosts', hosts, 'setup-proxy', 'fixture', '--dry-run'], options);
+const preview = execFileSync(
+  executable,
+  ['--hosts', hosts, 'setup-proxy', 'fixture', '--ingress', 'cloudflare-tunnel', '--dry-run'],
+  options,
+);
 assert.match(preview, /provision Cloudflare connector/);
 assert.match(preview, /cloudflare\/cloudflared/);
 assert.match(preview, /read_only/);
+const caddyPreview = execFileSync(
+  executable,
+  ['--hosts', hosts, 'setup-proxy', 'fixture', '--ingress', 'caddy', '--dry-run'],
+  options,
+);
+assert.match(caddyPreview, /provision Caddy/);
+assert.doesNotMatch(caddyPreview, /provision Cloudflare/);
+assert.throws(
+  () => execFileSync(executable, ['--hosts', hosts, 'setup-proxy', 'fixture'], options),
+  (error) => /select --ingress/.test(error.stderr?.toString() ?? ''),
+);
 
 // Exercise an installed CLI build plan with deployment files outside the source checkout.
 const source = join(consumer, 'app source');
@@ -153,5 +174,5 @@ assert.match(flat.script, /\.compoza\.json/);
 assert.doesNotMatch(flat.script, /releases\/|\.activations\/|previous_id|compoza_promote/);
 
 console.log(
-  `Installed compoza ${manifest.version}: CLI, runtime assets and Cloudflare setup, external source builds and flat SSH planning verified.`,
+  `Installed compoza ${manifest.version}: CLI, runtime assets and both ingress setup selectors, external source builds and flat SSH planning verified.`,
 );

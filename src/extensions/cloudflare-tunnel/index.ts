@@ -16,7 +16,7 @@ import { routeRule } from './templates.ts';
  * Selects Cloudflare host settings without accepting a different ingress implementation accidentally.
  */
 function proxyFor(host: HostConfig): CloudflareProxy | undefined {
-  const proxy = ingressConfigOf(host);
+  const proxy = ingressConfigOf(host, 'cloudflare-tunnel');
   return proxy?.provider === 'cloudflare-tunnel' ? proxy : undefined;
 }
 

@@ -124,6 +124,16 @@ For additional planning detail, use `deploy --dry-run --log-level debug`. It doe
 retrieve old output or reveal suppressed diagnostics. Finish with the destination,
 operation, verification result, and any unresolved failure; avoid copying secret-bearing logs.
 
+## Hosts with multiple ingress providers
+
+One host file can configure both `ingress.caddy` and `ingress["cloudflare-tunnel"]`.
+Each app still selects exactly one provider; use its selection for checks and deployment.
+For shared host setup, choose `setup-proxy <host> --ingress caddy` or
+`setup-proxy <host> --ingress cloudflare-tunnel`, retaining any explicit hosts file.
+Omitting the selector on a host with both is an error; never infer that both should
+be recreated. Single-provider hosts can omit the flag. Host templates and client-side
+credential paths remain relative to the declaring host YAML, including `$ref` files.
+
 ## Cloudflare connector provisioning
 
 Host `ingress["cloudflare-tunnel"].provision` lets `setup-proxy` create the host connector and shared network. It requires a pre-existing remotely managed tunnel and exactly one of `envFile` (private host file with raw `TUNNEL_TOKEN`) or `secrets` (native 1Password/dotenv source, selected `CLOUDFLARE_TUNNEL_TOKEN`). Setup dry runs fetch no secrets or SSH. Real setup sends only the selected token over stdin, checks its account/tunnel identity, guards file/container ownership and waits for the native connection health check. Reruns recreate the shared connector and can briefly affect its applications.

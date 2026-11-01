@@ -25,7 +25,7 @@ Examples use fictional hosts and reserved documentation IP addresses. For host-f
 
 ## Select an extension
 
-Select exactly one extension by nesting its settings under its name. The same convention applies in both files: `deploy.yaml` contains app routing settings, while `hosts.yaml` contains host infrastructure settings. There is no separate `mode` or `provider` selector in the new format.
+Nest settings under the provider name. Each app selects exactly one provider; a host can declare both Caddy and Cloudflare Tunnel: `deploy.yaml` contains app routing settings, while `hosts.yaml` contains host infrastructure settings. There is no separate `mode` or `provider` selector in the new format.
 
 For example, application routing:
 
@@ -37,7 +37,16 @@ ingress:
     healthPath: /health
 ```
 
-Each extension validates its required settings. Empty selections, unknown extensions, unknown settings and multiple extensions in one block are errors. Omit `ingress` or use `"ingress": { "none": {} }` to disable routing. A destination replaces the complete ingress selection, allowing it to switch extensions without inheriting the previous extension's settings.
+Each extension validates its required settings. Empty selections, unknown extensions and unknown settings are errors. Multiple app providers are rejected; hosts may include both supported providers. `none` must appear alone. Omit `ingress` or use `"ingress": { "none": {} }` to disable routing. A destination replaces the complete ingress selection, allowing it to switch extensions without inheriting the previous extension's settings.
+
+When a host configures both providers, setup requires an explicit selection:
+
+```sh
+compoza setup-proxy macmini-server --ingress caddy --dry-run
+compoza setup-proxy macmini-server --ingress cloudflare-tunnel --dry-run
+```
+
+Remove `--dry-run` only when ready to set up that provider. Omitting `--ingress` on a host with both fails before SSH or credential-provider access. A single-provider host keeps the existing command without the flag. Apps select their matching host settings automatically; no app-command selector is needed. See [one host with both providers](examples.md#one-host-with-caddy-and-cloudflare-tunnel).
 
 - `caddy` atomically replaces `sites/<name>.caddy` under a shared lock and uses Caddy reload to validate and activate it and waits for `https://<domain><healthPath>`. `upstream` is the address Caddy proxies to, such as `sample-app-web:3000`.
 - `cloudflare-tunnel` manages an HTTP(S) hostname rule in an existing remotely managed tunnel; see [Cloudflare Tunnel](#cloudflare-tunnel).
@@ -258,6 +267,8 @@ For execution modes and host health checks, see [SSH deployment](ssh-deployment.
 
 ## Migrating existing extension settings
 
-Existing app ingress objects with `mode: "caddy-sites"`, `mode: "cloudflare-tunnel"` or `mode: "none"` remain accepted. Existing host `proxy` entries also remain accepted, with the old top-level `address` used for Caddy DNS checks. They resolve to the same runtime plans as the named configuration.
+The Caddy identifier is now `caddy` throughout the CLI and configuration. Older flat `mode: "caddy-sites"` and `proxy.provider: "caddy-sites"` values are no longer accepted; rename those values to `caddy` or migrate to the named `ingress.caddy` format. Named `ingress.caddy` settings and `setup-proxy --ingress caddy` need no change.
+
+Existing app ingress objects with `mode: "caddy"`, `mode: "cloudflare-tunnel"` or `mode: "none"` remain accepted. Existing host `proxy` entries also remain accepted, with the old top-level `address` used for Caddy DNS checks. They resolve to the same runtime plans as the named configuration.
 
 For new or migrated hosts, move `proxy` into `ingress.caddy` (or `ingress["cloudflare-tunnel"]`), remove its `provider` field, and move the Caddy DNS `address` into `ingress.caddy.address`. Do not supply both host `proxy` and `ingress`: this is rejected rather than choosing one silently. Do not mix a legacy selector and nested extension settings inside the same block. Credential sources use the same named convention; see [Secrets](secrets.md).

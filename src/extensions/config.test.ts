@@ -95,15 +95,15 @@ describe('named extension configuration', () => {
     const canonical = Schema.decodeUnknownSync(DeployConfig, { onExcessProperty: 'error' })(app.config);
     const hosts = Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({ server: host });
 
-    assert.deepStrictEqual(ingressOf(canonical), { mode: 'caddy-sites', ...caddy });
-    assert.deepStrictEqual(ingressConfigOf(hosts.server!), { provider: 'caddy-sites', ...caddyHost });
+    assert.deepStrictEqual(ingressOf(canonical), { mode: 'caddy', ...caddy });
+    assert.deepStrictEqual(ingressConfigOf(hosts.server!), { provider: 'caddy', ...caddyHost });
 
     const { address, ...proxy } = caddyHost;
     const { ingress: _hostIngress, ...baseHost } = host;
     const legacyHost: HostConfig = { ...baseHost, address, proxy };
     const legacyApp: App = {
       ...app,
-      config: { ...app.config, ingress: { mode: 'caddy-sites', ...caddy }, secrets: { provider: 'none' } },
+      config: { ...app.config, ingress: { mode: 'caddy', ...caddy }, secrets: { provider: 'none' } },
     };
 
     const extension = ingressFor(app)!;
@@ -159,7 +159,8 @@ describe('named extension configuration', () => {
     ['unknown app setting', { caddy: { ...caddy, typo: true } }],
     ['multiple selected extensions', { caddy, 'cloudflare-tunnel': cloudflare }],
     ['none mixed with an extension', { none: {}, caddy }],
-    ['legacy and nested settings', { mode: 'caddy-sites', ...caddy, caddy }],
+    ['retired Caddy identifier', { mode: 'caddy-sites', ...caddy }],
+    ['legacy and nested settings', { mode: 'caddy', ...caddy, caddy }],
     ['settings on none', { none: { domain: caddy.domain } }],
   ] as const) {
     it(`rejects ${name}`, () =>
@@ -174,7 +175,10 @@ describe('named extension configuration', () => {
       { nginx: {} },
       { caddy: { dir: '/srv/caddy' } },
       { caddy: { ...caddyHost, wrong: true } },
-      { caddy: caddyHost, 'cloudflare-tunnel': cloudflareHost },
+      { none: {}, caddy: caddyHost },
+      { none: {}, 'cloudflare-tunnel': cloudflareHost },
+      { caddy: caddyHost, 'cloudflare-tunnel': { ...cloudflareHost, apiTokenFile: undefined } },
+      { caddy: caddyHost, 'cloudflare-tunnel': { ...cloudflareHost, provision: { secrets: { none: {} } } } },
     ]) {
       assert.throws(() =>
         Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({ server: { ...host, ingress } }),
@@ -186,6 +190,45 @@ describe('named extension configuration', () => {
       'never both',
     );
     assert.throws(() => ingressConfigOf({ ...host, proxy: caddyHost }), 'never both');
+    const { ingress: _ingress, ...legacyHost } = host;
+    assert.throws(() =>
+      Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({
+        server: { ...legacyHost, proxy: { ...caddyHost, provider: 'caddy-sites' } },
+      }),
+    );
+  });
+
+  it('selects each app provider independently on a host with both ingress capabilities', () => {
+    const combined = Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({
+      server: { ...host, ingress: { caddy: caddyHost, 'cloudflare-tunnel': cloudflareHost } },
+    }).server!;
+    assert.throws(() => ingressConfigOf(combined), 'select --ingress');
+    assert.throws(() => hostIngress(combined), 'select --ingress');
+
+    for (const [selectedApp, singleHost] of [
+      [app, host],
+      [
+        { ...app, config: { ...app.config, ingress: { 'cloudflare-tunnel': cloudflare } } },
+        { ...host, ingress: { 'cloudflare-tunnel': cloudflareHost } },
+      ],
+    ] as const) {
+      const extension = ingressFor(selectedApp)!;
+      assert.strictEqual(hostIngress(combined, extension.id), extension);
+      assert.deepStrictEqual(extension.plan(selectedApp, combined), extension.plan(selectedApp, singleHost));
+      assert.strictEqual(extension.probe(selectedApp, combined), extension.probe(selectedApp, singleHost));
+      assert.strictEqual(extension.domain(selectedApp, combined), extension.domain(selectedApp, singleHost));
+      assert.deepStrictEqual(
+        extension.checks(selectedApp, combined, [], {}),
+        extension.checks(selectedApp, singleHost, [], {}),
+      );
+      assert.deepStrictEqual(
+        deploymentScript(selectedApp, combined, 'one', []),
+        deploymentScript(selectedApp, singleHost, 'one', []),
+      );
+    }
+
+    assert.isUndefined(ingressConfigOf(host, 'cloudflare-tunnel'));
+    assert.throws(() => hostIngress(host, 'cloudflare-tunnel'), 'no cloudflare-tunnel ingress');
   });
 
   it('replaces complete ingress and secret selections at destinations and honors explicit none', () => {

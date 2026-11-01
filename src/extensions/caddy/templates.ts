@@ -179,7 +179,7 @@ export const loadHostTemplates = Effect.fn('loadCaddyHostTemplates')(function* (
   }
 
   return host.ingress !== undefined && 'caddy' in host.ingress
-    ? { ...host, ingress: { caddy: { ...host.ingress.caddy, templates } } }
+    ? { ...host, ingress: { ...host.ingress, caddy: { ...host.ingress.caddy, templates } } }
     : { ...host, proxy: { ...caddy, templates } };
 });
 
@@ -193,7 +193,7 @@ export const loadAppTemplates = Effect.fn('loadCaddyAppTemplates')(function* (ap
   }
 
   const settings =
-    'caddy' in ingress ? ingress.caddy : 'mode' in ingress && ingress.mode === 'caddy-sites' ? ingress : undefined;
+    'caddy' in ingress ? ingress.caddy : 'mode' in ingress && ingress.mode === 'caddy' ? ingress : undefined;
   if (settings?.siteTemplate === undefined) {
     return app;
   }
@@ -206,7 +206,7 @@ export const loadAppTemplates = Effect.fn('loadCaddyAppTemplates')(function* (ap
       ingress:
         'caddy' in ingress
           ? { caddy: { ...ingress.caddy, siteTemplate } }
-          : { ...settings, mode: 'caddy-sites' as const, siteTemplate },
+          : { ...settings, mode: 'caddy' as const, siteTemplate },
     },
   };
 });

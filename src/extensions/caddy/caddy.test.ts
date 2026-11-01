@@ -8,7 +8,7 @@ import { registryProbe } from '../../probe.ts';
 import { parseCheck } from '../../probe.ts';
 import { checkScript, setupScript, sha256, siteFile, SITES_DESTINATION, SITES_IMPORT, SITES_MOUNT } from './scripts.ts';
 
-const ingress: CaddyIngress = { mode: 'caddy-sites', domain: 'demo.example.com', upstream: 'demo-web:80' };
+const ingress: CaddyIngress = { mode: 'caddy', domain: 'demo.example.com', upstream: 'demo-web:80' };
 
 const proxy: ProxyConfig = {
   dir: '/srv/proxy',

@@ -50,9 +50,14 @@ export const ResolvedIngress = Schema.Union([CaddyIngress, CloudflareIngress, No
 export const Ingress = Schema.Union([CaddySelection, CloudflareSelection, NoExtension, ResolvedIngress]);
 
 /**
- * The host ingress input with settings nested under the selected extension's name.
+ * Host ingress capabilities: either provider, both providers, or an explicit opt-out.
  */
-export const HostIngress = Schema.Union([CaddyHostSelection, CloudflareHostSelection, NoExtension]);
+export const HostIngress = Schema.Union([
+  Schema.Struct({ ...CaddyHostSelection.fields, ...CloudflareHostSelection.fields }),
+  CaddyHostSelection,
+  CloudflareHostSelection,
+  NoExtension,
+]);
 
 /**
  * The internal host proxy representation and legacy hosts.yaml input.
@@ -131,7 +136,7 @@ export function resolveIngress(config: Ingress): ResolvedIngress {
   }
 
   if ('caddy' in config) {
-    return { mode: 'caddy-sites', ...config.caddy };
+    return { mode: 'caddy', ...config.caddy };
   }
 
   if ('cloudflare-tunnel' in config) {
@@ -142,14 +147,23 @@ export function resolveIngress(config: Ingress): ResolvedIngress {
 }
 
 /**
- * Resolves named host settings to the corresponding ingress extension's planning contract.
+ * An ingress provider's internal identifier, shared by host selection and app planning.
  */
-export function resolveHostIngress(config: HostIngress): ProxyConfig | undefined {
-  if ('caddy' in config) {
-    return { provider: 'caddy-sites', ...config.caddy };
+export type IngressId = Exclude<ResolvedIngress['mode'], 'none'>;
+
+/**
+ * Selects a host capability, requiring an explicit provider when the host supports both.
+ */
+export function resolveHostIngress(config: HostIngress, provider?: IngressId): ProxyConfig | undefined {
+  if (provider === undefined && 'caddy' in config && 'cloudflare-tunnel' in config) {
+    throw new Error('Host has multiple ingress providers; select --ingress caddy or --ingress cloudflare-tunnel');
   }
 
-  if ('cloudflare-tunnel' in config) {
+  if ('caddy' in config && (provider === undefined || provider === 'caddy')) {
+    return { provider: 'caddy', ...config.caddy };
+  }
+
+  if ('cloudflare-tunnel' in config && (provider === undefined || provider === 'cloudflare-tunnel')) {
     return { provider: 'cloudflare-tunnel', ...config['cloudflare-tunnel'] };
   }
 

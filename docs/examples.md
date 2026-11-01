@@ -9,6 +9,7 @@ Complete files are labeled with their filename. **Variations are partial mapping
 The CLI machine needs Node.js 26.0 or newer. Remote hosts need the [SSH runtime prerequisites](ssh-deployment.md#host-prerequisites), not Node.js. Image tags here follow the tutorial examples elsewhere in these docs; select reviewed tags or digests for your own deployments.
 
 - [Host inventory and external host files](#host-inventory-and-external-host-files)
+- [One host with Caddy and Cloudflare Tunnel](#one-host-with-caddy-and-cloudflare-tunnel)
 - [A third-party stack with assets and persistent content](#a-third-party-stack-with-assets-and-persistent-content)
 - [Central configuration with a separate app repository](#central-configuration-with-a-separate-app-repository)
 - [Local runs and named destinations](#local-runs-and-named-destinations)
@@ -55,6 +56,95 @@ cedar:
 This replaces the **entire** global `cedar` entry; `atlas`, `borealis` and `relay` remain available. `cedar-development` must be an operator-configured SSH alias. The CLI does not search parent directories. Neither the target deploy folder nor `workingDirectory` changes host discovery.
 
 Use `--hosts ./hosts.yaml` or `COMPOZA_HOSTS` to select one inventory exclusively instead of merging global and local files. Explicit `--hosts` takes precedence. Quote string values that look like numbers or booleans, such as `PORT: "8080"`; duplicate keys and unknown settings are errors.
+
+## One host with Caddy and Cloudflare Tunnel
+
+One host file can describe both ingress capabilities on the same physical machine. Apps still select one provider each. For a central infrastructure repository, keep the inventory and host-specific files together:
+
+```text
+config/
+├── hosts.yaml
+├── macmini-server/
+│   └── host.yaml
+└── devbox/
+    └── host.yaml
+```
+
+Complete `config/hosts.yaml`:
+
+```yaml
+macmini-server:
+  $ref: ./macmini-server/host.yaml
+devbox:
+  $ref: ./devbox/host.yaml
+```
+
+Complete `config/macmini-server/host.yaml`:
+
+```yaml
+ssh: deploy@macmini.example.com
+platform: linux/arm64
+transport:
+  mode: ssh-load
+ingress:
+  caddy:
+    dir: /srv/caddy
+    container: caddy
+    network: caddy-edge
+    provision:
+      image: caddy:2
+  cloudflare-tunnel:
+    accountId: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    tunnelId: 12345678-1234-1234-1234-123456789abc
+    routing: manual
+    dir: /srv/cloudflare
+    container: cloudflared
+    network: cloudflare-edge
+    provision:
+      envFile: /home/deploy/.config/cloudflare/connector.env
+```
+
+Complete `config/devbox/host.yaml`:
+
+```yaml
+ssh: deploy@devbox.example.com
+platform: linux/amd64
+transport:
+  mode: remote-build
+```
+
+These paths and SSH destinations are illustrative; use host paths appropriate to each machine. Create the Cloudflare tunnel and private connector token file before real setup. Templates and client-side credential filenames declared by a host resolve relative to its own `host.yaml`.
+
+Preview each provider separately:
+
+```sh
+compoza --hosts config/hosts.yaml setup-proxy macmini-server --ingress caddy --dry-run
+compoza --hosts config/hosts.yaml setup-proxy macmini-server --ingress cloudflare-tunnel --dry-run
+```
+
+An ambiguous setup without `--ingress` fails without SSH or credential-provider access. Setup never implicitly recreates both shared services. Single-provider hosts can still omit the flag.
+
+For an app using Caddy, a **partial deploy mapping** selects:
+
+```yaml
+host: macmini-server
+ingress:
+  caddy:
+    domain: direct.example.com
+    upstream: direct-web:80
+```
+
+Another app on that same host can select Cloudflare instead:
+
+```yaml
+host: macmini-server
+ingress:
+  cloudflare-tunnel:
+    domain: tunnel.example.com
+    service: http://tunnel-web:80
+```
+
+Each app must join the matching provider's network with its unique alias (`direct-web` on `caddy-edge`, or `tunnel-web` on `cloudflare-edge`), using the Compose patterns below. App checks, routes and deletion use only the selected provider. Omitted ingress or `none: {}` bypasses both; `none` cannot be combined with another provider. A destination can switch the app's provider by replacing its whole ingress block.
 
 ## A third-party stack with assets and persistent content
 

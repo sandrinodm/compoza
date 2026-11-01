@@ -369,7 +369,7 @@ describe('Cloudflare Tunnel extension', { timeout: 15_000 }, () => {
     fixture(({ app, host }) => {
       const caddyHost: HostConfig = {
         ...host,
-        proxy: { provider: 'caddy-sites', dir: '/srv/caddy', container: 'caddy', network: 'edge' },
+        proxy: { provider: 'caddy', dir: '/srv/caddy', container: 'caddy', network: 'edge' },
       };
       assert.isUndefined(cloudflareIngress.probe(app, caddyHost));
       assert.isAbove(blocking(cloudflareIngress.checks(app, caddyHost, [], {})).length, 0);
@@ -377,7 +377,7 @@ describe('Cloudflare Tunnel extension', { timeout: 15_000 }, () => {
 
       const caddyApp: App = {
         ...app,
-        config: { ...app.config, ingress: { mode: 'caddy-sites', domain: 'app.example.com', upstream: 'web:80' } },
+        config: { ...app.config, ingress: { mode: 'caddy', domain: 'app.example.com', upstream: 'web:80' } },
       };
       const caddy = ingressFor(caddyApp)!;
       assert.isUndefined(caddy.probe(caddyApp, host));

@@ -18,20 +18,20 @@ export function caddyChecks(
 ): ReadonlyArray<Check> {
   const checks: Array<Check> = [];
   const ingress = ingressOf(app.config);
-  const selected = ingressConfigOf(host);
-  const proxy = selected?.provider === undefined || selected.provider === 'caddy-sites' ? selected : undefined;
+  const selected = ingressConfigOf(host, 'caddy');
+  const proxy = selected?.provider === undefined || selected.provider === 'caddy' ? selected : undefined;
   const address = proxy?.address ?? host.address;
 
-  if (ingress.mode === 'caddy-sites' && proxy === undefined) {
+  if (ingress.mode === 'caddy' && proxy === undefined) {
     checks.push({
       name: 'proxy',
       ok: false,
-      detail: `host "${app.config.host}" has no proxy entry in the hosts file; add one to use caddy-sites ingress`,
+      detail: `host "${app.config.host}" has no proxy entry in the hosts file; add one to use caddy ingress`,
       fix: 'manual',
     });
   }
 
-  if (ingress.mode === 'caddy-sites' && proxy !== undefined) {
+  if (ingress.mode === 'caddy' && proxy !== undefined) {
     const expectedSite = sha256(siteFile(projectNameOf(app), ingress, proxy));
     const proxyReady =
       probe.caddyfile_import === 'yes' &&

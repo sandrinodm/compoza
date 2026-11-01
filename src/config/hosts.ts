@@ -6,7 +6,13 @@ import type { ProxyConfig as CaddyProxy } from '../extensions/caddy/config.ts';
 import type { DeployConfig } from './deploy.ts';
 
 import { DeployError, platformFailure } from '../errors.ts';
-import { ProxyConfig, HostIngress, resolveHostIngress, loadHostExtensionFiles } from '../extensions/config.ts';
+import {
+  ProxyConfig,
+  HostIngress,
+  type IngressId,
+  resolveHostIngress,
+  loadHostExtensionFiles,
+} from '../extensions/config.ts';
 import { readConfigFile } from './config-file.ts';
 import { Ipv4, Name, Platform, Registry, SshDestination } from './schema.ts';
 export { ProxyConfig } from '../extensions/config.ts';
@@ -84,7 +90,7 @@ export const HostConfig = Schema.Struct({
   proxy: Schema.optionalKey(ProxyConfig),
 
   /**
-   * The named host ingress extension; cannot be combined with the legacy proxy field.
+   * The named host ingress capabilities; cannot be combined with the legacy proxy field.
    */
   ingress: Schema.optionalKey(HostIngress),
 }).check(
@@ -261,11 +267,11 @@ export function hostNamed(name: string, hosts: Hosts): Effect.Effect<HostConfig,
  * The legacy Caddy proxy lookup, rejecting missing or incompatible host ingress settings.
  */
 export function proxyOf(host: HostConfig, hostName: string): Effect.Effect<CaddyProxy, DeployError> {
-  const proxy = ingressConfigOf(host);
-  return proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy-sites')
+  const proxy = ingressConfigOf(host, 'caddy');
+  return proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy')
     ? Effect.fail(
         new DeployError({
-          message: `Host "${hostName}" has no compatible Caddy proxy entry; add one to use caddy-sites ingress`,
+          message: `Host "${hostName}" has no compatible Caddy proxy entry; add one to use caddy ingress`,
         }),
       )
     : Effect.succeed(proxy);
@@ -286,12 +292,17 @@ export function registryOf(host: HostConfig): string | undefined {
 }
 
 /**
- * Resolves the host's selected ingress settings while rejecting competing new and legacy declarations.
+ * Resolves one host capability, rejecting ambiguous selection and competing new and legacy declarations.
  */
-export function ingressConfigOf(host: HostConfig): ProxyConfig | undefined {
+export function ingressConfigOf(host: HostConfig, provider?: IngressId): ProxyConfig | undefined {
   if (host.ingress !== undefined && host.proxy !== undefined) {
     throw new Error('Use ingress or legacy proxy, never both');
   }
 
-  return host.ingress === undefined ? host.proxy : resolveHostIngress(host.ingress);
+  if (host.ingress !== undefined) {
+    return resolveHostIngress(host.ingress, provider);
+  }
+
+  const proxy = host.proxy;
+  return provider === undefined || (proxy?.provider ?? 'caddy') === provider ? proxy : undefined;
 }

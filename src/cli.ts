@@ -182,17 +182,21 @@ const setupProxy = Command.make(
   'setup-proxy',
   {
     host: Argument.String('host').pipe(Argument.withDescription('Host key in the hosts file')),
+    ingress: Flag.Literals('ingress', ['caddy', 'cloudflare-tunnel']).pipe(
+      Flag.withDescription('Ingress provider to set up; required when the host configures both providers'),
+      Flag.optional,
+    ),
     dryRun: Flag.Boolean('dry-run').pipe(
       Flag.withDescription('Preview ingress setup without connecting to the host'),
       Flag.withDefault(false),
     ),
   },
-  Effect.fn(function* ({ host: name, dryRun }) {
+  Effect.fn(function* ({ host: name, ingress, dryRun }) {
     const { hosts } = yield* root;
     const remote = yield* Remote;
     const host = yield* hostNamed(name, yield* loadHostsForRun(hosts));
     const operation = yield* Effect.try({
-      try: () => hostIngress(host).setup(host),
+      try: () => hostIngress(host, Option.getOrUndefined(ingress)).setup(host),
       catch: (cause) =>
         new DeployError({ message: cause instanceof Error ? cause.message : 'Invalid ingress configuration' }),
     });

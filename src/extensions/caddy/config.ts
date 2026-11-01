@@ -68,7 +68,7 @@ export const CaddyIngress = Schema.Struct({
   /**
    * The legacy mode selector.
    */
-  mode: Schema.Literal('caddy-sites'),
+  mode: Schema.Literal('caddy'),
   ...CaddySettings.fields,
 });
 
@@ -118,7 +118,7 @@ export const CaddyProvision = Schema.Struct({
 });
 
 /**
- * The shared Caddy that routes public domains on a host, for apps whose ingress is `caddy-sites`.
+ * The shared Caddy that routes public domains on a host, for apps whose ingress is `caddy`.
  *
  * `setup-proxy` makes this Caddy load every `sites/*.caddy` file next to its Caddyfile; deploy then writes one file per
  * app. The optional `tls` and `logSnippet` settings go into every site file, so the host decides how certificates are
@@ -196,7 +196,7 @@ export const ProxyConfig = Schema.Struct({
   /**
    * The legacy extension selector, optional for older host entries.
    */
-  provider: Schema.optionalKey(Schema.Literal('caddy-sites')),
+  provider: Schema.optionalKey(Schema.Literal('caddy')),
 
   /**
    * The Caddy DNS address, falling back to the legacy host address when omitted.

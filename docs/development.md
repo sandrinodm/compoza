@@ -51,10 +51,10 @@ The pre-commit hook runs `vp check --fix` and `jsdoc-lint` on staged files.
 
 Docker and Compose deployment remain the standard implementation. Integrations live under `src/extensions/` and register at two boundaries:
 
-| Extension kind      | Contract and registry                                  | Bundled implementations            |
-| ------------------- | ------------------------------------------------------ | ---------------------------------- |
-| Credential provider | `src/extensions/credentials.ts` (`CredentialProvider`) | `env-file`, `1password`            |
-| Ingress             | `src/extensions/ingress.ts` (`IngressExtension`)       | `caddy-sites`, `cloudflare-tunnel` |
+| Extension kind      | Contract and registry                                  | Bundled implementations      |
+| ------------------- | ------------------------------------------------------ | ---------------------------- |
+| Credential provider | `src/extensions/credentials.ts` (`CredentialProvider`) | `env-file`, `1password`      |
+| Ingress             | `src/extensions/ingress.ts` (`IngressExtension`)       | `caddy`, `cloudflare-tunnel` |
 
 Each integration owns one folder, including its configuration and implementation:
 
@@ -97,7 +97,7 @@ To add ingress:
 3. Register the implementation in `ingressExtensions`, covering setup, probes, check interpretation, activation and removal. Check failures with `fix: "deploy"` are repaired by deployment and do not block it; other failures block.
 4. Test both client execution and deployed SSH operations, including route failure, removal and recovery.
 
-Apps and hosts select Caddy through `ingress.caddy`, or Cloudflare through `ingress["cloudflare-tunnel"]`, with settings nested under the extension name. Credential sources use `secrets["1password"]` and `secrets["env-file"]`. Exactly one extension is allowed per block. Omitted ingress or `none: {}` bypasses ingress. Legacy flat selectors and host `proxy` entries normalize to the existing internal contracts, so planners and deployed SSH operations preserve their behavior. `setup-proxy` dispatches to the host's selected extension and remains explicit.
+Apps and hosts select Caddy through `ingress.caddy`, or Cloudflare through `ingress["cloudflare-tunnel"]`, with settings nested under the extension name. Credential sources use `secrets["1password"]` and `secrets["env-file"]`. Apps and credential sources select exactly one extension. Hosts can declare both ingress providers; each provider retains its own validation. Host loaders preserve both providers when resolving their templates and credential paths. Omitted ingress or `none: {}` bypasses ingress. Legacy flat selectors and host `proxy` entries normalize to the existing internal contracts, so planners and deployed SSH operations preserve their behavior. `setup-proxy --ingress caddy|cloudflare-tunnel` selects one host capability; omission is allowed only for a single provider. App checks and planning request their own provider explicitly.
 
 ### Caddy implementation
 

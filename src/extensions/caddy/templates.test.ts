@@ -23,7 +23,7 @@ const caddy = {
 } as const;
 
 const host = { ssh: 'server', platform: 'linux/arm64', transport: { mode: 'ssh-load' }, ingress: { caddy } } as const;
-const site = { mode: 'caddy-sites', domain: 'budget.example.com', upstream: 'host.docker.internal:8300' } as const;
+const site = { mode: 'caddy', domain: 'budget.example.com', upstream: 'host.docker.internal:8300' } as const;
 const budget = '{{domain}} {\n\treverse_proxy http://{{upstream}} {\n\t\theader_up X-Real-IP {remote_host}\n\t}\n}\n';
 
 /**
@@ -133,9 +133,9 @@ describe('Caddy templates', () => {
 
       const hosts = yield* loadDefaultHosts(join(dir, 'repo'), join(dir, 'global', 'hosts.yaml'));
       const external = ingressConfigOf(hosts.external!)!;
-      assert.strictEqual(external.provider, 'caddy-sites');
+      assert.strictEqual(external.provider, 'caddy');
 
-      if (external.provider !== 'caddy-sites') {
+      if (external.provider !== 'caddy') {
         throw new Error('Wrong extension');
       }
 
@@ -143,7 +143,7 @@ describe('Caddy templates', () => {
       assert.include(JSON.parse(provisionOperation(external).input!).caddyfile, '# shared custom config');
 
       const local = ingressConfigOf(hosts.local!)!;
-      if (local.provider !== 'caddy-sites') {
+      if (local.provider !== 'caddy') {
         throw new Error('Wrong extension');
       }
 
