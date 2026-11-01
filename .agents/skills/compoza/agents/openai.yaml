@@ -1,0 +1,6 @@
+interface:
+  display_name: 'Operate compoza'
+  short_description: 'Inspect, recover, and manage deployed Compose stacks'
+  default_prompt: 'Use $compoza to inspect the app in ./infra and report its readiness and service state.'
+policy:
+  allow_implicit_invocation: true

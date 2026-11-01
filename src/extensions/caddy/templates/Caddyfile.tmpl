@@ -1,0 +1,21 @@
+# Provisioned by compoza. App routes belong in sites/*.caddy.
+{
+	admin localhost:2019
+	metrics
+	grace_period {{gracePeriod}}
+{{#acmeDns}}	acme_dns {{acmeDns}}
+{{/acmeDns}}
+}
+
+{{#logSnippet}}({{logSnippet}}) {
+	log {
+		output file /data/{args[0]}.log {
+			roll_size 100mb
+			roll_keep 10
+			roll_keep_for 720h
+		}
+		format json
+	}
+}
+
+{{/logSnippet}}{{sitesImport}}

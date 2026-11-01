@@ -1,0 +1,138 @@
+import { Console, Effect } from 'effect';
+
+import type { Resolved } from './deploy.ts';
+
+import { type Command, command } from './command.ts';
+import { projectNameOf } from './config/deploy.ts';
+import { dockerHost } from './config/hosts.ts';
+import { DeployError } from './errors.ts';
+import { ingressFor } from './extensions/ingress.ts';
+import { phase, type Phase, runPhases } from './progress.ts';
+import { Remote } from './services/Remote.ts';
+import { DryRun, Shell } from './services/Shell.ts';
+import { deployedScript } from './ssh-plan.ts';
+
+/**
+ * The `docker` arguments that address an app's Compose project on its host: `--host <endpoint> compose --project-name
+ * <name>`, to be followed by a subcommand such as `ps`, `stop` or `down`.
+ *
+ * No `--file` or `--project-directory` is passed on purpose. The project is addressed by name and Compose finds its
+ * containers by their project label, so it needs neither the Compose files nor their variables; loading the files from
+ * the deploy folder would only add warnings, or fail on `${VAR:?}` guards whose values exist only during a deploy.
+ * Verified on Docker 29.4 with Compose v5.1.2: `compose --project-name <name> ps`, `stop`, `start` and `down` all work
+ * with no Compose file at all.
+ */
+export function projectArgs({ app, host }: Resolved): ReadonlyArray<string> {
+  return ['--host', dockerHost(host), 'compose', '--project-name', projectNameOf(app)];
+}
+
+/**
+ * The container actions that keep the stack in place: `stop` halts the containers and `start` resumes them, with their
+ * networks, volumes and images untouched, so a stopped stack comes back exactly as it was.
+ */
+export type LifecycleAction = 'stop' | 'start';
+
+/**
+ * The Compose command for a lifecycle action on the app's project.
+ */
+export function lifecycleCommand(resolved: Resolved, action: LifecycleAction): Command {
+  return command('docker', [...projectArgs(resolved), action]);
+}
+
+/**
+ * The Compose command that removes the app's containers and networks: `down --remove-orphans`, plus `--volumes` when
+ * asked, which also removes the project's named volumes.
+ *
+ * Bind-mounted host folders (`directories` and `content` in `deploy.json`) are never touched by either form: they are
+ * the data, and removing a stack must leave the data where a redeploy will find it.
+ */
+export function downCommand(resolved: Resolved, volumes: boolean): Command {
+  return command('docker', [...projectArgs(resolved), 'down', '--remove-orphans', ...(volumes ? ['--volumes'] : [])]);
+}
+
+/**
+ * Stops or starts the app's containers on its host, printing the command first; honours `--dry-run` through
+ * `Shell.run`.
+ */
+export const lifecycle = Effect.fn('lifecycle')(function* (resolved: Resolved, action: LifecycleAction) {
+  const shell = yield* Shell;
+  if (resolved.app.config.execution === 'ssh') {
+    const remote = yield* Remote;
+    const output = yield* remote.run(
+      resolved.host,
+      deployedScript(resolved.app, [action], true),
+      undefined,
+      `<${action} deployed release>`,
+    );
+    if (output !== '') {
+      yield* Console.log(output.trimEnd());
+    }
+  } else {
+    yield* shell.run(lifecycleCommand(resolved, action));
+  }
+  yield* Console.log(
+    (yield* DryRun)
+      ? 'Dry run complete.'
+      : `${action === 'stop' ? 'Stopped' : 'Started'} ${resolved.app.config.name} on ${resolved.app.config.host}`,
+  );
+});
+
+/**
+ * Removes the app from its host: the ingress route first, when the app has one, so the domain stops being served before
+ * the containers disappear and no request meets a half-removed stack; then the containers and networks, and the named
+ * volumes when asked. Host folders stay.
+ *
+ * Both steps print as numbered phases like a deploy, and both go through `Remote.run` and `Shell.run`, so `--dry-run`
+ * shows exactly what would be removed without removing anything.
+ */
+export const remove = Effect.fn('remove')(function* (resolved: Resolved, volumes: boolean) {
+  const shell = yield* Shell;
+  const remote = yield* Remote;
+  const { app, host } = resolved;
+  if (app.config.execution === 'ssh') {
+    const output = yield* remote.run(
+      host,
+      deployedScript(app, ['down', '--remove-orphans', ...(volumes ? ['--volumes'] : [])], true),
+      undefined,
+      '<delete deployed stack; keep releases, secrets and data>',
+    );
+    if (output !== '') {
+      yield* Console.log(output.trimEnd());
+    }
+    yield* Console.log(
+      (yield* DryRun) ? 'Dry run complete.' : `Deleted ${app.config.name}; data, secrets and release files stay`,
+    );
+    return;
+  }
+  const ingress = ingressFor(app);
+  const phases: Array<Phase<DeployError, never>> = [];
+  if (ingress !== undefined) {
+    const routing = yield* Effect.try({
+      try: () => ingress.plan(app, host),
+      catch: (cause) =>
+        new DeployError({ message: cause instanceof Error ? cause.message : 'Invalid ingress configuration' }),
+    });
+    phases.push(
+      phase(
+        'unroute',
+        `Removing the route for ${routing.description}`,
+        remote
+          .run(host, routing.unroute.script, routing.unroute.input, routing.unroute.label)
+          .pipe(Effect.flatMap((output) => (output === '' ? Effect.void : Console.log(output.trimEnd())))),
+      ),
+    );
+  }
+  phases.push(
+    phase(
+      'down',
+      volumes ? 'Removing containers, networks and volumes' : 'Removing containers and networks',
+      shell.run(downCommand(resolved, volumes)),
+    ),
+  );
+  yield* runPhases(phases);
+  yield* Console.log(
+    (yield* DryRun)
+      ? 'Dry run complete.'
+      : `Deleted ${app.config.name} from ${app.config.host}; host folders were left in place`,
+  );
+});

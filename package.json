@@ -1,0 +1,44 @@
+{
+  "name": "compoza",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Builds, ships and runs a Compose stack on a remote Docker host over SSH, with readiness checks and Caddy routing.",
+  "bin": {
+    "compoza": "./bin/compoza.ts"
+  },
+  "type": "module",
+  "scripts": {
+    "check": "vp check && jsdoc-lint",
+    "deploy": "node bin/compoza.ts",
+    "lint:fix": "vp check --fix",
+    "lint:jsdoc": "jsdoc-lint",
+    "prepare": "vp config",
+    "ready": "pnpm check && vp test",
+    "test": "vp test"
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "effect": "catalog:",
+    "yaml": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "jsdoc-lint": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "optionalDependencies": {
+    "@1password/sdk": "catalog:"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.16.1",
+      "onFail": "download"
+    }
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  }
+}

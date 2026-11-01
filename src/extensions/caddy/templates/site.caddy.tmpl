@@ -1,0 +1,8 @@
+# Managed by compoza for {{name}}. Changes are overwritten on deploy.
+{{domain}} {
+{{#logSnippet}}	import {{logSnippet}} {{name}}
+{{/logSnippet}}{{#tls}}	tls {
+		{{tls}}
+	}
+{{/tls}}	reverse_proxy http://{{upstream}}
+}

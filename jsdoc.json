@@ -1,0 +1,6 @@
+{
+  "roots": ["src", "bin"],
+  "excludePaths": ["node_modules", "dist", "coverage"],
+  "excludeFiles": ["\\.d\\.[cm]?ts$", "\\.test\\.[^.]+$", "\\.spec\\.[^.]+$"],
+  "includeExtensions": [".ts", ".mts", ".cts"]
+}
