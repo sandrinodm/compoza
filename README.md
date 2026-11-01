@@ -33,6 +33,7 @@ Requires Node.js 22.18 or newer and pnpm 12 (`devEngines` downloads pnpm when it
 
 ```sh
 pnpm install
+pnpm build
 pnpm link --global   # puts `compoza` on PATH, pointing at this checkout
 ```
 

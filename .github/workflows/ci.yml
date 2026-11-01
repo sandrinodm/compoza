@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: '22.18.0'
+          - os: ubuntu-latest
+            node: '24'
+          - os: ubuntu-latest
+            node: '26'
+          - os: macos-latest
+            node: '24'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.0
+        with:
+          version: 12.16.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - name: Verify host-script test prerequisites
+        run: |
+          bash --version
+          jq --version
+      - run: pnpm install --frozen-lockfile
+      - name: Format, lint, types and documentation checks
+        if: matrix.os == 'ubuntu-latest' && matrix.node == '24'
+        run: pnpm check
+      - run: pnpm test
+      - name: Build and pack the npm package
+        run: pnpm pack --out "$RUNNER_TEMP/compoza.tgz"
+      - name: Test the installed package
+        run: pnpm test:package "$RUNNER_TEMP/compoza.tgz"
+      - name: Verify checks leave the checkout clean
+        run: |
+          git diff --exit-code
+          test -z "$(git ls-files --others --exclude-standard)"

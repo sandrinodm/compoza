@@ -1,20 +1,35 @@
 {
   "name": "compoza",
   "version": "0.1.0",
-  "private": true,
   "description": "Builds, ships and runs a Compose stack on a remote Docker host over SSH, with readiness checks and Caddy routing.",
-  "bin": {
-    "compoza": "./bin/compoza.ts"
+  "homepage": "https://github.com/sandrinodm/compoza#readme",
+  "bugs": "https://github.com/sandrinodm/compoza/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sandrinodm/compoza.git"
   },
+  "bin": {
+    "compoza": "./dist/bin/compoza.mjs"
+  },
+  "files": [
+    "dist",
+    "docs"
+  ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
+    "build": "vp pack",
     "check": "vp check && jsdoc-lint",
     "deploy": "node bin/compoza.ts",
     "lint:fix": "vp check --fix",
     "lint:jsdoc": "jsdoc-lint",
     "prepare": "vp config",
+    "prepack": "vp pack",
     "ready": "pnpm check && vp test",
-    "test": "vp test"
+    "test": "vp test",
+    "test:package": "node scripts/package-smoke.mjs"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",

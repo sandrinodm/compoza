@@ -13,9 +13,10 @@
 
 ```sh
 pnpm install
-pnpm check                 # vp check (format, lint, types), then jsdoc-lint
+pnpm check                # vp check (format, lint, types), then jsdoc-lint
 vp check --fix             # apply formatting and safe lint fixes
-vp test                    # unit tests and isolated Bash/jq host-script regressions
+vp test                   # unit tests and isolated Bash/jq host-script regressions
+pnpm build                # JavaScript distribution with runtime assets
 node bin/compoza.ts --help
 ```
 
@@ -125,4 +126,27 @@ Operator guides: [Ingress](ingress.md), [Caddy templates](caddy-templates.md) an
 
 ## Distribution
 
-The CLI loads its host assets relative to its installed modules, so keep `src/remote/` and the Bash/jq files and bundled template files inside extension folders when distributing the tool.
+`pnpm build` uses Vite+ pack to compile the CLI to `dist/bin/compoza.mjs`, preserving the module layout and copying Bash, jq and template assets beside their modules. Development can still run `node bin/compoza.ts`; installed packages run JavaScript because Node does not strip TypeScript inside `node_modules`.
+
+Use `pnpm pack`, which builds through `prepack` and resolves `catalog:` dependency versions. Do not publish the source directory with `npm publish`.
+
+```sh
+pnpm pack --out /tmp/compoza.tgz
+pnpm test:package /tmp/compoza.tgz
+```
+
+The package smoke check installs the tarball into a temporary consumer, runs the installed executable, checks dependency versions and compares every runtime asset with its source.
+
+## CI and npm releases
+
+`ci.yml` checks formatting, lint, types and JSDoc, runs the test suite on Linux (Node 22.18, 24 and 26) and macOS (Node 24), and builds and installs the npm tarball on every matrix entry. Bash and jq are required; no personal hosts or provider credentials are used.
+
+`publish.yml` publishes stable GitHub releases through [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/). It requires the tag `v<package.json version>`, a commit on `main`, and a successful push-triggered CI run for that exact commit. It reruns checks and tests, builds with pnpm, verifies the installed package, and publishes that tarball with provenance. Manual workflow dispatch is available for retrying a release; select its **tag**, not `main`.
+
+One-time setup:
+
+1. Create the GitHub environment `npm`, optionally with required reviewers or tag deployment restrictions.
+2. For a new npm package, make its first publication from an authenticated maintainer session using a verified `pnpm pack` tarball. From a directory outside this checkout, run `npm publish /tmp/compoza.tgz --access public` (the source checkout declares pnpm as its development package manager).
+3. In the npm package settings, add a GitHub Actions trusted publisher: owner `sandrinodm`, repository `compoza`, workflow `publish.yml`, environment `npm`, with direct `npm publish` allowed. No `NPM_TOKEN` secret is needed. Complete the first trusted publish within npm's configuration expiry window.
+
+For subsequent releases, update `package.json`, commit the version change with a conventional commit such as `chore: release v0.1.1`, push to `main`, and wait for CI to pass. Create and push the matching tag, then publish a GitHub release for it. Prereleases are not published by this workflow. A release created with another workflow's `GITHUB_TOKEN` does not trigger this workflow automatically; that workflow must explicitly dispatch `publish.yml` at the tag.

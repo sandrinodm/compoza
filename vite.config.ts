@@ -21,6 +21,17 @@ const ignoredPatterns = [
 const TEST_TIMEOUT_MILLIS = 5_000;
 
 export default defineConfig({
+  pack: {
+    entry: ['bin/compoza.ts'],
+    platform: 'node',
+    target: 'node22',
+    format: ['esm'],
+    dts: false,
+    unbundle: true,
+    root: '.',
+    // Runtime assets must remain beside the modules that read them through import.meta.url.
+    copy: { from: 'src/**/*.{sh,jq,tmpl}', to: 'dist/src', flatten: false },
+  },
   staged: {
     '*': 'vp check --fix',
     // jsdoc-lint checks a file named on the command line even when `jsdoc.json` excludes it, so this glob leaves out
