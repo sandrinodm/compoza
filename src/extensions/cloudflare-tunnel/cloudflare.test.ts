@@ -149,6 +149,37 @@ function failed(result: ReturnType<typeof spawnSync>) {
 }
 
 describe('Cloudflare Tunnel extension', { timeout: 15_000 }, () => {
+  it('applies templated origin settings through the real merge and rejects subsequent external edits', () =>
+    fixture(({ app, host, run, state, setState }) => {
+      if (host.proxy?.provider !== 'cloudflare-tunnel') {
+        throw new Error('Invalid fixture host');
+      }
+      const selected: HostConfig = {
+        ...host,
+        proxy: {
+          ...host.proxy,
+          templates: {
+            route: {
+              inline:
+                'hostname: {{domain}}\nservice: {{service}}\noriginRequest:\n  connectTimeout: 20\n  httpHostHeader: origin.example.com\n',
+            },
+          },
+        },
+      };
+      succeeded(run(cloudflareIngress.setup(selected).script));
+      const plan = cloudflareIngress.plan(app, selected);
+      succeeded(run(plan.route.script));
+      assert.deepStrictEqual(state().config.ingress[0].originRequest, {
+        connectTimeout: 20,
+        httpHostHeader: 'origin.example.com',
+      });
+      succeeded(run(plan.route.script));
+      const changed = state();
+      changed.config.ingress[0].originRequest.connectTimeout = 99;
+      setState(changed);
+      failed(run(plan.unroute.script));
+      assert.deepStrictEqual(state(), changed);
+    }));
   it('decodes without a public origin address and rejects invalid identifiers and credential-bearing URLs', () =>
     fixture(({ app, host }) => {
       assert.deepStrictEqual(Schema.decodeUnknownSync(Hosts)({ fixture: host }), { fixture: host });

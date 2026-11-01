@@ -4,6 +4,7 @@ import { Effect, Schema } from 'effect';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as YAML from 'yaml';
 
 import { composeFilesOf, DeployConfig, directoriesOf, environmentOf, ingressOf, loadApp } from './deploy.ts';
 
@@ -75,9 +76,9 @@ describe('loadApp', () => {
   it.effect('reads a folder or the file itself and resolves the folder', () =>
     withTempDir((dir) =>
       Effect.gen(function* () {
-        yield* Effect.promise(() => writeFile(join(dir, 'deploy.json'), JSON.stringify(valid)));
+        yield* Effect.promise(() => writeFile(join(dir, 'deploy.yaml'), YAML.stringify(valid)));
         const fromFolder = yield* loadApp(dir);
-        const fromFile = yield* loadApp(join(dir, 'deploy.json'));
+        const fromFile = yield* loadApp(join(dir, 'deploy.yaml'));
         assert.strictEqual(fromFolder.dir, dir);
         assert.strictEqual(fromFile.dir, dir);
         assert.strictEqual(fromFile.config.name, 'demo');
@@ -90,20 +91,32 @@ describe('loadApp', () => {
       Effect.gen(function* () {
         const error = yield* loadApp(dir).pipe(Effect.flip);
         assert.strictEqual(error._tag, 'DeployError');
-        assert.include(error.message, join(dir, 'deploy.json'));
+        assert.include(error.message, join(dir, 'deploy.yaml'));
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect('reports invalid JSON and invalid contents with the file name', () =>
+  it.effect('reports invalid YAML and invalid contents with the file name', () =>
     withTempDir((dir) =>
       Effect.gen(function* () {
-        yield* Effect.promise(() => writeFile(join(dir, 'deploy.json'), '{'));
+        yield* Effect.promise(() => writeFile(join(dir, 'deploy.yaml'), '{'));
         const invalidJson = yield* loadApp(dir).pipe(Effect.flip);
-        assert.include(invalidJson.message, 'not valid JSON');
-        yield* Effect.promise(() => writeFile(join(dir, 'deploy.json'), JSON.stringify({ name: 'x' })));
+        assert.include(invalidJson.message, 'not valid YAML');
+        yield* Effect.promise(() => writeFile(join(dir, 'deploy.yaml'), YAML.stringify({ name: 'x' })));
         const invalidConfig = yield* loadApp(dir).pipe(Effect.flip);
-        assert.include(invalidConfig.message, join(dir, 'deploy.json'));
+        assert.include(invalidConfig.message, join(dir, 'deploy.yaml'));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+  it.effect('discovers deploy.yml and prefers deploy.yaml when both exist', () =>
+    withTempDir((dir) =>
+      Effect.gen(function* () {
+        const alternate = join(dir, 'deploy.yml');
+        yield* Effect.promise(() => writeFile(alternate, YAML.stringify(valid)));
+        assert.strictEqual((yield* loadApp(dir)).file, alternate);
+        assert.strictEqual((yield* loadApp(alternate)).file, alternate);
+        yield* Effect.promise(() => writeFile(join(dir, 'deploy.yaml'), YAML.stringify(valid)));
+        assert.strictEqual((yield* loadApp(dir)).file, join(dir, 'deploy.yaml'));
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

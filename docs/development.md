@@ -64,13 +64,13 @@ src/extensions/
   1password/          config.ts, index.ts
   env-file/           config.ts, index.ts
   caddy/              config.ts, index.ts, checks.ts, scripts.ts, route.sh, provision.ts, provision.sh, templates.ts, templates/, tests
-  cloudflare-tunnel/  config.ts, index.ts, runtime.sh, merge.jq, cloudflare.test.ts
+  cloudflare-tunnel/  config.ts, index.ts, provision.ts, provision.sh, templates.ts, templates/, runtime.sh, merge.jq, tests
   config.ts           supported configuration schemas
   credentials.ts      credential contract and registry
   ingress.ts          ingress contract and registry
 ```
 
-These are bundled, source-level extensions. There is no package discovery, install command or arbitrary module loading from application JSON. Adding another implementation means shipping it with the CLI; existing configuration remains compatible.
+These are bundled, source-level extensions. There is no package discovery, install command or arbitrary module loading from application YAML. Adding another implementation means shipping it with the CLI; existing configuration remains compatible.
 
 ### Credential providers
 
@@ -98,23 +98,27 @@ To add ingress:
 3. Register the implementation in `ingressExtensions`, covering setup, probes, check interpretation, activation and removal. Check failures with `fix: "deploy"` are repaired by deployment and do not block it; other failures block.
 4. Test both client execution and frozen SSH operations, including route failure, removal and recovery.
 
-Apps and hosts select Caddy through `ingress.caddy`, or Cloudflare through `ingress["cloudflare-tunnel"]`, with settings nested under the extension name. Credential sources use `secrets["1password"]` and `secrets["env-file"]`. Exactly one extension is allowed per block. Omitted ingress or `{ "none": {} }` bypasses ingress. Legacy flat selectors and host `proxy` entries normalize to the existing internal contracts, so planners and frozen SSH scripts preserve their behavior. `setup-proxy` dispatches to the host's selected extension and remains explicit.
+Apps and hosts select Caddy through `ingress.caddy`, or Cloudflare through `ingress["cloudflare-tunnel"]`, with settings nested under the extension name. Credential sources use `secrets["1password"]` and `secrets["env-file"]`. Exactly one extension is allowed per block. Omitted ingress or `none: {}` bypasses ingress. Legacy flat selectors and host `proxy` entries normalize to the existing internal contracts, so planners and frozen SSH scripts preserve their behavior. `setup-proxy` dispatches to the host's selected extension and remains explicit.
 
 ### Caddy implementation
 
 Caddy's optional host `provision` settings dispatch to `extensions/caddy/provision.ts` and `provision.sh`. Planning generates non-secret Compose/Caddyfile content; the host script validates it with credentials from an existing host env file. Bootstrap never overwrites differing files or adopts another stack's container. Repeat runs retain per-app routes and persistent storage. `setup-proxy --dry-run` renders the planned script and input without opening SSH. Provisioning remains separate from ordinary app deployment and from the legacy existing-proxy setup script.
 
-Caddy defaults live in `extensions/caddy/templates/*.tmpl`. Host `templates.site`/`templates.config` and app `siteTemplate` accept filenames or `{ inline }` sources. Extension configuration loading resolves winning host files relative to their declaring JSON and app files after destination selection, replacing paths with inline text before pure planning. The renderer supports literal variables and truthy/inverted sections; it never evaluates JavaScript, shell code or environment variables. Frozen SSH routes contain the rendered configuration, not local template dependencies.
+Caddy defaults live in `extensions/caddy/templates/*.tmpl`. Host `templates.site`/`templates.config` and app `siteTemplate` accept filenames or `{ inline }` sources. Extension configuration loading resolves winning host files relative to their declaring YAML and app files after destination selection, replacing paths with inline text before pure planning. The renderer supports literal variables and truthy/inverted sections; it never evaluates JavaScript, shell code or environment variables. Frozen SSH routes contain the rendered configuration, not local template dependencies.
 
 Route mutations run the frozen `route.sh` runtime under the same proxy lock as setup. Files are staged and renamed before a validating reload; failures restore the file and attempt a recovery reload. Recovery failure retains the lock and private staging directory. Fresh stacks have healthchecks, bounded logs and explicit drain budgets.
 
 Operator guides: [Ingress](ingress.md), [Caddy templates](caddy-templates.md) and [Caddy production operations](caddy-production.md). The production guide also documents the opt-in real-Docker smoke test.
 
+### Cloudflare implementation
+
+Cloudflare host provisioning shares the explicit `setup-proxy` workflow. `provision.ts` renders and validates connector Compose configuration; `provision.sh` owns a per-stack lock, checks foreign-file/container ownership, validates a token's tunnel identity privately and waits for the native readiness check. `ingress-setup.ts` resolves optional native credential providers only after CLI dry-run handling and transports selected values over stdin. Route plans and application releases never carry setup credentials. Manual routing avoids API calls; managed routing retains the ownership journal and accepts bounded YAML origin templates. See [Cloudflare provisioning](cloudflare-provisioning.md).
+
 ## Tests
 
 - **Host-script tests** run real Bash and jq against temporary directories and a fake Docker executable. They cover activation, rollback, secret isolation, malformed metadata, and execution with Python blocked.
 - **Optional Compose parser tests** run `docker compose config` when the Docker CLI is available.
-- **Limits:** no test deploys a live stack or accesses a secret provider. 1Password behavior is covered through SDK API/type checks and mocked integrations only.
+- **Limits:** ordinary tests use fake daemons or local Compose parsing and never access live accounts. Opt-in Docker tests run disposable local stacks with synthetic credentials. 1Password behavior is covered through SDK API/type checks and mocked integrations only.
 - The multi-process integration groups use a 15-second per-test limit; ordinary unit tests keep five seconds.
 
 ## Host runtime conventions

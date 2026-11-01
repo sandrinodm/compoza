@@ -10,8 +10,8 @@ tagged with the commit, build and ship, `docker compose up` on the host, optiona
 stops, starts and deletes what it deployed. The tool owns every rule; its `--help` and `README.md` are the reference.
 
 Caddy host `templates.site` and `templates.config` accept local filenames or `{ inline }`
-text; paths resolve relative to the declaring host JSON (including external references).
-App `ingress.caddy.siteTemplate` resolves relative to deploy.json after destination selection.
+text; paths resolve relative to the declaring host YAML (including external references).
+App `ingress.caddy.siteTemplate` resolves relative to deploy.yaml after destination selection.
 Templates use literal variables and sections; credentials remain Caddy environment placeholders.
 Shared config templates apply only during provisioning and never bypass existing-file checks.
 
@@ -19,10 +19,10 @@ Shared config templates apply only during provisioning and never bypass existing
 
 - The CLI is `compoza` on `PATH` when linked. Otherwise locate the tool checkout and run
   `node /path/to/compoza/bin/compoza.ts`; do not assume a particular checkout directory.
-- An app opts in with a folder holding `deploy.json` next to its Dockerfile and Compose files, usually `infra/` or
-  `apps/<app>/deploy/`. Find it with a glob for `**/deploy.json` (ignore `node_modules`). Every app command takes that
+- An app opts in with a folder holding `deploy.yaml` next to its Dockerfile and Compose files, usually `infra/` or
+  `apps/<app>/deploy/`. Find it with a glob for `**/deploy.yaml` (ignore `node_modules`). Every app command takes that
   folder as its first argument; `publish` requires it, the others default to the working directory.
-- Global hosts live in `~/.config/compoza/hosts.json`; `./hosts.json` in the current working directory
+- Global hosts live in `~/.config/compoza/hosts.yaml`; `./hosts.yaml` in the current working directory
   overrides complete entries by name. Preserve that directory across commands. `--hosts` or `COMPOZA_HOSTS`
   selects one file exclusively. Entries may use `{ "$ref": "path" }` for a single external host config, relative
   to the containing file. If configuration is missing or a host is unknown, ask the user for missing details;
@@ -126,12 +126,12 @@ compoza delete <folder> [--volumes]   # route, containers and networks go; host 
 ```
 
 All three take `--dry-run` and `--destination`. SSH commands use the deployed host manifest/wrapper and ignore undeployed local Compose edits. Delete keeps host secrets, overlays and all release files as well as bind-mounted data. `delete` is destructive: confirm with the user before running it, and say whether
-`--volumes` is included (it removes the project's named volumes; bind-mounted host folders listed in `deploy.json`
+`--volumes` is included (it removes the project's named volumes; bind-mounted host folders listed in `deploy.yaml`
 are never removed). A deleted app comes back with `deploy`.
 
 ## Publish content
 
-Apps with `content` sections in `deploy.json` take files from this machine:
+Apps with `content` sections in `deploy.yaml` take files from this machine:
 
 ```sh
 compoza publish <folder> <section> <local folder> --dry-run   # lists changes; *deleting marks removals
@@ -146,7 +146,7 @@ Show the user any `*deleting` lines before publishing for real.
 - `Not ready to deploy: …`: run `check` and act on the `fix` of each failure as above.
 - `did not respond successfully within 180 s`: the stack is up but the URL is not answering; check `logs`, and the
   Caddy site file the dry run prints.
-- The tool refuses a `deploy.json` with unknown keys. If one still has top-level `domain` and `upstream`, move them
+- The tool refuses a `deploy.yaml` with unknown keys. If one still has top-level `domain` and `upstream`, move them
   under `"ingress": { "mode": "caddy-sites", "domain": …, "upstream": … }`.
 
 ## Host activation and private diagnostics
@@ -180,7 +180,7 @@ values and collisions with configured variables or deployment controls are rejec
 
 1Password authentication is operator-owned: `OP_SERVICE_ACCOUNT_TOKEN` for automation, or
 `COMPOZA_1PASSWORD_ACCOUNT` with an unlocked desktop app for interactive use. Never add credentials to
-`deploy.json` or fetch a personal vault merely to validate this implementation. SDK imports are optional and lazy;
+`deploy.yaml` or fetch a personal vault merely to validate this implementation. SDK imports are optional and lazy;
 real-provider integration needs an explicitly authorized disposable Environment.
 
 SSH managed snapshots live mode 0600 under `<stackDir>/.secrets` (0700), outside release bundles. Activation commits
@@ -194,3 +194,9 @@ predecessor may still be unsupported; redeploy the desired application revision 
 directly; they retain their historical runtime requirements. Explicit none/legacy deployments clear or replace the source without old-snapshot fallback.
 Delete keeps snapshots. Managed validation output is discarded; legacy host validation logs stay private on the host.
 Never describe source activation as atomic container rollback or claim reversal of migrations.
+
+## Cloudflare connector provisioning
+
+Host `ingress["cloudflare-tunnel"].provision` lets `setup-proxy` create the host connector and shared network. It requires a pre-existing remotely managed tunnel and exactly one of `envFile` (private host file with raw `TUNNEL_TOKEN`) or `secrets` (native 1Password/dotenv source, selected `CLOUDFLARE_TUNNEL_TOKEN`). Setup dry runs fetch no secrets or SSH. Real setup sends only the selected token over stdin, checks its account/tunnel identity, guards file/container ownership and waits for the native connection health check. Reruns recreate the shared connector and can briefly affect its applications.
+
+`templates.compose` customizes the hardened connector stack; `templates.route` and app `routeTemplate` customize managed `originRequest` settings. Filenames resolve relative to their declaring YAML. Preserve identity, credential and isolation invariants; differing existing Compose files require explicit reconciliation. `routing: "manual"` leaves dashboard routes untouched and needs no API token or state directory. Managed routing requires the separate host `apiTokenFile` and `stateDir`. DNS, tunnel creation and Access remain operator-owned. Read `docs/cloudflare-provisioning.md` when available.

@@ -56,7 +56,7 @@ export const CaddySettings = Schema.Struct({
   healthPath: Schema.optionalKey(HealthPath),
 
   /**
-   * An app-specific site template overriding the host default, relative to deploy.json when it is a filename.
+   * An app-specific site template overriding the host default, relative to deploy.yaml when it is a filename.
    */
   siteTemplate: Schema.optionalKey(CaddyTemplate),
 });
@@ -172,7 +172,7 @@ export const CaddyHostSettings = Schema.Struct({
   provision: Schema.optionalKey(CaddyProvision),
 
   /**
-   * Shared Caddy templates, with paths relative to the JSON file declaring this host.
+   * Shared Caddy templates, with paths relative to the YAML file declaring this host.
    */
   templates: Schema.optionalKey(
     Schema.Struct({

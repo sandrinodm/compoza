@@ -25,7 +25,7 @@ import { WAIT_TIMEOUT_MILLIS, waitForUrl } from './wait.ts';
  */
 export interface DeployOptions {
   /**
-   * The deploy folder, or its `deploy.json`.
+   * The deploy folder, or its `deploy.yaml`.
    */
   readonly target: string;
 
@@ -76,7 +76,7 @@ export interface Resolved {
 }
 
 /**
- * Reads the app's `deploy.json` and the hosts file, and pairs the app with its host.
+ * Reads the app's `deploy.yaml` and the hosts file, and pairs the app with its host.
  */
 export const resolve = Effect.fn('resolve')(function* (
   target: string,
@@ -104,7 +104,7 @@ interface Source {
   readonly tag: string;
 
   /**
-   * The absolute build context: `context` from `deploy.json` resolved against the deploy folder, else the Git root.
+   * The absolute build context: `context` from `deploy.yaml` resolved against the deploy folder, else the Git root.
    * With `--tag` nothing is built, so it falls back to the deploy folder instead and is never read.
    */
   readonly context: string;

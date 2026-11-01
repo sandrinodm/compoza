@@ -4,6 +4,7 @@ import { Effect, Schema } from 'effect';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as YAML from 'yaml';
 
 import type { App } from '../config/deploy.ts';
 import type { HostConfig } from '../config/hosts.ts';
@@ -48,36 +49,36 @@ const host: HostConfig = {
 };
 
 /**
- * Reads real JSON files through the same loaders used by the CLI.
+ * Reads real YAML files through the same loaders used by the CLI.
  */
 const loadFixture = Effect.fn(function* () {
   const dir = yield* Effect.promise(() => mkdtemp(join(tmpdir(), 'dd-config-')));
   return yield* Effect.gen(function* () {
-    yield* Effect.promise(() => writeFile(join(dir, 'deploy.json'), JSON.stringify(app.config)));
-    yield* Effect.promise(() => writeFile(join(dir, 'hosts.json'), JSON.stringify({ server: host })));
+    yield* Effect.promise(() => writeFile(join(dir, 'deploy.yaml'), YAML.stringify(app.config)));
+    yield* Effect.promise(() => writeFile(join(dir, 'hosts.yaml'), YAML.stringify({ server: host })));
     const loadedApp = yield* loadApp(dir);
-    const loadedHosts = yield* loadHosts(join(dir, 'hosts.json'));
+    const loadedHosts = yield* loadHosts(join(dir, 'hosts.yaml'));
     assert.deepStrictEqual(loadedApp.config, app.config);
     assert.deepStrictEqual(loadedHosts.server, host);
     assert.strictEqual(ingressFor(loadedApp), hostIngress(loadedHosts.server!));
     yield* Effect.promise(() =>
       writeFile(
-        join(dir, 'deploy.json'),
-        JSON.stringify({ ...app.config, ingress: { caddy, 'cloudflare-tunnel': cloudflare } }),
+        join(dir, 'deploy.yaml'),
+        YAML.stringify({ ...app.config, ingress: { caddy, 'cloudflare-tunnel': cloudflare } }),
       ),
     );
     const invalidApp = yield* loadApp(dir).pipe(Effect.flip);
     assert.include(invalidApp.message, 'invalid configuration');
     yield* Effect.promise(() =>
-      writeFile(join(dir, 'hosts.json'), JSON.stringify({ server: { ...host, proxy: caddyHost } })),
+      writeFile(join(dir, 'hosts.yaml'), YAML.stringify({ server: { ...host, proxy: caddyHost } })),
     );
-    const invalidHost = yield* loadHosts(join(dir, 'hosts.json')).pipe(Effect.flip);
+    const invalidHost = yield* loadHosts(join(dir, 'hosts.yaml')).pipe(Effect.flip);
     assert.include(invalidHost.message, 'never both');
   }).pipe(Effect.ensuring(Effect.promise(() => rm(dir, { recursive: true, force: true }))));
 });
 
 describe('named extension configuration', () => {
-  it.effect('loads app and host extension settings through the real JSON loaders', () =>
+  it.effect('loads app and host extension settings through the real YAML loaders', () =>
     loadFixture().pipe(Effect.provide(NodeServices.layer)),
   );
 

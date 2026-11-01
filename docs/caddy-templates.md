@@ -17,16 +17,22 @@ Caddy configuration lives in templates: the [bundled site template](../src/exten
 
 Override either under the host's `ingress.caddy.templates`:
 
-```json
-{
-  "templates": {
-    "site": "./caddy/site.caddy.tmpl",
-    "config": "./caddy/Caddyfile.tmpl"
-  }
-}
+```yaml
+templates:
+  site: ./caddy/site.caddy.tmpl
+  config: ./caddy/Caddyfile.tmpl
 ```
 
-These paths refer to files **on the CLI machine**, relative to the JSON file declaring the host. With a host `$ref`, they resolve relative to the referenced host file. Absolute paths and `~/` paths work too. Local hosts override entire global entries before template files are read. Files must be readable text files no larger than 256 KiB. Inline templates are also accepted, for example `"site": { "inline": "{{domain}} {\n reverse_proxy http://{{upstream}}\n}\n" }`.
+These paths refer to files **on the CLI machine**, relative to the YAML file declaring the host. With a host `$ref`, they resolve relative to the referenced host file. Absolute paths and `~/` paths work too. Local hosts override entire global entries before template files are read. Files must be readable text files no larger than 256 KiB. Inline templates are also accepted:
+
+```yaml
+templates:
+  site:
+    inline: |
+      {{domain}} {
+        reverse_proxy http://{{upstream}}
+      }
+```
 
 ## Shared Caddyfile template
 
@@ -65,7 +71,7 @@ The default template for apps can be as simple as this `site.caddy.tmpl`:
 }
 ```
 
-With those templates, `tls`, `logSnippet` and `provision.acmeDns` can be omitted from the host JSON because the template text supplies those choices. Provisioning still needs its image and any host env-file path. Never put literal credentials in templates: Caddy resolves `{env.CLOUDFLARE_API_TOKEN}` inside its container.
+With those templates, `tls`, `logSnippet` and `provision.acmeDns` can be omitted from the host YAML because the template text supplies those choices. Provisioning still needs its image and any host env-file path. Never put literal credentials in templates: Caddy resolves `{env.CLOUDFLARE_API_TOKEN}` inside its container.
 
 ## Variables and sections
 
@@ -80,21 +86,17 @@ Use `{{variable}}` for literal substitution, `{{#variable}}...{{/variable}}` for
 
 ## Override a template for one app
 
-An app or destination can override the host's site template through `deploy.json`:
+An app or destination can override the host's site template through `deploy.yaml`:
 
-```json
-{
-  "ingress": {
-    "caddy": {
-      "domain": "budget.example.com",
-      "upstream": "host.docker.internal:8300",
-      "siteTemplate": "./caddy/budget.caddy.tmpl"
-    }
-  }
-}
+```yaml
+ingress:
+  caddy:
+    domain: budget.example.com
+    upstream: host.docker.internal:8300
+    siteTemplate: ./caddy/budget.caddy.tmpl
 ```
 
-The app template path resolves relative to `deploy.json`, after destination selection. For budget's custom header, that file could contain:
+The app template path resolves relative to `deploy.yaml`, after destination selection. For budget's custom header, that file could contain:
 
 ```caddyfile
 {{domain}} {

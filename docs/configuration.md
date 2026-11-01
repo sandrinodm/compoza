@@ -2,7 +2,7 @@
 
 [README](../README.md) · [Ingress](ingress.md) · [Caddy templates](caddy-templates.md) · [Secrets](secrets.md) · [SSH deployment](ssh-deployment.md) · [Development](development.md)
 
-compoza reads two kinds of files: global and repository-local `hosts.json` files describing Docker hosts, and a `deploy.json` in each app repository. The hosts, accounts, paths and domains below are fictional, and IP addresses use reserved documentation ranges. Replace them with your own configuration.
+compoza reads two kinds of files: global and repository-local `hosts.yaml` files describing Docker hosts, and a `deploy.yaml` in each app repository. The hosts, accounts, paths and domains below are fictional, and IP addresses use reserved documentation ranges. Replace them with your own configuration.
 
 - [Hosts](#hosts)
 - [Apps](#apps)
@@ -15,48 +15,40 @@ compoza reads two kinds of files: global and repository-local `hosts.json` files
 - [Caddy templates](caddy-templates.md)
 - [Publishing content](#publishing-content)
 
+Configuration uses a single YAML 1.2 document. Duplicate keys, unknown fields and unsupported tags are rejected. Quote values that must remain strings, such as `environment: { PORT: "8080" }`; unquoted numbers and booleans retain their YAML types. App discovery prefers `deploy.yaml` and accepts `deploy.yml` when it is absent. Explicit app paths, `--hosts`, `COMPOZA_HOSTS` and `$ref` values select the exact file given.
+
 ## Hosts
 
-Global hosts live in `~/.config/compoza/hosts.json`. A `hosts.json` in the **current working directory** overrides global entries with the same host name and adds new ones. Each local entry replaces the entire global host configuration; fields are not merged. Either file may be absent. Run from the repository root to use its hosts file, including when targeting a nested app such as `compoza deploy infra`. There is no parent-directory search, and the app folder does not change host discovery.
+Global hosts live in `~/.config/compoza/hosts.yaml`. A `hosts.yaml` in the **current working directory** overrides global entries with the same host name and adds new ones. Each local entry replaces the entire global host configuration; fields are not merged. Either file may be absent. Run from the repository root to use its hosts file, including when targeting a nested app such as `compoza deploy infra`. There is no parent-directory search, and the app folder does not change host discovery.
 
 An explicit `--hosts <file>` selects only that file. Otherwise, `COMPOZA_HOSTS` selects only its file. Both bypass automatic local/global loading; a missing explicit file is an error. Malformed files and invalid host settings fail validation rather than falling back to another host.
 
-```json
-{
-  "atlas": {
-    "ssh": "deploy@atlas.example.com",
-    "platform": "linux/arm64",
-    "transport": {
-      "mode": "registry",
-      "registry": "registry.example.com"
-    },
-    "ingress": {
-      "caddy": {
-        "address": "192.0.2.42",
-        "dir": "/srv/proxy",
-        "container": "caddy",
-        "service": "caddy",
-        "network": "edge_network",
-        "tls": "dns cloudflare {env.CLOUDFLARE_API_TOKEN}",
-        "logSnippet": "request_log"
-      }
-    }
-  },
-  "cedar": {
-    "ssh": "deploy@cedar.example.com",
-    "platform": "linux/amd64",
-    "transport": {
-      "mode": "ssh-load"
-    }
-  },
-  "borealis": {
-    "ssh": "deploy@borealis.example.com",
-    "platform": "linux/amd64",
-    "transport": {
-      "mode": "remote-build"
-    }
-  }
-}
+```yaml
+atlas:
+  ssh: deploy@atlas.example.com
+  platform: linux/arm64
+  transport:
+    mode: registry
+    registry: registry.example.com
+  ingress:
+    caddy:
+      address: 192.0.2.42
+      dir: /srv/proxy
+      container: caddy
+      service: caddy
+      network: edge_network
+      tls: dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+      logSnippet: request_log
+cedar:
+  ssh: deploy@cedar.example.com
+  platform: linux/amd64
+  transport:
+    mode: ssh-load
+borealis:
+  ssh: deploy@borealis.example.com
+  platform: linux/amd64
+  transport:
+    mode: remote-build
 ```
 
 | Field       | Description                                                                                          |
@@ -68,42 +60,39 @@ An explicit `--hosts <file>` selects only that file. Otherwise, `COMPOZA_HOSTS` 
 
 ### External host files
 
-Both global and local hosts files can reference a separate JSON file for each host:
+Both global and local hosts files can reference a separate YAML file for each host:
 
-```json
-{
-  "atlas": { "$ref": "~/infrastructure/atlas.json" },
-  "cedar": { "$ref": "./hosts/cedar.json" }
-}
+```yaml
+atlas:
+  $ref: ~/infrastructure/atlas.yaml
+cedar:
+  $ref: ./hosts/cedar.yaml
 ```
 
-Each referenced file contains **one complete host configuration**, without the outer host-name key. For example, `~/infrastructure/atlas.json`:
+Each referenced file contains **one complete host configuration**, without the outer host-name key. For example, `~/infrastructure/atlas.yaml`:
 
-```json
-{
-  "ssh": "deploy@atlas.example.com",
-  "platform": "linux/amd64",
-  "transport": { "mode": "ssh-load" },
-  "ingress": {
-    "caddy": {
-      "address": "192.0.2.42",
-      "dir": "/srv/caddy",
-      "container": "caddy",
-      "network": "edge"
-    }
-  }
-}
+```yaml
+ssh: deploy@atlas.example.com
+platform: linux/amd64
+transport:
+  mode: ssh-load
+ingress:
+  caddy:
+    address: 192.0.2.42
+    dir: /srv/caddy
+    container: caddy
+    network: edge
 ```
 
-References accept absolute paths, `~/` paths, and paths relative to the containing hosts file. They read local files on the CLI machine; remote infrastructure paths such as `ingress.caddy.dir` still refer to the remote host. Caddy template paths are local to the CLI machine and resolve relative to the declaring JSON file; see [template sources](caddy-templates.md#select-template-sources). Inline hosts and references can coexist in the same hosts file. A reference cannot include host fields or point to another reference. Missing or invalid referenced files fail validation. References are resolved after local overrides, so a superseded global reference is not read.
+References accept absolute paths, `~/` paths, and paths relative to the containing hosts file. They read local files on the CLI machine; remote infrastructure paths such as `ingress.caddy.dir` still refer to the remote host. Caddy template paths are local to the CLI machine and resolve relative to the declaring YAML file; see [template sources](caddy-templates.md#select-template-sources). Inline hosts and references can coexist in the same hosts file. A reference cannot include host fields or point to another reference. Missing or invalid referenced files fail validation. References are resolved after local overrides, so a superseded global reference is not read.
 
 ### Image transports
 
-| `transport.mode` | Build and delivery                                                                                               |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `registry`       | Builds with `--push` to `transport.registry`; Compose pulls. The host needs a stored `docker login`.             |
-| `ssh-load`       | Builds with `--load` and pipes `docker save` through `ssh` into `docker load`.                                   |
-| `remote-build`   | Builds with the host daemon's default BuildKit builder, so the image loads there. Requires `"execution": "ssh"`. |
+| `transport.mode` | Build and delivery                                                                                           |
+| ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| `registry`       | Builds with `--push` to `transport.registry`; Compose pulls. The host needs a stored `docker login`.         |
+| `ssh-load`       | Builds with `--load` and pipes `docker save` through `ssh` into `docker load`.                               |
+| `remote-build`   | Builds with the host daemon's default BuildKit builder, so the image loads there. Requires `execution: ssh`. |
 
 `remote-build` explicitly selects both `docker --host ssh://…` and `buildx --builder default --load`, so an unrelated selected client builder or Docker context cannot redirect it. BuildKit transfers only the needed build context and respects `.dockerignore`; no source-tree rsync is needed. The host needs working BuildKit/Buildx.
 
@@ -111,46 +100,44 @@ With every transport, exclude production dotenv files and other secrets from bui
 
 ## Apps
 
-An app opts in with a folder holding `deploy.json`, its Dockerfile and its Compose files, for example `infra/` or `apps/<app>/deploy/`. This example uses the default client execution with two built targets and Caddy routing:
+An app opts in with a folder holding `deploy.yaml`, its Dockerfile and its Compose files, for example `infra/` or `apps/<app>/deploy/`. This example uses the default client execution with two built targets and Caddy routing:
 
-```json
-{
-  "name": "sample-app",
-  "host": "atlas",
-  "dockerfile": "Dockerfile",
-  "targets": ["worker", "web"],
-  "composeFiles": ["compose.yaml", "compose.production.yaml"],
-  "ingress": {
-    "caddy": {
-      "domain": "app.example.com",
-      "upstream": "sample-app-web:3000"
-    }
-  },
-  "directories": ["/srv/sample-app/data", "/srv/sample-app/pgdata"],
-  "environment": {
-    "SAMPLE_APP_DATA_PATH": "/srv/sample-app/data"
-  },
-  "secrets": {
-    "env-file": {
-      "path": "~/.config/compoza/sample-app.env"
-    }
-  },
-  "local": {
-    "composeFiles": ["compose.yaml"],
-    "environment": {},
-    "secrets": {
-      "none": {}
-    }
-  }
-}
+```yaml
+name: sample-app
+host: atlas
+dockerfile: Dockerfile
+targets:
+  - worker
+  - web
+composeFiles:
+  - compose.yaml
+  - compose.production.yaml
+ingress:
+  caddy:
+    domain: app.example.com
+    upstream: sample-app-web:3000
+directories:
+  - /srv/sample-app/data
+  - /srv/sample-app/pgdata
+environment:
+  SAMPLE_APP_DATA_PATH: /srv/sample-app/data
+secrets:
+  env-file:
+    path: ~/.config/compoza/sample-app.env
+local:
+  composeFiles:
+    - compose.yaml
+  environment: {}
+  secrets:
+    none: {}
 ```
 
 | Field                   | Description                                                                                                                           |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`                  | Compose project name and image prefix.                                                                                                |
-| `host`                  | Host key in `hosts.json`.                                                                                                             |
+| `host`                  | Host key in `hosts.yaml`.                                                                                                             |
 | `targets`               | Images to build from the Dockerfile, one per target. Use `[]` for third-party-only stacks.                                            |
-| `dockerfile`, `context` | Relative to the deploy folder. Default to `Dockerfile` beside `deploy.json` and the Git root.                                         |
+| `dockerfile`, `context` | Relative to the deploy folder. Default to `Dockerfile` beside `deploy.yaml` and the Git root.                                         |
 | `composeFiles`          | Compose files to apply, in order.                                                                                                     |
 | `profiles`              | Compose profiles to enable.                                                                                                           |
 | `execution`             | `client` (default) or `ssh`; see [Execution and transport](#execution-and-transport).                                                 |
@@ -172,11 +159,11 @@ SSH-specific fields are described in [SSH deployment](ssh-deployment.md).
 - Each target is named `<name>-<target>:<tag>`, prefixed with the registry for registry transport, and handed to Compose as `<TARGET>_IMAGE`. Compose files read `${WEB_IMAGE}`, `${WORKER_IMAGE}` and so on.
 - A deploy requires a clean checkout with at least one commit and tags images with the commit's first twelve characters. `--allow-dirty` permits a dirty checkout and tags `<commit>-dirty`.
 - `--tag <tag>` reuses images built earlier and skips Git and builds, so it works from a deploy folder that is no longer inside a checkout. It always uses the **current local configuration**; with SSH execution it does not restore an earlier Compose release.
-- With `"targets": []` there is no Git, Dockerfile or build-context requirement, and no build or application-registry authentication check. Compose still pulls missing third-party images.
+- With `targets: []` there is no Git, Dockerfile or build-context requirement, and no build or application-registry authentication check. Compose still pulls missing third-party images.
 
 ### Ingress
 
-Host `ingress` settings describe shared infrastructure; app `ingress` settings describe a route. Select one extension per block: `caddy`, `cloudflare-tunnel`, or `{ "none": {} }`. Destinations replace the complete ingress selection.
+Host `ingress` settings describe shared infrastructure; app `ingress` settings describe a route. Select one extension per block: `caddy`, `cloudflare-tunnel`, or `none: {}`. Destinations replace the complete ingress selection.
 
 See the [Ingress guide](ingress.md) for provider selection, host and app settings, setup commands, migration, and lifecycle behavior. For custom Caddyfiles and site blocks, see [Caddy templates](caddy-templates.md).
 
@@ -186,35 +173,33 @@ Compose resolves relative bind mounts on the host, so host paths must be absolut
 
 ### Local runs
 
-`local` overrides `composeFiles`, `environment` and the complete secret source for `--local` runs. When the app declares a production secret source, an explicit `local.secrets` is required, including `{ "none": {} }` when local Compose needs no secrets.
+`local` overrides `composeFiles`, `environment` and the complete secret source for `--local` runs. When the app declares a production secret source, an explicit `local.secrets` is required, including `none: {}` when local Compose needs no secrets.
 
 `--local` builds into this machine's Docker and starts the stack here, without remote readiness checks, transport or routes. It keeps this client build-and-run behavior regardless of `execution`.
 
 ## Destinations
 
-One `deploy.json` can deploy to several hosts or projects. Select one with `--destination <name>`, which every app command accepts, including `check`, `logs`, lifecycle commands, `rollback` and `publish`. Without the flag the default destination is used.
+One `deploy.yaml` can deploy to several hosts or projects. Select one with `--destination <name>`, which every app command accepts, including `check`, `logs`, lifecycle commands, `rollback` and `publish`. Without the flag the default destination is used.
 
-```json
-{
-  "name": "sample-app",
-  "host": "atlas",
-  "targets": ["web"],
-  "composeFiles": ["compose.yaml"],
-  "environment": {
-    "PUBLIC_TITLE": "Sample app"
-  },
-  "destinations": {
-    "atlas": {},
-    "cedar": {
-      "host": "cedar",
-      "projectName": "sample-app-dev",
-      "composeFiles": ["compose.yaml", "compose.cedar.yaml"],
-      "ingress": {
-        "none": {}
-      }
-    }
-  }
-}
+```yaml
+name: sample-app
+host: atlas
+targets:
+  - web
+composeFiles:
+  - compose.yaml
+environment:
+  PUBLIC_TITLE: Sample app
+destinations:
+  atlas: {}
+  cedar:
+    host: cedar
+    projectName: sample-app-dev
+    composeFiles:
+      - compose.yaml
+      - compose.cedar.yaml
+    ingress:
+      none: {}
 ```
 
 - When supplied, a destination **replaces** `host`, `projectName`, `composeFiles`, `execution`, the entire `remote` object, `profiles`, `ingress`, `health`, `directories`, `content` and the complete `secrets` source.
@@ -288,14 +273,11 @@ With SSH execution these commands use the host's deployed release instead; see [
 
 ## Publishing content
 
-`publish` mirrors a local folder into one of the app's `content` sections on the host using rsync. Add a section to `deploy.json`:
+`publish` mirrors a local folder into one of the app's `content` sections on the host using rsync. Add a section to `deploy.yaml`:
 
-```json
-{
-  "content": {
-    "public": "/home/deploy/content/sample-app/public"
-  }
-}
+```yaml
+content:
+  public: /home/deploy/content/sample-app/public
 ```
 
 Then preview and publish:

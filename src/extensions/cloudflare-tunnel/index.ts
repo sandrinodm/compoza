@@ -9,6 +9,8 @@ import type { CloudflareProxy } from './config.ts';
 import { REMOTE_PATH, shellQuote } from '../../command.ts';
 import { ingressOf, projectNameOf } from '../../config/deploy.ts';
 import { ingressConfigOf } from '../../config/hosts.ts';
+import { provisionOperation } from './provision.ts';
+import { routeRule } from './templates.ts';
 
 /**
  * Selects Cloudflare host settings without accepting a different ingress implementation accidentally.
@@ -26,6 +28,7 @@ function settings(app: App) {
   if (ingress?.mode !== 'cloudflare-tunnel') {
     throw new Error('Invalid Cloudflare Tunnel ingress selection');
   }
+
   return ingress;
 }
 
@@ -36,10 +39,23 @@ function settings(app: App) {
  * rollback; the script contains a token file path but never the token itself.
  */
 function script(proxy: CloudflareProxy, action: 'setup' | 'probe' | 'route' | 'unroute', app?: App): string {
+  if (proxy.routing === 'manual') {
+    if (action === 'route' || action === 'unroute') {
+      return 'set -eu\n# Published routes are operator-managed in Cloudflare.\ntrue\n';
+    }
+
+    return connectorProbe(proxy, action === 'setup');
+  }
+
+  if (proxy.apiTokenFile === undefined || proxy.stateDir === undefined) {
+    throw new Error('Managed Cloudflare routing requires apiTokenFile');
+  }
+
   const root = `${proxy.stateDir}/${proxy.accountId}-${proxy.tunnelId}`;
-  const rule = app === undefined ? [] : [{ hostname: settings(app).domain, service: settings(app).service }];
+  const rule = app === undefined ? [] : [routeRule(proxy, app, projectNameOf(app))];
   const wanted = action === 'unroute' ? [] : rule;
   const source = readFileSync(new URL('./runtime.sh', import.meta.url), 'utf8');
+
   const merge = readFileSync(new URL('./merge.jq', import.meta.url), 'utf8');
   return `set +x
 set -euo pipefail
@@ -54,6 +70,42 @@ cf_wanted=${shellQuote(JSON.stringify(wanted))}
 cf_merge_filter=${shellQuote(merge)}
 ${source}
 ${action === 'probe' ? 'cf_probe' : action === 'setup' ? 'cf_setup' : 'cf_mutate'}
+${action === 'probe' && proxy.container !== undefined && proxy.network !== undefined ? connectorProbe(proxy) : ''}
+`;
+}
+
+/**
+ * Reads local connector/network readiness without API credentials or host writes, including dashboard-managed routes.
+ */
+function connectorProbe(proxy: CloudflareProxy, requireReady = false): string {
+  if (proxy.container === undefined || proxy.network === undefined) {
+    throw new Error('Cloudflare connector checks require container and network');
+  }
+
+  return `set +x
+set -eu
+${REMOTE_PATH}
+ready=yes
+if docker network inspect ${shellQuote(proxy.network)} >/dev/null 2>&1; then
+  echo cf_network=yes
+else
+  echo cf_network=no
+  ready=no
+fi
+if [ "$(docker inspect -f '{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' ${shellQuote(proxy.container)} 2>/dev/null)" = 'true healthy' ]; then
+  echo cf_connector=yes
+else
+  echo cf_connector=no
+  ready=no
+fi
+${
+  requireReady
+    ? `if [ "$ready" != yes ]; then
+  echo 'Cloudflare connector/network is not healthy; run setup-proxy with provision or prepare the connector' >&2
+  exit 1
+fi`
+    : ''
+}
 `;
 }
 
@@ -79,7 +131,26 @@ function checks(
       },
     ];
   }
+
   const ingress = settings(app);
+
+  const localChecks: Array<Check> =
+    proxy.container === undefined
+      ? []
+      : [
+          {
+            name: 'cloudflare-connector',
+            ok: probe.cf_connector === 'yes',
+            detail: 'Host connector must be running and healthy',
+            fix: 'setup-proxy',
+          },
+          {
+            name: 'cloudflare-network',
+            ok: probe.cf_network === 'yes',
+            detail: 'Shared connector network must exist; the app must join it',
+            fix: 'setup-proxy',
+          },
+        ];
   const checks: Array<Check> = [
     {
       name: 'dns',
@@ -136,7 +207,8 @@ function checks(
       fix: 'deploy',
     },
   ];
-  return checks;
+
+  return proxy.routing === 'manual' ? [checks[0]!, ...localChecks] : [...checks, ...localChecks];
 }
 
 /**
@@ -149,6 +221,7 @@ export const cloudflareIngress: IngressExtension = {
     if (proxy === undefined) {
       throw new Error('cloudflare-tunnel requires a matching host proxy');
     }
+
     const ingress = settings(app);
     return {
       description: `${ingress.domain} through Cloudflare Tunnel`,
@@ -168,6 +241,18 @@ export const cloudflareIngress: IngressExtension = {
     if (proxy === undefined) {
       throw new Error('cloudflare-tunnel requires a matching host proxy');
     }
+
+    if (proxy.provision !== undefined) {
+      const operation = provisionOperation(proxy);
+      return {
+        ...operation,
+        script:
+          proxy.routing === 'manual'
+            ? `${operation.script}\n${script(proxy, 'setup')}`
+            : `${script(proxy, 'setup')}\n${operation.script}`,
+      };
+    }
+
     return { script: script(proxy, 'setup'), label: '<prepare Cloudflare Tunnel route ownership storage>' };
   },
   domain: (app, host) => (proxyFor(host) === undefined ? undefined : settings(app).domain),

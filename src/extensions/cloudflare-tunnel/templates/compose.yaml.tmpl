@@ -1,0 +1,32 @@
+name: {{project}}
+services:
+  {{service}}:
+    image: {{image}}
+    container_name: {{container}}
+    user: {{user}}
+    restart: unless-stopped
+    entrypoint: [cloudflared]
+    command: [tunnel, --no-autoupdate, --metrics, '127.0.0.1:20241', --grace-period, {{gracePeriod}}, run]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: {{stopGracePeriod}}
+    mem_limit: 128m
+    pids_limit: 64
+    logging:
+      driver: local
+      options: {max-size: 10m, max-file: '3'}
+    env_file:
+      - path: {{envFile}}
+        required: true
+        format: raw
+    networks: [edge, egress]
+    healthcheck:
+      test: [CMD, cloudflared, tunnel, --metrics, '127.0.0.1:20241', ready]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+networks:
+  edge: {external: true, name: {{network}}}
+  egress: {}

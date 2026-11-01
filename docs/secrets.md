@@ -2,7 +2,7 @@
 
 [README](../README.md) · [Configuration](configuration.md) · [Ingress](ingress.md) · [Caddy templates](caddy-templates.md) · [SSH deployment](ssh-deployment.md) · [Development](development.md)
 
-Secrets are resolved on the CLI machine from one explicitly selected source. Never put tokens, passwords or account authentication in `deploy.json`, `environment`, assets or Docker build contexts.
+Secrets are resolved on the CLI machine from one explicitly selected source. Never put tokens, passwords or account authentication in `deploy.yaml`, `environment`, assets or Docker build contexts.
 
 - [Sources](#sources)
 - [Where sources apply](#where-sources-apply)
@@ -19,35 +19,27 @@ Secrets are resolved on the CLI machine from one explicitly selected source. Nev
 
 A dotenv file on the CLI machine:
 
-```json
-{
-  "env-file": {
-    "path": "~/.config/compoza/sample-app.env"
-  }
-}
+```yaml
+env-file:
+  path: ~/.config/compoza/sample-app.env
 ```
 
 A 1Password Environment:
 
-```json
-{
-  "1password": {
-    "environmentId": "fictional-atlas-environment-id"
-  }
-}
+```yaml
+1password:
+  environmentId: fictional-atlas-environment-id
 ```
 
 No secrets:
 
-```json
-{
-  "none": {}
-}
+```yaml
+none: {}
 ```
 
 The source object selects exactly one extension by name: `secrets["1password"]`, `secrets["env-file"]`, or `secrets.none`. Settings belong inside that extension object. Unknown extensions, missing required settings, multiple selected extensions and mixed legacy/nested selectors are rejected.
 
-Existing flat objects such as `{ "provider": "1password", "environmentId": "…" }` remain supported for migration. Both forms follow the same source replacement, local isolation, validation and dry-run rules.
+Existing flat objects such as `{ provider: 1password, environmentId: … }` remain supported for migration. Both forms follow the same source replacement, local isolation, validation and dry-run rules.
 
 Relative dotenv paths resolve against the deploy folder; `~/` expands to the operator's home folder. Both providers work with client and SSH execution.
 
@@ -55,7 +47,7 @@ Relative dotenv paths resolve against the deploy folder; `~/` expands to the ope
 
 - `secrets` is supported at app level, under a destination, and under `local`.
 - A destination's `secrets` replaces the whole inherited source, including inherited legacy `envFile` and `remote.envFile` settings.
-- Use `{ "none": {} }` to intentionally clear an inherited source.
+- Use `none: {}` to intentionally clear an inherited source.
 - A production source requires an explicit `local.secrets` for `--local` runs, including `none` when local Compose needs no secrets.
 
 ### Legacy sources and aliases

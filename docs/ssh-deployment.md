@@ -2,7 +2,7 @@
 
 [README](../README.md) · [Configuration](configuration.md) · [Ingress](ingress.md) · [Caddy templates](caddy-templates.md) · [Secrets](secrets.md) · [Development](development.md)
 
-With `"execution": "ssh"`, compoza uploads the selected Compose definitions as a versioned release and runs the host's own Compose CLI over SSH. Releases can be inspected, rolled back and recovered on the host. Client execution remains the default; see [Configuration](configuration.md#execution-and-transport) for how execution combines with image transport.
+With `execution: ssh`, compoza uploads the selected Compose definitions as a versioned release and runs the host's own Compose CLI over SSH. Releases can be inspected, rolled back and recovered on the host. Client execution remains the default; see [Configuration](configuration.md#execution-and-transport) for how execution combines with image transport.
 
 - [Host prerequisites](#host-prerequisites)
 - [Example: two destinations](#example-two-destinations)
@@ -48,70 +48,63 @@ Before Compose mutation, the runtime verifies atomic symlink replacement using t
 
 This app deploys to `atlas` (a `registry` host with a shared Caddy, from the [hosts example](configuration.md#hosts)) or to `borealis`, which builds on the host:
 
-```json
-{
-  "borealis": {
-    "ssh": "deploy@borealis.example.com",
-    "address": "198.51.100.73",
-    "platform": "linux/amd64",
-    "transport": {
-      "mode": "remote-build"
-    }
-  }
-}
+```yaml
+borealis:
+  ssh: deploy@borealis.example.com
+  address: 198.51.100.73
+  platform: linux/amd64
+  transport:
+    mode: remote-build
 ```
 
-`deploy.json`:
+`deploy.yaml`:
 
-```json
-{
-  "name": "sample-app",
-  "host": "atlas",
-  "targets": ["web"],
-  "dockerfile": "Dockerfile",
-  "context": "..",
-  "execution": "ssh",
-  "composeFiles": ["compose.yaml"],
-  "assets": ["config/nginx.conf"],
-  "profiles": ["web"],
-  "environment": {
-    "PUBLIC_TITLE": "Sample app"
-  },
-  "remote": {
-    "stackDir": "/srv/stacks/sample-app",
-    "envFile": "/srv/stacks/sample-app/.env",
-    "overlayFile": "/srv/stacks/sample-app/compose.host.yaml",
-    "waitTimeoutSeconds": 180
-  },
-  "ingress": {
-    "caddy": {
-      "domain": "app.example.com",
-      "upstream": "sample-app-web:3000"
-    }
-  },
-  "destinations": {
-    "atlas": {},
-    "borealis": {
-      "host": "borealis",
-      "projectName": "sample-app-dev",
-      "composeFiles": ["compose.yaml", "compose.borealis.yaml"],
-      "profiles": ["web", "worker"],
-      "remote": {
-        "stackDir": "/home/deploy/stacks/sample-app",
-        "envFile": "/home/deploy/stacks/sample-app/.env",
-        "overlayFile": "/home/deploy/stacks/sample-app/compose.host.yaml",
-        "waitTimeoutSeconds": 180
-      },
-      "ingress": {
-        "none": {}
-      },
-      "health": {
-        "url": "http://127.0.0.1:8080/healthz",
-        "timeoutSeconds": 120
-      }
-    }
-  }
-}
+```yaml
+name: sample-app
+host: atlas
+targets:
+  - web
+dockerfile: Dockerfile
+context: ..
+execution: ssh
+composeFiles:
+  - compose.yaml
+assets:
+  - config/nginx.conf
+profiles:
+  - web
+environment:
+  PUBLIC_TITLE: Sample app
+remote:
+  stackDir: /srv/stacks/sample-app
+  envFile: /srv/stacks/sample-app/.env
+  overlayFile: /srv/stacks/sample-app/compose.host.yaml
+  waitTimeoutSeconds: 180
+ingress:
+  caddy:
+    domain: app.example.com
+    upstream: sample-app-web:3000
+destinations:
+  atlas: {}
+  borealis:
+    host: borealis
+    projectName: sample-app-dev
+    composeFiles:
+      - compose.yaml
+      - compose.borealis.yaml
+    profiles:
+      - web
+      - worker
+    remote:
+      stackDir: /home/deploy/stacks/sample-app
+      envFile: /home/deploy/stacks/sample-app/.env
+      overlayFile: /home/deploy/stacks/sample-app/compose.host.yaml
+      waitTimeoutSeconds: 180
+    ingress:
+      none: {}
+    health:
+      url: http://127.0.0.1:8080/healthz
+      timeoutSeconds: 120
 ```
 
 `compose.yaml`:
@@ -288,4 +281,4 @@ The first upgraded release can still have a version-1 predecessor, which default
 
 ## Third-party-only stacks
 
-Use `"targets": []` for stacks that only run published images. There is no Git, Dockerfile or build-context requirement, and no build or application-registry authentication check. Compose still pulls missing third-party images, and the same release and health rules apply. The [README quickstart](../README.md#quickstart) is a complete example.
+Use `targets: []` for stacks that only run published images. There is no Git, Dockerfile or build-context requirement, and no build or application-registry authentication check. Compose still pulls missing third-party images, and the same release and health rules apply. The [README quickstart](../README.md#quickstart) is a complete example.

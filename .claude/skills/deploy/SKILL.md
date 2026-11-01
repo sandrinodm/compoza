@@ -2,18 +2,18 @@
 name: deploy
 description: Deploy an app to its Docker host with compoza — checks DNS and the shared Caddy, then builds, ships, runs, and routes it.
 disable-model-invocation: true
-argument-hint: <folder holding deploy.json> [--destination <name>]
+argument-hint: <folder holding deploy.yaml> [--destination <name>]
 ---
 
 # Deploy
 
-Deploy the app whose `deploy.json` is in `$ARGUMENTS` with `compoza`. The tool does the work and owns every rule (its `--help` and its `README.md` are the reference); this skill sequences it and stops for the decisions that belong to the user.
+Deploy the app whose `deploy.yaml` is in `$ARGUMENTS` with `compoza`. The tool does the work and owns every rule (its `--help` and its `README.md` are the reference); this skill sequences it and stops for the decisions that belong to the user.
 
 ## 1. Resolve the app
 
-If `$ARGUMENTS` is empty, look for `deploy.json` files in the repository (for example `infra/deploy.json` or `apps/*/deploy/deploy.json`) and ask which one to deploy.
+If `$ARGUMENTS` is empty, look for `deploy.yaml` files in the repository (for example `infra/deploy.yaml` or `apps/*/deploy/deploy.yaml`) and ask which one to deploy.
 
-Done when one folder with a `deploy.json` is chosen. If it has `destinations`, resolve the requested destination or use its app defaults; carry the same `--destination <name>` through every app command. Never guess SSH aliases or host paths. Explicit user authorization in the current session takes precedence over confirmation prompts below.
+Done when one folder with a `deploy.yaml` is chosen. If it has `destinations`, resolve the requested destination or use its app defaults; carry the same `--destination <name>` through every app command. Never guess SSH aliases or host paths. Explicit user authorization in the current session takes precedence over confirmation prompts below.
 
 ## 2. Check readiness
 
@@ -54,7 +54,7 @@ For SSH release recovery use `compoza rollback <folder> [--release <id>]` with t
 
 ## 5. Report
 
-Give the user the URL, the deployed tag, and anything that still needs them, such as publishing content into a section named in `deploy.json` `content`.
+Give the user the URL, the deployed tag, and anything that still needs them, such as publishing content into a section named in `deploy.yaml` `content`.
 
 ## Host activation and private diagnostics
 
@@ -87,7 +87,7 @@ values and collisions with configured variables or deployment controls are rejec
 
 1Password authentication is operator-owned: `OP_SERVICE_ACCOUNT_TOKEN` for automation, or
 `COMPOZA_1PASSWORD_ACCOUNT` with an unlocked desktop app for interactive use. Never add credentials to
-`deploy.json` or fetch a personal vault merely to validate this implementation. SDK imports are optional and lazy;
+`deploy.yaml` or fetch a personal vault merely to validate this implementation. SDK imports are optional and lazy;
 real-provider integration needs an explicitly authorized disposable Environment.
 
 SSH managed snapshots live mode 0600 under `<stackDir>/.secrets` (0700), outside release bundles. Activation commits
@@ -101,3 +101,9 @@ release instead of invoking that wrapper. `deploy --tag` still uses current loca
 directly; they retain their historical runtime requirements. Explicit none/legacy deployments clear or replace the source without old-snapshot fallback.
 Delete keeps snapshots. Managed validation output is discarded; legacy host validation logs stay private on the host.
 Never describe source activation as atomic container rollback or claim reversal of migrations.
+
+## Cloudflare connector provisioning
+
+Host `ingress["cloudflare-tunnel"].provision` lets `setup-proxy` create the host connector and shared network. It requires a pre-existing remotely managed tunnel and exactly one of `envFile` (private host file with raw `TUNNEL_TOKEN`) or `secrets` (native 1Password/dotenv source, selected `CLOUDFLARE_TUNNEL_TOKEN`). Setup dry runs fetch no secrets or SSH. Real setup sends only the selected token over stdin, checks its account/tunnel identity, guards file/container ownership and waits for the native connection health check. Reruns recreate the shared connector and can briefly affect its applications.
+
+`templates.compose` customizes the hardened connector stack; `templates.route` and app `routeTemplate` customize managed `originRequest` settings. Filenames resolve relative to their declaring YAML. Preserve identity, credential and isolation invariants; differing existing Compose files require explicit reconciliation. `routing: "manual"` leaves dashboard routes untouched and needs no API token or state directory. Managed routing requires the separate host `apiTokenFile` and `stateDir`. DNS, tunnel creation and Access remain operator-owned. Read `docs/cloudflare-provisioning.md` when available.

@@ -8,6 +8,7 @@ import { readSecrets } from './config/secrets.ts';
 import { deploy, resolve } from './deploy.ts';
 import { DeployError } from './errors.ts';
 import { hostIngress } from './extensions/ingress.ts';
+import { setupOperationInput } from './ingress-setup.ts';
 import { lifecycle, projectArgs, remove } from './lifecycle.ts';
 import { publish } from './publish.ts';
 import { Remote } from './services/Remote.ts';
@@ -15,11 +16,11 @@ import { DryRun, Shell } from './services/Shell.ts';
 import { inspectSsh, rollbackSsh } from './ssh-deploy.ts';
 
 /**
- * The deploy folder argument shared by the app commands: a folder holding `deploy.json`, or the file itself, defaulting
+ * The deploy folder argument shared by the app commands: a folder holding `deploy.yaml`, or the file itself, defaulting
  * to the working directory.
  */
 const folder = Argument.String('folder').pipe(
-  Argument.withDescription('Folder holding deploy.json (or the file itself); defaults to the working directory'),
+  Argument.withDescription('Folder holding deploy.yaml (or the file itself); defaults to the working directory'),
   Argument.withDefault('.'),
 );
 
@@ -30,7 +31,7 @@ const folder = Argument.String('folder').pipe(
  * /tmp/src` would bind `notes` to the folder and `/tmp/src` to the section, then fail on a missing source.
  */
 const requiredFolder = Argument.String('folder').pipe(
-  Argument.withDescription('Folder holding deploy.json (or the file itself)'),
+  Argument.withDescription('Folder holding deploy.yaml (or the file itself)'),
 );
 
 /**
@@ -39,11 +40,11 @@ const requiredFolder = Argument.String('folder').pipe(
 const root = Command.make('compoza').pipe(
   Command.withSharedFlags({
     destination: Flag.String('destination').pipe(
-      Flag.withDescription('Named destination from deploy.json'),
+      Flag.withDescription('Named destination from deploy.yaml'),
       Flag.optional,
     ),
     hosts: Flag.String('hosts').pipe(
-      Flag.withDescription('Exclusive hosts file (or $COMPOZA_HOSTS); otherwise ./hosts.json overrides global hosts'),
+      Flag.withDescription('Exclusive hosts file (or $COMPOZA_HOSTS); otherwise ./hosts.yaml overrides global hosts'),
       Flag.optional,
     ),
   }),
@@ -162,7 +163,7 @@ const deployCommand = Command.make(
 ).pipe(
   Command.withDescription('Check, build, ship, run and route an app on its host'),
   Command.withExamples([
-    { command: 'compoza deploy infra --dry-run', description: 'Preview the deployment of ./infra/deploy.json' },
+    { command: 'compoza deploy infra --dry-run', description: 'Preview the deployment of ./infra/deploy.yaml' },
     {
       command: 'compoza deploy infra --tag 1a2b3c4d5e6f',
       description: 'Reuse earlier images with current local config',
@@ -199,7 +200,8 @@ const setupProxy = Command.make(
       }
       return;
     }
-    const output = yield* remote.run(host, operation.script, operation.input, operation.label);
+    const input = yield* setupOperationInput(operation);
+    const output = yield* remote.run(host, operation.script, input, operation.label);
     yield* Console.log(output.trimEnd());
   }),
 ).pipe(
@@ -213,7 +215,7 @@ const publishCommand = Command.make(
   'publish',
   {
     folder: requiredFolder,
-    section: Argument.String('section').pipe(Argument.withDescription('Content section named in deploy.json')),
+    section: Argument.String('section').pipe(Argument.withDescription('Content section named in deploy.yaml')),
     source: Argument.String('source').pipe(Argument.withDescription('Local folder to mirror')),
     dryRun: Flag.Boolean('dry-run').pipe(
       Flag.withDescription('List the changes rsync would make'),

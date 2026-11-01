@@ -1,6 +1,6 @@
 ---
 name: deploy
-description: Deploy an application with the compoza CLI by resolving its deploy.json and destination, checking readiness, previewing the plan, deploying, and verifying the result. Use for a deployment request; use compoza for inspection, rollback, or other operations.
+description: Deploy an application with the compoza CLI by resolving its deploy.yaml and destination, checking readiness, previewing the plan, deploying, and verifying the result. Use for a deployment request; use compoza for inspection, rollback, or other operations.
 ---
 
 # Deploy with compoza
@@ -13,11 +13,11 @@ information that cannot be established from the repository or current session.
 
 1. Locate `compoza` on `PATH`. Otherwise locate its checkout and invoke
    `node /path/to/compoza/bin/compoza.ts`. Check `--help` before assuming flags.
-2. Find the requested `deploy.json`, commonly under `infra/` or an app's deploy folder.
+2. Find the requested `deploy.yaml`, commonly under `infra/` or an app's deploy folder.
    If several apps fit and the target is unclear, ask which one. Never guess host addresses.
 3. Select the requested `--destination <name>`, or retain the app defaults. Carry the
-   same selection through every command. `./hosts.json` in the current working directory
-   overrides global hosts in `~/.config/compoza/hosts.json` by name. Preserve the
+   same selection through every command. `./hosts.yaml` in the current working directory
+   overrides global hosts in `~/.config/compoza/hosts.yaml` by name. Preserve the
    working directory and any explicit `--hosts` or `COMPOZA_HOSTS` selection; explicit
    selection uses one file exclusively. Host entries may reference external files with `$ref`.
 
@@ -60,7 +60,7 @@ compoza logs infra --tail 50
   only when source access needs verification; add `--local` to test the local source.
   Reports contain names/status only. `--local` alone performs no secret access check.
 - Authentication belongs to the operator environment: `OP_SERVICE_ACCOUNT_TOKEN` or
-  `COMPOZA_1PASSWORD_ACCOUNT`. Never place credentials in app JSON, assets,
+  `COMPOZA_1PASSWORD_ACCOUNT`. Never place credentials in app YAML, assets,
   image builds, command arguments, or chat. Never read a personal vault just to test
   the CLI implementation.
 - Do not print resolved Compose configuration or host validation logs. Managed
@@ -88,3 +88,9 @@ establishing that its owner is no longer active.
 Report the destination, tag/release, verification result, and URL when configured.
 Identify any remaining action, such as publishing a content section. Do not claim
 success when a phase failed or cleanup is still required.
+
+## Cloudflare connector provisioning
+
+Host `ingress["cloudflare-tunnel"].provision` lets `setup-proxy` create the host connector and shared network. It requires a pre-existing remotely managed tunnel and exactly one of `envFile` (private host file with raw `TUNNEL_TOKEN`) or `secrets` (native 1Password/dotenv source, selected `CLOUDFLARE_TUNNEL_TOKEN`). Setup dry runs fetch no secrets or SSH. Real setup sends only the selected token over stdin, checks its account/tunnel identity, guards file/container ownership and waits for the native connection health check. Reruns recreate the shared connector and can briefly affect its applications.
+
+`templates.compose` customizes the hardened connector stack; `templates.route` and app `routeTemplate` customize managed `originRequest` settings. Filenames resolve relative to their declaring YAML. Preserve identity, credential and isolation invariants; differing existing Compose files require explicit reconciliation. `routing: "manual"` leaves dashboard routes untouched and needs no API token or state directory. Managed routing requires the separate host `apiTokenFile` and `stateDir`. DNS, tunnel creation and Access remain operator-owned. Read `docs/cloudflare-provisioning.md` when available.

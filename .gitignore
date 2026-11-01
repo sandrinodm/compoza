@@ -170,5 +170,5 @@ pnpm-debug.log*
 # AI agent worktrees
 .claude/worktrees/
 
-# Downloaded upstream documentation (docsdown)
+# Local upstream documentation references
 /.reference/

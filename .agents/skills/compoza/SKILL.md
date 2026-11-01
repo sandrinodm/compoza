@@ -12,9 +12,9 @@ self-contained when copied into another repository.
 
 ## Resolve scope first
 
-- Locate the requested `deploy.json`. Ask if the app or destination is ambiguous.
+- Locate the requested `deploy.yaml`. Ask if the app or destination is ambiguous.
 - Preserve `--destination <name>` and any `--hosts` override on every app command.
-  Global hosts live in `~/.config/compoza/hosts.json`; `./hosts.json` in the current
+  Global hosts live in `~/.config/compoza/hosts.yaml`; `./hosts.yaml` in the current
   working directory overrides complete entries by name. `--hosts` or `COMPOZA_HOSTS`
   selects one file exclusively. Entries may use `{ "$ref": "path" }` for a single external
   host config, relative to the containing file. Do not invent addresses, aliases, paths, or credentials.
@@ -49,9 +49,9 @@ Without `provision`, setup adapts the existing proxy. Starting/recreating shared
 can interrupt all routed sites; that impact needs authorization within the task scope.
 
 Caddy `templates.site` and `templates.config` accept local filenames or `{ inline }` text.
-Host template paths resolve relative to the declaring host JSON, including external `$ref`
+Host template paths resolve relative to the declaring host YAML, including external `$ref`
 files. An app's `ingress.caddy.siteTemplate` overrides the host site template and resolves
-relative to deploy.json after destination selection. Credentials stay in Caddy environment
+relative to deploy.yaml after destination selection. Credentials stay in Caddy environment
 placeholders, never literal template text. Shared config templates apply only during
 provisioning; they do not overwrite existing operator-managed configuration.
 
@@ -101,7 +101,7 @@ authorized before publishing. Do not change section paths to work around a failu
 - Ordinary checks/dry runs do not fetch secrets. Explicit `check --secrets` reports
   names/status only. Pair `--local` with `--secrets` for local source access;
   `--local` alone skips remote readiness without checking a provider or local Docker.
-- Keep 1Password credentials in the operator environment, never app JSON or chat.
+- Keep 1Password credentials in the operator environment, never app YAML or chat.
   Do not fetch a personal vault just to validate implementation changes.
 - Do not print resolved Compose config, snapshot contents, provider exceptions, or
   legacy host validation logs. Managed status omits command/image/container-name
@@ -117,3 +117,9 @@ versions. Never silently install host dependencies or repeat a failed mutation.
 For additional planning detail, use `deploy --dry-run --log-level debug`. It does not
 retrieve old output or reveal suppressed diagnostics. Finish with the destination,
 operation, verification result, and any unresolved failure; avoid copying secret-bearing logs.
+
+## Cloudflare connector provisioning
+
+Host `ingress["cloudflare-tunnel"].provision` lets `setup-proxy` create the host connector and shared network. It requires a pre-existing remotely managed tunnel and exactly one of `envFile` (private host file with raw `TUNNEL_TOKEN`) or `secrets` (native 1Password/dotenv source, selected `CLOUDFLARE_TUNNEL_TOKEN`). Setup dry runs fetch no secrets or SSH. Real setup sends only the selected token over stdin, checks its account/tunnel identity, guards file/container ownership and waits for the native connection health check. Reruns recreate the shared connector and can briefly affect its applications.
+
+`templates.compose` customizes the hardened connector stack; `templates.route` and app `routeTemplate` customize managed `originRequest` settings. Filenames resolve relative to their declaring YAML. Preserve identity, credential and isolation invariants; differing existing Compose files require explicit reconciliation. `routing: "manual"` leaves dashboard routes untouched and needs no API token or state directory. Managed routing requires the separate host `apiTokenFile` and `stateDir`. DNS, tunnel creation and Access remain operator-owned. Read `docs/cloudflare-provisioning.md` when available.

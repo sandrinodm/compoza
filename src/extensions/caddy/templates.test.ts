@@ -4,6 +4,7 @@ import { Effect, Option } from 'effect';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
+import * as YAML from 'yaml';
 
 import { loadDefaultHosts, loadHosts, ingressConfigOf } from '../../config/hosts.ts';
 import { resolve } from '../../deploy.ts';
@@ -39,9 +40,9 @@ const fixture = Effect.gen(function* () {
 });
 
 /**
- * Writes JSON for the real configuration loaders.
+ * Writes YAML for the real configuration loaders.
  */
-const json = (path: string, value: unknown) => Effect.promise(() => writeFile(path, JSON.stringify(value)));
+const yaml = (path: string, value: unknown) => Effect.promise(() => writeFile(path, YAML.stringify(value)));
 
 /**
  * Writes a template as literal text without any shell interpretation.
@@ -114,19 +115,19 @@ describe('Caddy templates', () => {
       const dir = yield* fixture;
       yield* file(join(dir, 'shared', 'site.tmpl'), budget);
       yield* file(join(dir, 'shared', 'root.tmpl'), '# shared custom config\n{{sitesImport}}\n');
-      yield* json(join(dir, 'shared', 'host.json'), {
+      yield* yaml(join(dir, 'shared', 'host.yaml'), {
         ...host,
         ingress: { caddy: { ...caddy, templates: { site: './site.tmpl', config: './root.tmpl' } } },
       });
-      yield* json(join(dir, 'global', 'hosts.json'), {
-        external: { $ref: '../shared/host.json' },
+      yield* yaml(join(dir, 'global', 'hosts.yaml'), {
+        external: { $ref: '../shared/host.yaml' },
         local: { ...host, ingress: { caddy: { ...caddy, templates: { site: './missing.tmpl' } } } },
       });
       yield* file(join(dir, 'repo', 'site.tmpl'), '{{domain}} { respond "local" }\n');
-      yield* json(join(dir, 'repo', 'hosts.json'), {
+      yield* yaml(join(dir, 'repo', 'hosts.yaml'), {
         local: { ...host, ingress: { caddy: { ...caddy, templates: { site: './site.tmpl' } } } },
       });
-      const hosts = yield* loadDefaultHosts(join(dir, 'repo'), join(dir, 'global', 'hosts.json'));
+      const hosts = yield* loadDefaultHosts(join(dir, 'repo'), join(dir, 'global', 'hosts.yaml'));
       const external = ingressConfigOf(hosts.external!)!;
       assert.strictEqual(external.provider, 'caddy-sites');
       if (external.provider !== 'caddy-sites') {
@@ -150,7 +151,7 @@ describe('Caddy templates', () => {
       const path = join(dir, 'site.tmpl');
       yield* file(path, budget);
       for (const source of [path, `~/${relative(homedir(), path)}`]) {
-        yield* json(join(dir, 'hosts.json'), {
+        yield* yaml(join(dir, 'hosts.yaml'), {
           server: {
             ssh: host.ssh,
             platform: host.platform,
@@ -158,21 +159,23 @@ describe('Caddy templates', () => {
             proxy: { ...caddy, templates: { site: source } },
           },
         });
-        const hosts = yield* loadHosts(join(dir, 'hosts.json'));
+        const hosts = yield* loadHosts(join(dir, 'hosts.yaml'));
         assert.deepStrictEqual(
-          hosts.server!.proxy && 'templates' in hosts.server!.proxy && hosts.server!.proxy.templates?.site,
+          hosts.server!.proxy &&
+            hosts.server!.proxy.provider !== 'cloudflare-tunnel' &&
+            hosts.server!.proxy.templates?.site,
           { inline: budget },
         );
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect('resolves selected app overrides from deploy.json and freezes the rendered route', () =>
+  it.effect('resolves selected app overrides from deploy.yaml and freezes the rendered route', () =>
     Effect.gen(function* () {
       const dir = yield* fixture;
-      yield* json(join(dir, 'hosts.json'), { server: host });
+      yield* yaml(join(dir, 'hosts.yaml'), { server: host });
       yield* file(join(dir, 'repo', 'templates', 'budget.tmpl'), budget);
-      yield* json(join(dir, 'repo', 'deploy.json'), {
+      yield* yaml(join(dir, 'repo', 'deploy.yaml'), {
         name: 'budget',
         host: 'server',
         targets: [],
@@ -186,7 +189,7 @@ describe('Caddy templates', () => {
           },
         },
       });
-      const resolved = yield* resolve(join(dir, 'repo'), Option.some(join(dir, 'hosts.json')), 'staging');
+      const resolved = yield* resolve(join(dir, 'repo'), Option.some(join(dir, 'hosts.yaml')), 'staging');
       const operation = caddyIngress.plan(resolved.app, resolved.host).route;
       const frozen = ingressOperationScript(operation);
       assert.include(frozen, 'header_up X-Real-IP {remote_host}');
@@ -201,16 +204,16 @@ describe('Caddy templates', () => {
   it.effect('reports unreadable and invalid templates as config errors without exposing template contents', () =>
     Effect.gen(function* () {
       const dir = yield* fixture;
-      const hostsFile = join(dir, 'hosts.json');
+      const hostsFile = join(dir, 'hosts.yaml');
       for (const source of ['./missing.tmpl', './repo', { inline: 'PRIVATE_TEMPLATE_SENTINEL {{typo}}' }]) {
-        yield* json(hostsFile, { server: { ...host, ingress: { caddy: { ...caddy, templates: { site: source } } } } });
+        yield* yaml(hostsFile, { server: { ...host, ingress: { caddy: { ...caddy, templates: { site: source } } } } });
         const error = yield* loadHosts(hostsFile).pipe(Effect.flip);
         assert.strictEqual(error._tag, 'DeployError');
         assert.include(error.message, 'template');
         assert.notInclude(error.message, 'PRIVATE_TEMPLATE_SENTINEL');
       }
       yield* file(join(dir, 'large.tmpl'), 'x'.repeat(256 * 1024 + 1));
-      yield* json(hostsFile, {
+      yield* yaml(hostsFile, {
         server: { ...host, ingress: { caddy: { ...caddy, templates: { site: './large.tmpl' } } } },
       });
       assert.include((yield* loadHosts(hostsFile).pipe(Effect.flip)).message, '256 KiB');

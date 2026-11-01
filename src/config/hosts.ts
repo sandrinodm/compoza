@@ -7,7 +7,7 @@ import type { DeployConfig } from './deploy.ts';
 
 import { DeployError, platformFailure } from '../errors.ts';
 import { ProxyConfig, HostIngress, resolveHostIngress, loadHostExtensionFiles } from '../extensions/config.ts';
-import { readJsonFile } from './json-file.ts';
+import { readConfigFile } from './config-file.ts';
 import { Ipv4, Name, Platform, Registry, SshDestination } from './schema.ts';
 export { ProxyConfig } from '../extensions/config.ts';
 export { DEFAULT_PROXY_COMPOSE_FILE, proxyComposeFile, proxyService } from '../extensions/caddy/config.ts';
@@ -133,9 +133,9 @@ export type Hosts = typeof Hosts.Type;
 export const HOSTS_ENV = 'COMPOZA_HOSTS';
 
 /**
- * The global hosts file, overlaid by hosts.json in the current working directory unless explicitly overridden.
+ * The global hosts file, overlaid by hosts.yaml in the current working directory unless explicitly overridden.
  */
-export const DEFAULT_HOSTS_PATH = '~/.config/compoza/hosts.json';
+export const DEFAULT_HOSTS_PATH = '~/.config/compoza/hosts.yaml';
 
 /**
  * Replaces a leading `~/` with the home folder, as shells would; any other path is returned unchanged.
@@ -157,7 +157,7 @@ export function hostsPath(override: Option.Option<string>): string {
 const readHostsFile = Effect.fn('readHostsFile')(function* (file: string) {
   const path = yield* Path.Path;
   const resolved = path.resolve(file);
-  const entries = yield* readJsonFile(
+  const entries = yield* readConfigFile(
     resolved,
     HostsFile,
     `No hosts file at ${resolved}. Create it, or point --hosts or ${HOSTS_ENV} at one.`,
@@ -176,7 +176,7 @@ const resolveHosts = Effect.fn('resolveHosts')(function* (
   for (const [name, { entry, file }] of Object.entries(entries)) {
     if ('$ref' in entry) {
       const referenced = path.resolve(path.dirname(file), expandHome(entry.$ref));
-      const host = yield* readJsonFile(
+      const host = yield* readConfigFile(
         referenced,
         HostConfig,
         `No host configuration at ${referenced} (host "${name}" referenced by ${file}).`,
@@ -205,7 +205,7 @@ export const loadDefaultHosts = Effect.fn('loadDefaultHosts')(function* (
 ) {
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
-  const files = [...new Set([path.resolve(expandHome(globalFile)), path.resolve(directory, 'hosts.json')])];
+  const files = [...new Set([path.resolve(expandHome(globalFile)), path.resolve(directory, 'hosts.yaml')])];
   let entries: Record<string, { entry: (typeof HostsFile.Type)[string]; file: string }> = {};
   let found = false;
   for (const file of files) {

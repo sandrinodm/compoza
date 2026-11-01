@@ -43,7 +43,7 @@ export function lifecycleCommand(resolved: Resolved, action: LifecycleAction): C
  * The Compose command that removes the app's containers and networks: `down --remove-orphans`, plus `--volumes` when
  * asked, which also removes the project's named volumes.
  *
- * Bind-mounted host folders (`directories` and `content` in `deploy.json`) are never touched by either form: they are
+ * Bind-mounted host folders (`directories` and `content` in `deploy.yaml`) are never touched by either form: they are
  * the data, and removing a stack must leave the data where a redeploy will find it.
  */
 export function downCommand(resolved: Resolved, volumes: boolean): Command {

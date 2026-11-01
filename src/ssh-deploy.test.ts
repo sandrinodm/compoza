@@ -5,6 +5,7 @@ import { FetchHttpClient } from 'effect/http';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as YAML from 'yaml';
 
 import type { App } from './config/deploy.ts';
 import type { HostConfig } from './config/hosts.ts';
@@ -142,8 +143,8 @@ describe('SSH deployment selection and transports', () => {
           yield* Effect.promise(() => writeFile(join(dir, 'compose.yaml'), 'services: {web: {image: nginx}}'));
           yield* Effect.promise(() =>
             writeFile(
-              join(dir, 'deploy.json'),
-              JSON.stringify({
+              join(dir, 'deploy.yaml'),
+              YAML.stringify({
                 name: 'third-party',
                 host: 'host',
                 targets: [],
@@ -155,13 +156,13 @@ describe('SSH deployment selection and transports', () => {
           );
           yield* Effect.promise(() =>
             writeFile(
-              join(dir, 'hosts.json'),
-              JSON.stringify({ host: { ...host, transport: { mode: 'remote-build' } } }),
+              join(dir, 'hosts.yaml'),
+              YAML.stringify({ host: { ...host, transport: { mode: 'remote-build' } } }),
             ),
           );
           yield* deploy({
             target: dir,
-            hosts: Option.some(join(dir, 'hosts.json')),
+            hosts: Option.some(join(dir, 'hosts.yaml')),
             dryRun: true,
             local: false,
             allowDirty: false,

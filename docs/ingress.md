@@ -6,11 +6,11 @@ Ingress connects an application's public hostname to its running service. Docker
 
 For how this differs from Kamal's traffic switching or the routing managed by Dokploy and Coolify, see [Comparing deployment tools](comparisons.md). A successful proxy reload alone does not make a Compose application update zero-downtime.
 
-| Extension           | Use it when                                                                    | Setup responsibility                                                                                  |
-| ------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `caddy`             | Apps should be reached through a shared Caddy reverse proxy.                   | Provision a fresh proxy or prepare an existing Caddy stack.                                           |
-| `cloudflare-tunnel` | Apps should be reached through an existing remotely managed Cloudflare Tunnel. | Verify tunnel access and prepare route ownership storage; connectors and DNS remain operator-managed. |
-| `none`              | The stack needs no managed public route.                                       | No ingress setup.                                                                                     |
+| Extension           | Use it when                                                                    | Setup responsibility                                                                                                               |
+| ------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `caddy`             | Apps should be reached through a shared Caddy reverse proxy.                   | Provision a fresh proxy or prepare an existing Caddy stack.                                                                        |
+| `cloudflare-tunnel` | Apps should be reached through an existing remotely managed Cloudflare Tunnel. | Optionally provision a host connector; manage routes through the API or leave them in the dashboard. DNS remains operator-managed. |
+| `none`              | The stack needs no managed public route.                                       | No ingress setup.                                                                                                                  |
 
 - [Select an extension](#select-an-extension)
 - [Caddy host and app settings](#shared-caddy-proxy)
@@ -25,20 +25,16 @@ Examples use fictional hosts and reserved documentation IP addresses. For host-f
 
 ## Select an extension
 
-Select exactly one extension by nesting its settings under its name. The same convention applies in both files: `deploy.json` contains app routing settings, while `hosts.json` contains host infrastructure settings. There is no separate `mode` or `provider` selector in the new format.
+Select exactly one extension by nesting its settings under its name. The same convention applies in both files: `deploy.yaml` contains app routing settings, while `hosts.yaml` contains host infrastructure settings. There is no separate `mode` or `provider` selector in the new format.
 
 For example, application routing:
 
-```json
-{
-  "ingress": {
-    "caddy": {
-      "domain": "app.example.com",
-      "upstream": "web:3000",
-      "healthPath": "/health"
-    }
-  }
-}
+```yaml
+ingress:
+  caddy:
+    domain: app.example.com
+    upstream: web:3000
+    healthPath: /health
 ```
 
 Each extension validates its required settings. Empty selections, unknown extensions, unknown settings and multiple extensions in one block are errors. Omit `ingress` or use `"ingress": { "none": {} }` to disable routing. A destination replaces the complete ingress selection, allowing it to switch extensions without inheriting the previous extension's settings.
@@ -55,7 +51,7 @@ Caddy serves app domains and proxies requests to services on a shared Docker net
 
 ### Host settings
 
-Place these fields inside `ingress.caddy` in `hosts.json`. Cloudflare uses `ingress["cloudflare-tunnel"]` instead; see [Cloudflare Tunnel](#cloudflare-tunnel).
+Place these fields inside `ingress.caddy` in `hosts.yaml`. Cloudflare uses `ingress["cloudflare-tunnel"]` instead; see [Cloudflare Tunnel](#cloudflare-tunnel).
 
 | Field         | Description                                                                                                  |
 | ------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -72,27 +68,23 @@ Place these fields inside `ingress.caddy` in `hosts.json`. Cloudflare uses `ingr
 
 A host using an existing proxy could declare:
 
-```json
-{
-  "atlas": {
-    "ssh": "deploy@atlas.example.com",
-    "platform": "linux/arm64",
-    "transport": { "mode": "ssh-load" },
-    "ingress": {
-      "caddy": {
-        "address": "192.0.2.42",
-        "dir": "/srv/caddy",
-        "container": "caddy",
-        "network": "edge"
-      }
-    }
-  }
-}
+```yaml
+atlas:
+  ssh: deploy@atlas.example.com
+  platform: linux/arm64
+  transport:
+    mode: ssh-load
+  ingress:
+    caddy:
+      address: 192.0.2.42
+      dir: /srv/caddy
+      container: caddy
+      network: edge
 ```
 
 ### App settings
 
-Place these fields under `ingress.caddy` in `deploy.json` or a destination override:
+Place these fields under `ingress.caddy` in `deploy.yaml` or a destination override:
 
 | Field          | Required | Meaning                                                                                                        |
 | -------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
@@ -118,29 +110,25 @@ compoza setup-proxy atlas
 
 Add `provision` under the host's `ingress.caddy`. This example creates a shared proxy with rotating request logs, using a Cloudflare-enabled image and a credential file that already exists on the host:
 
-```json
-{
-  "atlas": {
-    "ssh": "deploy@atlas.example.com",
-    "platform": "linux/arm64",
-    "transport": { "mode": "ssh-load" },
-    "ingress": {
-      "caddy": {
-        "address": "192.0.2.42",
-        "dir": "/srv/caddy",
-        "container": "caddy",
-        "network": "edge_network",
-        "logSnippet": "request_log",
-        "provision": {
-          "image": "registry.example.com/infra/caddy-cloudflare:tested-release",
-          "envFile": "/srv/caddy/.env",
-          "acmeDns": "cloudflare {env.CLOUDFLARE_API_TOKEN}",
-          "networkAliases": ["notes.example.com"]
-        }
-      }
-    }
-  }
-}
+```yaml
+atlas:
+  ssh: deploy@atlas.example.com
+  platform: linux/arm64
+  transport:
+    mode: ssh-load
+  ingress:
+    caddy:
+      address: 192.0.2.42
+      dir: /srv/caddy
+      container: caddy
+      network: edge_network
+      logSnippet: request_log
+      provision:
+        image: registry.example.com/infra/caddy-cloudflare:tested-release
+        envFile: /srv/caddy/.env
+        acmeDns: cloudflare {env.CLOUDFLARE_API_TOKEN}
+        networkAliases:
+          - notes.example.com
 ```
 
 `provision.image` is required; replace the fictional image above with your tested image. Pin its digest for reproducible production deployments; tags, including version tags, can move. The other provisioning fields are optional. `envFile` must be an absolute, existing host file; the CLI neither reads its contents nor creates credentials. `acmeDns` supplies the global Caddy `acme_dns` arguments; use environment placeholders, never literal credentials. The image must include the requested DNS module. `networkAliases` adds Docker DNS aliases for Caddy; it does not create public DNS records. For standard Caddy automatic HTTPS, select a standard Caddy image and omit `envFile` and `acmeDns`.
@@ -187,48 +175,40 @@ Use [Caddy templates](caddy-templates.md) to control the shared Caddyfile and ea
 
 ## Cloudflare Tunnel
 
-Use an **existing remotely managed tunnel** with healthy `cloudflared` connectors. compoza manages each app's public hostname rule; it does not create tunnels, install or restart connectors, change DNS, or configure Cloudflare Access. Every connector must be able to reach the app's configured origin. A connector in Docker usually shares a network with the app, so `http://web:8080` addresses that service; `localhost` would address the connector itself.
+Use an **existing remotely managed tunnel**. Optional host `provision` settings let `setup-proxy` create a hardened connector stack, shared network and private credentials with a customizable Compose template. See [Cloudflare provisioning](cloudflare-provisioning.md) for setup, native 1Password/dotenv credentials, manual routing and per-app origin templates.
+
+By default, Compoza manages each app's public hostname rule using a host API token. With `routing: "manual"`, routes stay in the dashboard and checks use the local connector instead; no management API token or state directory is required. Tunnel creation, DNS and Cloudflare Access remain operator-managed. Every connector must be able to reach the app's configured origin. A connector in Docker usually shares a network with the app, so `http://web:8080` addresses that service; `localhost` would address the connector itself.
 
 ### Host settings
 
-In `hosts.json`, select the extension (the IDs below are fictional):
+In `hosts.yaml`, select the extension (the IDs below are fictional):
 
-```json
-{
-  "atlas": {
-    "ssh": "deploy@atlas.example.com",
-    "platform": "linux/amd64",
-    "transport": {
-      "mode": "ssh-load"
-    },
-    "ingress": {
-      "cloudflare-tunnel": {
-        "accountId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "tunnelId": "12345678-1234-1234-1234-123456789abc",
-        "apiTokenFile": "/home/deploy/.config/compoza/cloudflare.token",
-        "stateDir": "/home/deploy/.local/state/compoza/cloudflare"
-      }
-    }
-  }
-}
+```yaml
+atlas:
+  ssh: deploy@atlas.example.com
+  platform: linux/amd64
+  transport:
+    mode: ssh-load
+  ingress:
+    cloudflare-tunnel:
+      accountId: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      tunnelId: 12345678-1234-1234-1234-123456789abc
+      apiTokenFile: /home/deploy/.config/compoza/cloudflare.token
+      stateDir: /home/deploy/.local/state/compoza/cloudflare
 ```
 
 `apiTokenFile` is an absolute **host** path to a private regular file containing only a Cloudflare API token, preferably mode `0600`. Use a token scoped to the tunnel's account with **Cloudflare Tunnel Write** (or the equivalent cloudflared connector write permission). A connector's tunnel token cannot manage routes. The API token is read only on the host and passed to curl on stdin, not in arguments, generated scripts, release assets, or diagnostic output. [Cloudflare configuration API permissions](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/configurations/methods/update/).
 
 ### App settings
 
-Select the ingress in `deploy.json` or a destination override:
+Select the ingress in `deploy.yaml` or a destination override:
 
-```json
-{
-  "ingress": {
-    "cloudflare-tunnel": {
-      "domain": "app.example.com",
-      "service": "http://web:8080",
-      "healthPath": "/ready"
-    }
-  }
-}
+```yaml
+ingress:
+  cloudflare-tunnel:
+    domain: app.example.com
+    service: http://web:8080
+    healthPath: /ready
 ```
 
 `ingress["cloudflare-tunnel"].service` accepts an HTTP(S) origin without credentials, a URL path, or a query. `healthPath` belongs to the public readiness URL. A public origin address is not required: DNS resolves to Cloudflare's edge rather than to the Docker host.

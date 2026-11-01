@@ -1,7 +1,7 @@
-import { Effect, Path, Schema } from 'effect';
+import { Effect, FileSystem, Path, Schema } from 'effect';
 
-import { DeployError } from '../errors.ts';
-import { readJsonFile } from './json-file.ts';
+import { DeployError, platformFailure } from '../errors.ts';
+import { readConfigFile } from './config-file.ts';
 import { AbsolutePath, Name, Target } from './schema.ts';
 
 export { HealthPath, CaddyIngress, NoIngress } from '../extensions/config.ts';
@@ -142,7 +142,7 @@ export const Destination = Schema.Struct({
 });
 
 /**
- * The contents of an app's `deploy.json`, the file that opts a folder into this tool.
+ * The contents of an app's `deploy.yaml`, the file that opts a folder into this tool.
  *
  * Paths in it are relative to the folder holding the file, except host folders, which are absolute on the host.
  */
@@ -163,7 +163,7 @@ export const DeployConfig = Schema.Struct({
   host: Name,
 
   /**
-   * The Dockerfile, relative to the deploy folder; defaults to `Dockerfile` next to `deploy.json`.
+   * The Dockerfile, relative to the deploy folder; defaults to `Dockerfile` next to `deploy.yaml`.
    */
   dockerfile: Schema.optionalKey(Schema.String),
 
@@ -251,7 +251,7 @@ export const DeployConfig = Schema.Struct({
 });
 
 /**
- * A decoded `deploy.json`.
+ * A decoded `deploy.yaml`.
  */
 export type DeployConfig = typeof DeployConfig.Type;
 
@@ -266,7 +266,12 @@ export interface App {
   readonly dir: string;
 
   /**
-   * The decoded `deploy.json`.
+   * The absolute source configuration file, when loaded from disk.
+   */
+  readonly file?: string;
+
+  /**
+   * The decoded `deploy.yaml`.
    */
   readonly config: DeployConfig;
 }
@@ -274,7 +279,7 @@ export interface App {
 /**
  * The file name that marks a deploy folder.
  */
-export const DEPLOY_FILE = 'deploy.json';
+export const DEPLOY_FILE = 'deploy.yaml';
 
 /**
  * The path probed after a deploy when the ingress names none.
@@ -317,7 +322,7 @@ export function environmentOf(config: DeployConfig, local: boolean): Readonly<Re
 }
 
 /**
- * Reads and validates the `deploy.json` at `target`, which may name the folder or the file itself.
+ * Reads and validates the `deploy.yaml` at `target`, which may name the folder or the file itself.
  *
  * Relative targets resolve against the working directory, so `compoza deploy infra` works from a repository root and
  * `compoza deploy .` from the folder itself. A missing file is reported as such rather than as a parse error, because
@@ -326,14 +331,21 @@ export function environmentOf(config: DeployConfig, local: boolean): Readonly<Re
 export const loadApp = Effect.fn('loadApp')(function* (target: string) {
   const path = yield* Path.Path;
   const resolved = path.resolve(target);
-  const file = path.basename(resolved) === DEPLOY_FILE ? resolved : path.join(resolved, DEPLOY_FILE);
-  const config = yield* readJsonFile(
+  const fs = yield* FileSystem.FileSystem;
+  let file = /\.ya?ml$/.test(resolved) ? resolved : path.join(resolved, DEPLOY_FILE);
+  if (file !== resolved && !(yield* fs.exists(file).pipe(Effect.mapError(platformFailure(`Looking for ${file}`))))) {
+    const alternate = path.join(resolved, 'deploy.yml');
+    if (yield* fs.exists(alternate).pipe(Effect.mapError(platformFailure(`Looking for ${alternate}`)))) {
+      file = alternate;
+    }
+  }
+  const config = yield* readConfigFile(
     file,
     DeployConfig,
     `No ${file}. Point compoza at a folder holding a ${DEPLOY_FILE}.`,
     true,
   );
-  const app: App = { dir: path.dirname(file), config };
+  const app: App = { dir: path.dirname(file), file, config };
   yield* Effect.try({
     try: () => validateSecretSettings(config),
     catch: () =>

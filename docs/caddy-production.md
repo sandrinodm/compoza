@@ -71,13 +71,7 @@ Back up the current stack and review its inline routes, custom mounts, environme
 
 Apply shared Caddyfile changes with a validating reload. Applying Compose changes requires a controlled container recreation, with a maintenance window if brief interruption is unacceptable. Verify private admin health, public certificates and each important application afterward. Keep the original files and image digest available for recovery. Updating the CLI does not modify running hosts.
 
-## Reference documentation and verification
-
-Use `docsdown` to keep a local copy of the official Caddy documentation in `.reference/caddy/`. That directory is ignored by Git; `docsdown.json` and `manifest.json` record the source and crawl. To download or refresh the local reference:
-
-```sh
-docsdown https://caddyserver.com/docs/ --output .reference/caddy --concurrency 4 --max-pages 250 --max-media-mb 5
-```
+## Verification
 
 Automated tests exercise real Bash transactions with fake Docker failures, concurrency, interrupted staging, file restoration, retained recovery state, credential redaction, schema checks and the Compose parser. An opt-in Docker smoke test starts a disposable stack with a random loopback HTTP port, then checks real admin health, metrics, writable logs, route activation, rejected reload recovery and removal:
 

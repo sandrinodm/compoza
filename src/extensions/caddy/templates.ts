@@ -85,9 +85,13 @@ export function renderTemplate(
 }
 
 /**
- * Loads template sources relative to their declaring JSON file; only inline text enters pure planning.
+ * Loads template sources relative to their declaring YAML file; only inline text enters pure planning.
  */
-const loadTemplate = Effect.fn('loadCaddyTemplate')(function* (source: CaddyTemplate, file: string) {
+export const loadTemplate = Effect.fn('loadTemplate')(function* (
+  source: CaddyTemplate,
+  file: string,
+  label = 'Caddy template',
+) {
   if (typeof source !== 'string') {
     return source;
   }
@@ -99,7 +103,7 @@ const loadTemplate = Effect.fn('loadCaddyTemplate')(function* (source: CaddyTemp
   );
   const fail = () =>
     new DeployError({
-      message: `Cannot read Caddy template ${resolved}; use a readable text file no larger than 256 KiB`,
+      message: `Cannot read ${label} ${resolved}; use a readable text file no larger than 256 KiB`,
     });
   const info = yield* fs.stat(resolved).pipe(Effect.mapError(fail));
   if (info.type !== 'File' || Number(info.size) > MAX_TEMPLATE_BYTES) {
@@ -173,7 +177,7 @@ export const loadAppTemplates = Effect.fn('loadCaddyAppTemplates')(function* (ap
   if (settings?.siteTemplate === undefined) {
     return app;
   }
-  const siteTemplate = yield* loadCheckedTemplate(settings.siteTemplate, `${app.dir}/deploy.json`, 'site');
+  const siteTemplate = yield* loadCheckedTemplate(settings.siteTemplate, app.file ?? `${app.dir}/deploy.yaml`, 'site');
   return {
     ...app,
     config: {

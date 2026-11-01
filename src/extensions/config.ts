@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 
 import type { App } from '../config/deploy.ts';
 import type { HostConfig } from '../config/hosts.ts';
@@ -12,6 +12,7 @@ import {
   CloudflareHostSelection,
   CloudflareProxy,
 } from './cloudflare-tunnel/config.ts';
+import { loadCloudflareAppFiles, loadCloudflareHostFiles } from './cloudflare-tunnel/templates.ts';
 import { EnvFileConfig, EnvFileSelection } from './env-file/config.ts';
 export { CaddyIngress, HealthPath } from './caddy/config.ts';
 
@@ -43,7 +44,7 @@ export const ResolvedIngress = Schema.Union([CaddyIngress, CloudflareIngress, No
 /**
  * The application ingress input, selecting exactly one extension and validating its own required settings.
  *
- * Flat legacy selections remain accepted during migration. Strict JSON decoding rejects ambiguous or misspelled
+ * Flat legacy selections remain accepted during migration. Strict YAML decoding rejects ambiguous or misspelled
  * selectors.
  */
 export const Ingress = Schema.Union([CaddySelection, CloudflareSelection, NoExtension, ResolvedIngress]);
@@ -54,7 +55,7 @@ export const Ingress = Schema.Union([CaddySelection, CloudflareSelection, NoExte
 export const HostIngress = Schema.Union([CaddyHostSelection, CloudflareHostSelection, NoExtension]);
 
 /**
- * The internal host proxy representation and legacy hosts.json input.
+ * The internal host proxy representation and legacy hosts.yaml input.
  */
 export const ProxyConfig = Schema.Union([CaddyProxy, CloudflareProxy]);
 
@@ -106,14 +107,14 @@ export type SecretsConfig = typeof SecretsConfig.Type;
  * Loads extension-owned host files relative to the winning host definition before pure planning.
  */
 export function loadHostExtensionFiles(host: HostConfig, file: string) {
-  return loadHostTemplates(host, file);
+  return loadHostTemplates(host, file).pipe(Effect.flatMap((selected) => loadCloudflareHostFiles(selected, file)));
 }
 
 /**
  * Loads extension-owned app files after destination selection, leaving unselected sources unread.
  */
 export function loadAppExtensionFiles(app: App) {
-  return loadAppTemplates(app);
+  return loadAppTemplates(app).pipe(Effect.flatMap(loadCloudflareAppFiles));
 }
 
 /**

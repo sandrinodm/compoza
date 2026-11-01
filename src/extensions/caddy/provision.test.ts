@@ -373,10 +373,10 @@ describe('Caddy provisioning', { timeout: 15000 }, () => {
 
   it('previews through the CLI without opening an SSH connection', () =>
     fixture((f) => {
-      const hosts = join(f.dir, 'hosts.json');
+      const hosts = join(f.dir, 'hosts.yaml');
       writeFileSync(
         hosts,
-        JSON.stringify({
+        YAML.stringify({
           fixture: {
             ssh: 'never-contact.invalid',
             platform: 'linux/arm64',

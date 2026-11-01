@@ -35,7 +35,7 @@ const CADDYFILE_MOUNT = './Caddyfile:/etc/caddy/Caddyfile:ro';
  * The site block for one app, written to `<proxy dir>/sites/<name>.caddy`.
  *
  * The `tls` block and the log import come from the host's proxy entry, so every app on a host gets certificates and
- * request logs the same way without repeating it in each `deploy.json`.
+ * request logs the same way without repeating it in each `deploy.yaml`.
  */
 export function siteFile(name: string, ingress: CaddyIngress, proxy: ProxyConfig): string {
   return renderTemplate(

@@ -2,7 +2,7 @@
 def valid_rule:
   type == "object" and (.hostname | type == "string") and (.service | type == "string")
   and (keys - ["hostname", "service", "originRequest"] | length == 0)
-  and ((.originRequest // {}) == {});
+  and ((.originRequest // {}) | type == "object");
 def same_rule($a; $b): ($a + {originRequest: ($a.originRequest // {})}) == ($b + {originRequest: ($b.originRequest // {})});
 (.result.config // {ingress: [{service: "http_status:404"}]}) as $config |
 ($config.ingress // [{service: "http_status:404"}]) as $rules |

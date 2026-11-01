@@ -1,7 +1,7 @@
 import type { Check } from '../checks.ts';
 import type { App } from '../config/deploy.ts';
 import type { HostConfig } from '../config/hosts.ts';
-import type { ResolvedIngress } from './config.ts';
+import type { ResolvedIngress, SecretsConfig } from './config.ts';
 
 import { shellQuote } from '../command.ts';
 import { ingressOf } from '../config/deploy.ts';
@@ -24,6 +24,16 @@ export interface IngressOperation {
    * The optional configuration sent on stdin, without credentials.
    */
   readonly input?: string;
+
+  /**
+   * Optional setup-only credential source, resolved after dry-run handling; never frozen into application releases.
+   */
+  readonly secrets?: SecretsConfig;
+
+  /**
+   * Selected provider variable names mapped to connector env-file names; other provider values are discarded.
+   */
+  readonly secretVariables?: Readonly<Record<string, string>>;
 
   /**
    * The concise description displayed by the Remote service.

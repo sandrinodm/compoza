@@ -6,6 +6,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vite-plus/test';
+import * as YAML from 'yaml';
 
 import type { Step } from './command.ts';
 import type { HostConfig } from './config/hosts.ts';
@@ -96,8 +97,8 @@ it.effect('uses the destination project identity consistently for client route c
       Effect.gen(function* () {
         yield* Effect.promise(() =>
           writeFile(
-            join(dir, 'deploy.json'),
-            JSON.stringify({
+            join(dir, 'deploy.yaml'),
+            YAML.stringify({
               name: 'app',
               host: 'host',
               targets: [],
@@ -108,8 +109,8 @@ it.effect('uses the destination project identity consistently for client route c
             }),
           ),
         );
-        const hosts = Option.some(join(dir, 'hosts.json'));
-        yield* Effect.promise(() => writeFile(join(dir, 'hosts.json'), JSON.stringify({ host })));
+        const hosts = Option.some(join(dir, 'hosts.yaml'));
+        yield* Effect.promise(() => writeFile(join(dir, 'hosts.yaml'), YAML.stringify({ host })));
         yield* deploy({
           target: dir,
           hosts,
