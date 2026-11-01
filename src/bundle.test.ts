@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { assert, describe, it } from '@effect/vitest';
 import { Effect, Exit, FileSystem, Result } from 'effect';
-import { mkdtempDisposable, mkdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdtempDisposable, mkdir, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -28,6 +28,80 @@ function withBundle(
 }
 
 describe('bounded Compose bundle', () => {
+  it.effect('reads external Compose files directly and keeps assets beside the deployment YAML', () =>
+    withBundle((app) =>
+      Effect.gen(function* () {
+        const dir = yield* Effect.promise(() => realpath(app.dir));
+        const source = join(dir, 'source');
+        yield* Effect.promise(() => mkdir(source));
+        const compose = 'services: {web: {build: ., volumes: ["./settings.txt:/settings:ro"]}}';
+        const overlay = 'services: {web: {build: !reset null, image: "${WEB_IMAGE:?required}"}}';
+        yield* Effect.promise(() => writeFile(join(source, 'compose.yaml'), compose));
+        yield* Effect.promise(() => writeFile(join(source, 'production.yaml'), overlay));
+        yield* Effect.promise(() => writeFile(join(dir, 'settings.txt'), 'deploy asset'));
+        const files = yield* readBundle({
+          ...app,
+          config: { ...app.config, composeFiles: [join(source, 'compose.yaml'), join(source, 'production.yaml')] },
+        });
+        assert.deepStrictEqual(
+          files.map((file) => file.path),
+          ['compose.yaml', 'production.yaml', 'settings.txt'],
+        );
+        assert.strictEqual(Buffer.from(files[0]!.encoded, 'base64').toString(), compose);
+        assert.strictEqual(Buffer.from(files[1]!.encoded, 'base64').toString(), overlay);
+        assert.strictEqual(Buffer.from(files[2]!.encoded, 'base64').toString(), 'deploy asset');
+      }),
+    ),
+  );
+
+  it.effect('rejects external basename collisions before reading files', () =>
+    withBundle((app) =>
+      Effect.gen(function* () {
+        for (const composeFiles of [
+          ['/one/compose.yaml', '/two/compose.yaml'],
+          ['/source/compose.yaml', 'compose.yaml'],
+          ['/source/settings.txt'],
+        ] as const) {
+          const error = yield* readBundle({ ...app, config: { ...app.config, composeFiles } }).pipe(Effect.flip);
+          assert.include(error.message, 'upload paths must be distinct');
+        }
+      }),
+    ),
+  );
+
+  it.effect('rejects external source symlinks, traversal and secret sources without allowing absolute assets', () =>
+    withBundle((app) =>
+      Effect.gen(function* () {
+        const dir = yield* Effect.promise(() => realpath(app.dir));
+        yield* Effect.promise(() => mkdir(join(dir, 'source')));
+        yield* Effect.promise(() => writeFile(join(dir, 'source/compose.yaml'), 'services: {}'));
+        yield* Effect.promise(() => symlink('source', join(dir, 'linked')));
+        for (const file of ['linked/compose.yaml', 'source/../source/compose.yaml']) {
+          const error = yield* readBundle({
+            ...app,
+            config: { ...app.config, assets: [], composeFiles: [`${dir}/${file}`] },
+          }).pipe(Effect.flip);
+          assert.match(error.message, /symlinks|dot or empty components/);
+        }
+        const secret = yield* readBundle({
+          ...app,
+          config: {
+            ...app.config,
+            assets: [],
+            composeFiles: [join(dir, 'source/compose.yaml')],
+            secrets: { 'env-file': { path: join(dir, 'source/compose.yaml') } },
+          },
+        }).pipe(Effect.flip);
+        assert.include(secret.message, 'Secret source files cannot be included');
+        const asset = yield* readBundle({
+          ...app,
+          config: { ...app.config, assets: [join(dir, 'source/compose.yaml')] },
+        }).pipe(Effect.flip);
+        assert.include(asset.message, 'Unsafe bundle path');
+      }),
+    ),
+  );
+
   it.effect('uploads only selected files, preserving binary assets while ignoring a local dotenv file', () =>
     withBundle((app) =>
       Effect.gen(function* () {

@@ -1,7 +1,7 @@
 import type { PlatformError } from 'effect/PlatformError';
 
 import { Effect, FileSystem } from 'effect';
-import { join, resolve } from 'node:path';
+import { basename, isAbsolute, join, parse, resolve } from 'node:path';
 import { parseDocument } from 'yaml';
 
 import type { App } from './config/deploy.ts';
@@ -17,7 +17,7 @@ import { DeployError } from './errors.ts';
  */
 export interface BundleFile {
   /**
-   * The safe deploy-relative path, preserving the stack directory layout.
+   * The safe upload path; absolute Compose sources are staged under their basename.
    */
   readonly path: string;
 
@@ -33,6 +33,16 @@ export interface BundleFile {
  * Source trees belong to BuildKit's dockerignore-aware context transfer, rather than the Compose stack bundle.
  */
 const MAX_BUNDLE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Keeps explicit external Compose sources inside the upload folder without exposing workstation paths to the host.
+ *
+ * Relative Compose paths retain their layout. The bundle reader validates names and rejects output collisions before
+ * reading files, so two external files with the same basename cannot overwrite one another.
+ */
+export function composeBundlePath(file: string): string {
+  return isAbsolute(file) ? basename(file) : file;
+}
 
 /**
  * Validates an explicit stack path without normalizing away dangerous components.
@@ -230,7 +240,7 @@ export const validateComposeAssets = Effect.fn('validateComposeAssets')(function
 });
 
 /**
- * Resolves one bundle file while rejecting a symlink at any level of its deploy-relative path.
+ * Resolves one selected source while rejecting symlinks at every inspected component of its path.
  */
 const bundleFilePath = Effect.fn('bundleFilePath')(function* (fs: FileSystem.FileSystem, dir: string, path: string) {
   const root = yield* fs.lstat(dir);
@@ -238,9 +248,17 @@ const bundleFilePath = Effect.fn('bundleFilePath')(function* (fs: FileSystem.Fil
     return yield* Effect.fail(new DeployError({ message: 'Deploy folder cannot be a symlink for SSH bundles' }));
   }
 
-  let current = dir;
+  // Absolute sources are selected Compose files, never assets. Inspect every source ancestor before reading them.
+  const absolute = isAbsolute(path);
+  const parts = absolute ? path.slice(parse(path).root.length).split('/') : path.split('/');
+  if (absolute && (/[\r\n\0]/.test(path) || parts.some((part) => part === '' || part === '.' || part === '..'))) {
+    return yield* Effect.fail(
+      new DeployError({ message: 'Absolute Compose paths cannot contain dot or empty components' }),
+    );
+  }
+  let current = absolute ? parse(path).root : dir;
 
-  for (const part of path.split('/')) {
+  for (const part of parts) {
     current = join(current, part);
     const info = yield* fs.lstat(current);
     if (info.type === 'SymbolicLink') {
@@ -254,8 +272,8 @@ const bundleFilePath = Effect.fn('bundleFilePath')(function* (fs: FileSystem.Fil
 /**
  * Reads the bounded stack bundle without following symlinks, including symlinked parent directories.
  *
- * Only the selected Compose files and explicit regular-file assets leave the deploy folder; production env files are
- * not read. Expected validation and filesystem failures use the typed channel; defects remain defects.
+ * Compose files may be explicit absolute sources outside the deploy folder; assets remain deploy-relative. Production
+ * env files are not read. Expected validation and filesystem failures use the typed channel; defects remain defects.
  */
 export const readBundle = Effect.fn('readBundle')(
   function* (app: App) {
@@ -271,7 +289,15 @@ export const readBundle = Effect.fn('readBundle')(
       secretPath === undefined
         ? undefined
         : yield* fs.realPath(secretPath).pipe(Effect.orElseSucceed(() => secretPath));
-    const declared = new Set(yield* Effect.forEach(paths, bundlePath));
+    const compose = new Set(app.config.composeFiles);
+    const staged = paths.map((path) => (compose.has(path) ? composeBundlePath(path) : path));
+    const declared = new Set(yield* Effect.forEach(staged, bundlePath));
+    if (declared.size !== paths.length) {
+      return yield* Effect.fail(new DeployError({ message: 'Compose and asset upload paths must be distinct' }));
+    }
+    if (app.config.assets?.some(isAbsolute)) {
+      return yield* Effect.fail(new DeployError({ message: 'Assets must use deploy-relative paths' }));
+    }
 
     const files: Array<BundleFile> = [];
     let total = 0;
@@ -296,11 +322,11 @@ export const readBundle = Effect.fn('readBundle')(
       const contents = Buffer.from(yield* fs.readFile(current));
       total += contents.length;
 
-      if (app.config.composeFiles.includes(path)) {
+      if (compose.has(path)) {
         yield* validateComposeAssets(contents.toString('utf8'), path, declared);
       }
 
-      files.push({ path, encoded: contents.toString('base64') });
+      files.push({ path: compose.has(path) ? composeBundlePath(path) : path, encoded: contents.toString('base64') });
     }
 
     return files;

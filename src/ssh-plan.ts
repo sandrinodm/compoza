@@ -4,6 +4,7 @@ import type { BundleFile } from './bundle.ts';
 import type { App } from './config/deploy.ts';
 import type { HostConfig } from './config/hosts.ts';
 
+import { composeBundlePath } from './bundle.ts';
 import { REMOTE_PATH, shellQuote } from './command.ts';
 import { directoriesOf, ingressOf, projectNameOf } from './config/deploy.ts';
 import { secretEnvironment, validateSecrets } from './config/secrets.ts';
@@ -118,7 +119,8 @@ export function deploymentScript(
   }
 
   const root = stackRoot(app);
-  const assets = bundle.filter((file) => !app.config.composeFiles.includes(file.path));
+  const composeFiles = app.config.composeFiles.map(composeBundlePath);
+  const assets = bundle.filter((file) => !composeFiles.includes(file.path));
   if (assets.some((file) => file.path === 'compose.yaml' || file.path.startsWith('compose.yaml/'))) {
     throw new Error('compose.yaml is the generated stack file and cannot be declared as an asset');
   }
@@ -185,7 +187,7 @@ env_file="$upload/.env"
 compose_file="$upload/compose.yaml"
 compoza_metadata
 compoza_merge_ownership
-if ! compoza_compose normalize ${app.config.composeFiles.map((file) => `"$upload"/${shellQuote(file)}`).join(' ')} > "$root/.deploy-lock/normalized.yaml" 2>/dev/null; then
+if ! compoza_compose normalize ${composeFiles.map((file) => `"$upload"/${shellQuote(file)}`).join(' ')} > "$root/.deploy-lock/normalized.yaml" 2>/dev/null; then
   echo 'Compose normalization failed; inspect selected files privately' >&2; exit 1
 fi
 mv -f -- "$root/.deploy-lock/normalized.yaml" "$compose_file"

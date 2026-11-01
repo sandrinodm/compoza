@@ -339,7 +339,7 @@ Add a `public/index.html` in the source repository and commit it with the Docker
 
 `workingDirectory` resolves relative to `deploy.yaml`, accepts absolute and `~/` paths, and defaults to the deploy folder. Git checks and image tags use the repository containing that directory. Relative `dockerfile` and `context` paths resolve there; omitting `context` uses the source Git root. Build commands run in `workingDirectory`.
 
-Compose files, assets, relative dotenv paths and app templates remain beside the selected YAML file. An explicitly named `production.yaml` works the same way. Host paths in `remote`, `directories` and `content` still point to the remote machine.
+Relative Compose files, assets, relative dotenv paths and app templates use the selected YAML file's folder. To use the source repository's Compose definitions directly, select absolute workstation paths in `composeFiles`; SSH deployment stages them by basename and preserves merge order. An explicitly named `production.yaml` works the same way. Host paths in `remote`, `directories` and `content` still point to the remote machine.
 
 ## Local runs and named destinations
 

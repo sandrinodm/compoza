@@ -195,7 +195,7 @@ export const DeployConfig = Schema.Struct({
   targets: Schema.Array(Target),
 
   /**
-   * Compose files, relative to the deploy folder, applied in order.
+   * Compose files applied in order; relative paths use the deploy folder, and absolute paths select external sources.
    */
   composeFiles: Schema.NonEmptyArray(Schema.String),
 

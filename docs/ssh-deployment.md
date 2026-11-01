@@ -148,6 +148,8 @@ Operator overlays, separate host env files, persistent data and undeclared files
 
 The CLI uploads only the selected `composeFiles` and explicitly declared nonsecret regular-file `assets`. The total is bounded to 128 files and four MiB before base64 encoding. Source trees belong to BuildKit's dockerignore-aware transfer instead.
 
+`composeFiles` may name explicit absolute workstation paths, allowing a central deployment YAML to use the app repository's own Compose files. They are read directly and staged under their basenames before normalization; merge order is preserved, and basename collisions with other sources or assets fail before upload. Symlinks and symlinked source ancestors are rejected. Assets remain deploy-relative, including relative file references from external Compose files; credentials and persistent mounts still use absolute host paths.
+
 Bundle paths must be deploy-relative and contain no dot components or dotfiles. `.env`, `.compoza.json` and `.deploy-lock` are reserved. Symlinked local files and parent directories are rejected. The generated `compose.yaml` cannot also be an asset.
 
 All relative file references resolve from the stack root, including when a selected source Compose file lives in a subdirectory. Relative config files and bind mounts must be declared assets; relative binds must be read-only. Persistent data mounts use absolute host paths. `include` and external `extends.file` are unsupported: select explicit Compose overlays instead.

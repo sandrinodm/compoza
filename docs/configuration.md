@@ -139,7 +139,7 @@ local:
 | `targets`               | Images to build from the Dockerfile, one per target. Use `[]` for third-party-only stacks.                                            |
 | `workingDirectory`      | Source directory for Git and builds; defaults to the deploy folder. Accepts absolute, `~/`, or config-relative paths.                 |
 | `dockerfile`, `context` | Relative to `workingDirectory`. Default to `Dockerfile` there and the source Git root.                                                |
-| `composeFiles`          | Compose files to apply, in order.                                                                                                     |
+| `composeFiles`          | Compose files to apply, in order; relative to the YAML folder or explicit absolute source paths.                                      |
 | `profiles`              | Compose profiles to enable.                                                                                                           |
 | `execution`             | `client` (default) or `ssh`; see [Execution and transport](#execution-and-transport).                                                 |
 | `ingress`               | `caddy`, `cloudflare-tunnel` or `none` (default); see [Ingress](#ingress).                                                            |
@@ -183,9 +183,23 @@ secrets:
 
 Git checks and image tags use the repository containing `workingDirectory`. Build commands run there; relative `dockerfile` and `context` paths resolve there, and the default context remains that repository's root. Absolute build paths remain absolute. `workingDirectory` itself resolves relative to the selected YAML file, including an explicitly named file such as `production.yaml`; it also accepts absolute paths and `~/`.
 
-Compose files and the project directory, assets, dotenv paths and app templates remain relative to the deployment YAML. Host paths still refer to the remote host. Host inventory discovery continues to use the CLI's current working directory, independently of both folders.
+Relative Compose files and the project directory, assets, dotenv paths and app templates use the deployment YAML folder. Host paths still refer to the remote host. Host inventory discovery continues to use the CLI's current working directory, independently of both folders.
 
 All destinations share `workingDirectory`; it cannot be overridden per destination. A real build requires that directory to exist. `--tag`, `targets: []`, status, logs and lifecycle commands do not require the source checkout.
+
+To use the app repository's Compose files directly, select their absolute workstation paths:
+
+```yaml
+# Source paths on the machine running Compoza.
+workingDirectory: /home/operator/Repositories/foo
+dockerfile: /home/operator/Repositories/foo/docker/Dockerfile
+context: /home/operator/Repositories/foo
+composeFiles:
+  - /home/operator/Repositories/foo/compose.yaml
+  - /home/operator/Repositories/foo/compose.production.yaml
+```
+
+SSH execution reads those files for each deployment and stages them under their basenames, then merges them in the listed order into the host's flat `compose.yaml`. Selected files must have distinct upload paths: two external files named `compose.yaml`, or an external filename colliding with a relative Compose file or asset, are rejected. Source symlinks, symlinked ancestors and dot traversal are rejected. Assets and any relative file references inside Compose still belong beside `deploy.yaml`; absolute Compose paths do not change that base. Keep persistent data and secret file references as absolute **host** paths. Lifecycle operations use the already deployed stack and do not need the source files.
 
 ### Images and tags
 

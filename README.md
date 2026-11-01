@@ -126,7 +126,7 @@ For `Repositories/localcloud/compose/foo/deploy.yaml`, point at the app reposito
 workingDirectory: ../../../foo
 ```
 
-Git checks and builds use `Repositories/foo`. Compose files, assets, dotenv files and app templates stay beside `deploy.yaml`. Relative Dockerfile and build-context paths use the app directory. See [separate source and deployment folders](docs/configuration.md#separate-source-and-deployment-folders).
+Git checks and builds use `Repositories/foo`. Relative Compose files, assets, dotenv files and app templates use the `deploy.yaml` folder. To read Compose definitions directly from the source repository, select their absolute workstation paths in `composeFiles`. Relative Dockerfile and build-context paths use the app directory. See [separate source and deployment folders](docs/configuration.md#separate-source-and-deployment-folders).
 
 ## Execution and image transport
 

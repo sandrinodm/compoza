@@ -78,6 +78,36 @@ exec ${shellQuote(docker)} "$@"
 }
 
 describe.skipIf(!composeAvailable)('flat stack with the actual Compose parser', { timeout: 15_000 }, () => {
+  it('normalizes absolute Compose sources in order without retaining workstation paths or build definitions', () =>
+    composeFixture(({ app, root, run }) => {
+      Object.assign(app.config, {
+        composeFiles: ['/workstation/project/compose.yaml', '/workstation/project/production.yaml'],
+      });
+      const plan = deploymentScript(app, host, 'external', [
+        {
+          path: 'compose.yaml',
+          encoded: Buffer.from('services: {web: {build: /workstation/project, environment: {MODE: base}}}').toString(
+            'base64',
+          ),
+        },
+        {
+          path: 'production.yaml',
+          encoded: Buffer.from(
+            'services: {web: {build: !reset null, image: "${WEB_IMAGE:?required}", environment: {MODE: production}}}',
+          ).toString('base64'),
+        },
+      ]);
+      const result = run(plan.script, plan.input);
+      assert.strictEqual(result.status, 0, String(result.stderr));
+      const installed = readFileSync(join(root, 'compose.yaml'), 'utf8');
+      assert.notInclude(installed, '/workstation');
+      assert.notInclude(installed, 'build:');
+      assert.include(YAML.parse(installed).services.web.environment, 'MODE=production');
+      assert.include(installed, '${WEB_IMAGE:?required}');
+      assert.deepStrictEqual(JSON.parse(readFileSync(join(root, '.compoza.json'), 'utf8')).files, ['compose.yaml']);
+      assert.isFalse(existsSync(join(root, 'production.yaml')));
+    }));
+
   it('recreates services after replacing assets even when Compose hashes and image tags stay unchanged', () =>
     composeFixture(({ app, dir, root, run }) => {
       Object.assign(app.config, { composeFiles: ['compose.yaml'] });
