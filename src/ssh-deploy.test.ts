@@ -22,6 +22,7 @@ const app: App = {
   config: {
     name: 'app',
     host: 'atlas',
+    workingDirectory: '/source-app',
     targets: ['web'],
     composeFiles: ['compose.yaml'],
     execution: 'ssh',
@@ -76,6 +77,8 @@ describe('SSH deployment selection and transports', () => {
       assert.isTrue('program' in build);
 
       if ('program' in build) {
+        assert.strictEqual(build.cwd, '/source-app');
+        assert.include(build.args, '/source-app/Dockerfile');
         assert.include(build.args, mode === 'registry' ? '--push' : '--load');
 
         if (mode === 'remote-build') {
@@ -153,6 +156,7 @@ describe('SSH deployment selection and transports', () => {
               join(dir, 'deploy.yaml'),
               YAML.stringify({
                 name: 'third-party',
+                workingDirectory: '/missing/app-checkout',
                 host: 'host',
                 targets: [],
                 execution: 'ssh',

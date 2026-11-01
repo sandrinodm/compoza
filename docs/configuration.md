@@ -2,7 +2,7 @@
 
 [README](../README.md) · [Ingress](ingress.md) · [Caddy templates](caddy-templates.md) · [Secrets](secrets.md) · [SSH deployment](ssh-deployment.md) · [Development](development.md)
 
-compoza reads two kinds of files: global and repository-local `hosts.yaml` files describing Docker hosts, and a `deploy.yaml` in each app repository. The hosts, accounts, paths and domains below are fictional, and IP addresses use reserved documentation ranges. Replace them with your own configuration.
+compoza reads two kinds of files: global and repository-local `hosts.yaml` files describing Docker hosts, and a `deploy.yaml` for each app. The hosts, accounts, paths and domains below are fictional, and IP addresses use reserved documentation ranges. Replace them with your own configuration.
 
 - [Hosts](#hosts)
 - [Apps](#apps)
@@ -100,7 +100,7 @@ With every transport, exclude production dotenv files and other secrets from bui
 
 ## Apps
 
-An app opts in with a folder holding `deploy.yaml`, its Dockerfile and its Compose files, for example `infra/` or `apps/<app>/deploy/`. This example uses the default client execution with two built targets and Caddy routing:
+An app opts in with a folder holding `deploy.yaml` and its Compose files. Its source and Dockerfile can live there or in a separate `workingDirectory`. A typical deployment folder is `infra/` or `apps/<app>/deploy/`. This example uses the default client execution with two built targets and Caddy routing:
 
 ```yaml
 name: sample-app
@@ -137,7 +137,8 @@ local:
 | `name`                  | Compose project name and image prefix.                                                                                                |
 | `host`                  | Host key in `hosts.yaml`.                                                                                                             |
 | `targets`               | Images to build from the Dockerfile, one per target. Use `[]` for third-party-only stacks.                                            |
-| `dockerfile`, `context` | Relative to the deploy folder. Default to `Dockerfile` beside `deploy.yaml` and the Git root.                                         |
+| `workingDirectory`      | Source directory for Git and builds; defaults to the deploy folder. Accepts absolute, `~/`, or config-relative paths.                 |
+| `dockerfile`, `context` | Relative to `workingDirectory`. Default to `Dockerfile` there and the source Git root.                                                |
 | `composeFiles`          | Compose files to apply, in order.                                                                                                     |
 | `profiles`              | Compose profiles to enable.                                                                                                           |
 | `execution`             | `client` (default) or `ssh`; see [Execution and transport](#execution-and-transport).                                                 |
@@ -154,10 +155,42 @@ local:
 
 SSH-specific fields are described in [SSH deployment](ssh-deployment.md).
 
+### Separate source and deployment folders
+
+Keep deployment configuration centrally while building from an application repository:
+
+```text
+Repositories/
+├── foo/
+│   └── Dockerfile
+└── localcloud/compose/foo/
+    ├── deploy.yaml
+    ├── compose.yaml
+    └── app.env
+```
+
+```yaml
+# Repositories/localcloud/compose/foo/deploy.yaml
+name: foo
+host: atlas
+workingDirectory: ../../../foo
+targets: [web]
+composeFiles: [compose.yaml]
+secrets:
+  env-file:
+    path: ./app.env
+```
+
+Git checks and image tags use the repository containing `workingDirectory`. Build commands run there; relative `dockerfile` and `context` paths resolve there, and the default context remains that repository's root. Absolute build paths remain absolute. `workingDirectory` itself resolves relative to the selected YAML file, including an explicitly named file such as `production.yaml`; it also accepts absolute paths and `~/`.
+
+Compose files and the project directory, assets, dotenv paths and app templates remain relative to the deployment YAML. Host paths still refer to the remote host. Host inventory discovery continues to use the CLI's current working directory, independently of both folders.
+
+All destinations share `workingDirectory`; it cannot be overridden per destination. A real build requires that directory to exist. `--tag`, `targets: []`, status, logs and lifecycle commands do not require the source checkout.
+
 ### Images and tags
 
 - Each target is named `<name>-<target>:<tag>`, prefixed with the registry for registry transport, and handed to Compose as `<TARGET>_IMAGE`. Compose files read `${WEB_IMAGE}`, `${WORKER_IMAGE}` and so on.
-- A deploy requires a clean checkout with at least one commit and tags images with the commit's first twelve characters. `--allow-dirty` permits a dirty checkout and tags `<commit>-dirty`.
+- A build requires a clean checkout of the source repository with at least one commit and tags images with the commit's first twelve characters. `--allow-dirty` permits a dirty checkout and tags `<commit>-dirty`.
 - `--tag <tag>` reuses images built earlier and skips Git and builds, so it works from a deploy folder that is no longer inside a checkout. It always uses the **current local configuration**; there is no saved Compose configuration history.
 - With `targets: []` there is no Git, Dockerfile or build-context requirement, and no build or application-registry authentication check. Compose still pulls missing third-party images.
 

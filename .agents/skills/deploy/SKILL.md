@@ -14,8 +14,11 @@ information that cannot be established from the repository or current session.
 1. Locate `compoza` on `PATH`. Otherwise locate its checkout and invoke
    `node /path/to/compoza/bin/compoza.ts`. The CLI machine needs Node.js 26.0 or newer;
    remote Docker hosts do not need Node.js. Check `--help` before assuming flags.
-2. Find the requested `deploy.yaml`, commonly under `infra/` or an app's deploy folder.
+2. Find the requested `deploy.yaml`, commonly under `infra/` or a central deployment folder.
    If several apps fit and the target is unclear, ask which one. Never guess host addresses.
+   Resolve `workingDirectory` relative to that YAML (absolute and `~/` paths also work);
+   it defaults to the YAML folder. Git checks and builds use that source directory.
+   Compose, assets, dotenv files and app templates stay relative to the YAML.
 3. Select the requested `--destination <name>`, or retain the app defaults. Carry the
    same selection through every command. `./hosts.yaml` in the current working directory
    overrides global hosts in `~/.config/compoza/hosts.yaml` by name. Preserve the
@@ -44,8 +47,9 @@ compoza logs infra --tail 50
 - Explain the target, image transport, and proposed changes from the preview. An SSH
   dry run does not stage files, build images, lock the stack, or validate the full host
   candidate. Do not present it as proof that deployment will succeed.
-- Built targets normally require a clean committed checkout. Do not commit changes or
-  add `--allow-dirty` without authorization. `targets: []` needs no Git or Dockerfile.
+- Built targets normally require a clean committed checkout in the resolved source directory. Do not commit changes or
+  add `--allow-dirty` without authorization. `targets: []` and `--tag` need no source checkout or Dockerfile.
+  Status, logs and lifecycle operations also work without that source directory.
 - Once deployment is authorized, continue through verification; do not request the
   same permission again. Report phase failures rather than retrying blindly.
 - Success requires the final `Deployed` message and expected service state. Only

@@ -2,11 +2,19 @@ import { NodeServices } from '@effect/platform-node';
 import { assert, describe, it } from '@effect/vitest';
 import { Effect, Schema } from 'effect';
 import { mkdtempDisposable, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as YAML from 'yaml';
 
-import { composeFilesOf, DeployConfig, directoriesOf, environmentOf, ingressOf, loadApp } from './deploy.ts';
+import {
+  composeFilesOf,
+  DeployConfig,
+  directoriesOf,
+  environmentOf,
+  ingressOf,
+  loadApp,
+  workingDirectoryOf,
+} from './deploy.ts';
 
 /**
  * Runs `use` with a fresh temporary folder and removes the folder afterwards, whether `use` succeeds or fails.
@@ -44,6 +52,31 @@ describe('DeployConfig', () => {
     }),
   );
 
+  it.effect.each([
+    [undefined, '/deployment'],
+    ['../app source', '/app source'],
+    ['/absolute/app', '/absolute/app'],
+    ['~/app', join(homedir(), 'app')],
+  ] as const)('resolves workingDirectory %s without requiring the checkout', ([workingDirectory, expected]) =>
+    Effect.gen(function* () {
+      const config = yield* Schema.decodeUnknownEffect(DeployConfig)({
+        ...valid,
+        ...(workingDirectory === undefined ? {} : { workingDirectory }),
+      });
+      assert.strictEqual(workingDirectoryOf({ dir: '/deployment', config }), expected);
+    }),
+  );
+
+  it.effect('rejects destination overrides of the shared source directory', () =>
+    Effect.gen(function* () {
+      const error = yield* Schema.decodeUnknownEffect(DeployConfig, { onExcessProperty: 'error' })({
+        ...valid,
+        destinations: { dev: { workingDirectory: '/other' } },
+      }).pipe(Effect.flip);
+      assert.strictEqual(error._tag, 'SchemaError');
+    }),
+  );
+
   it.effect('defaults the ingress to none', () =>
     Effect.gen(function* () {
       const { ingress: _ingress, ...withoutIngress } = valid;
@@ -56,6 +89,10 @@ describe('DeployConfig', () => {
   );
 
   it.effect.each([
+    ...['', '   ', 'app\nsource', 'app\tpath', 'app\x00', 'app\x7f'].map((workingDirectory) => [
+      'workingDirectory',
+      { ...valid, workingDirectory },
+    ]),
     ['name', { ...valid, name: 'Docs App' }],
     ['host', { ...valid, host: undefined }],
     ['domain', { ...valid, ingress: { ...valid.ingress, domain: 'https://demo.example.com' } }],

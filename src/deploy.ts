@@ -1,12 +1,12 @@
 import type { HttpClient } from 'effect/http';
 
-import { Console, Effect, type Option, Path } from 'effect';
+import { Console, Effect, FileSystem, type Option, Path } from 'effect';
 
 import type { Phase } from './progress.ts';
 
 import { blocking, formatChecks, runChecks } from './checks.ts';
 import { mkdirScript, printableStep } from './command.ts';
-import { type App, directoriesOf, loadApp, selectDestination } from './config/deploy.ts';
+import { type App, directoriesOf, loadApp, selectDestination, workingDirectoryOf } from './config/deploy.ts';
 import { dockerHost, type HostConfig, hostFor, loadHostsForRun } from './config/hosts.ts';
 import { readSecrets } from './config/secrets.ts';
 import { DeployError } from './errors.ts';
@@ -104,8 +104,8 @@ interface Source {
   readonly tag: string;
 
   /**
-   * The absolute build context: `context` from `deploy.yaml` resolved against the deploy folder, else the Git root.
-   * With `--tag` nothing is built, so it falls back to the deploy folder instead and is never read.
+   * The absolute build context: `context` from `deploy.yaml` resolved against the working directory, else the Git root.
+   * With `--tag` nothing is built, so it falls back to the working directory instead and is never read.
    */
   readonly context: string;
 }
@@ -122,19 +122,30 @@ interface Source {
  */
 const chooseSource = Effect.fn('chooseSource')(function* (app: App, options: DeployOptions) {
   const path = yield* Path.Path;
-  const configured = app.config.context === undefined ? undefined : path.resolve(app.dir, app.config.context);
+  const directory = workingDirectoryOf(app);
+  const configured = app.config.context === undefined ? undefined : path.resolve(directory, app.config.context);
 
   if (options.tag._tag === 'Some') {
-    const reused: Source = { tag: options.tag.value, context: configured ?? app.dir };
+    const reused: Source = { tag: options.tag.value, context: configured ?? directory };
     return reused;
   }
 
   if (app.config.targets.length === 0) {
-    return { tag: 'third-party', context: configured ?? app.dir };
+    return { tag: 'third-party', context: configured ?? directory };
+  }
+
+  if (app.config.workingDirectory !== undefined) {
+    const fs = yield* FileSystem.FileSystem;
+    const info = yield* fs
+      .stat(directory)
+      .pipe(Effect.mapError(() => new DeployError({ message: `Cannot access working directory: ${directory}` })));
+    if (info.type !== 'Directory') {
+      return yield* Effect.fail(new DeployError({ message: `Working directory is not a directory: ${directory}` }));
+    }
   }
 
   const git = yield* Git;
-  const root = yield* git.root(app.dir);
+  const root = yield* git.root(directory);
   if (!(yield* git.hasCommits(root))) {
     return yield* new DeployError({ message: 'The repository has no commits yet; images are tagged with the commit' });
   }

@@ -193,6 +193,7 @@ describe('Caddy templates', () => {
         targets: [],
         composeFiles: ['compose.yaml'],
         ingress: { caddy: { domain: site.domain, upstream: site.upstream, siteTemplate: './not-selected.tmpl' } },
+        workingDirectory: '../absent-app-checkout',
         destinations: {
           staging: {
             ingress: {

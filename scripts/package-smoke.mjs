@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempDisposableSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempDisposableSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -85,6 +85,52 @@ assert.match(preview, /provision Cloudflare connector/);
 assert.match(preview, /cloudflare\/cloudflared/);
 assert.match(preview, /read_only/);
 
+// Exercise an installed CLI build plan with deployment files outside the source checkout.
+const source = join(consumer, 'app source');
+const deployment = join(consumer, 'deployments');
+mkdirSync(source);
+mkdirSync(deployment);
+writeFileSync(join(source, 'Dockerfile'), 'FROM scratch AS web\n');
+execFileSync('git', ['init', '--quiet', source], options);
+execFileSync('git', ['-C', source, 'add', 'Dockerfile'], options);
+execFileSync(
+  'git',
+  [
+    '-C',
+    source,
+    '-c',
+    'user.name=Package Test',
+    '-c',
+    'user.email=package@example.invalid',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '--quiet',
+    '-m',
+    'fixture',
+  ],
+  options,
+);
+writeFileSync(
+  join(deployment, 'production.yaml'),
+  `name: external
+host: fixture
+workingDirectory: ../app source
+targets: [web]
+composeFiles: [compose.yaml]
+`,
+);
+writeFileSync(join(deployment, 'compose.yaml'), 'services: {web: {image: nginx}}\n');
+const buildPreview = execFileSync(
+  executable,
+  ['--hosts', hosts, 'deploy', join(deployment, 'production.yaml'), '--local', '--dry-run'],
+  options,
+);
+assert.ok(buildPreview.includes(join(source, 'Dockerfile')));
+assert.ok(buildPreview.includes(`--project-directory ${deployment}`));
+assert.ok(buildPreview.includes(join(deployment, 'compose.yaml')));
+assert.match(buildPreview, /external-web:[a-f0-9]{12}/);
+
 const { deploymentScript } = await import(join(installed, 'dist/src/ssh-plan.mjs'));
 const flat = deploymentScript(
   {
@@ -107,5 +153,5 @@ assert.match(flat.script, /\.compoza\.json/);
 assert.doesNotMatch(flat.script, /releases\/|\.activations\/|previous_id|compoza_promote/);
 
 console.log(
-  `Installed compoza ${manifest.version}: CLI, runtime assets and Cloudflare setup preview and flat SSH planning verified.`,
+  `Installed compoza ${manifest.version}: CLI, runtime assets and Cloudflare setup, external source builds and flat SSH planning verified.`,
 );

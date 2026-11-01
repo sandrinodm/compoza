@@ -8,7 +8,7 @@ Deploy Docker Compose stacks to remote machines over SSH. Build and deliver imag
 
 A good fit for side projects, home labs, and apps you run on a VPS from providers like Hetzner, OVHcloud, or DigitalOcean. Bring your own server and Compose files; Compoza handles the deployment workflow.
 
-Any repository opts in by adding a `deploy.yaml` beside its Compose files. A separate host inventory can live globally on the operator's machine or in a repository-local `hosts.yaml`.
+Any app opts in with a `deploy.yaml` beside its Compose files; its source repository can live separately. A separate host inventory can live globally on the operator's machine or in a repository-local `hosts.yaml`.
 
 Docker and Compose are the core. Credential providers (dotenv and 1Password) and ingress (Caddy and Cloudflare Tunnel) are [bundled extensions](docs/development.md#extensions), with interfaces for adding other implementations.
 
@@ -118,6 +118,16 @@ The app listens on the host at `http://127.0.0.1:8080/`. The deploy checks that 
 > [!NOTE]
 > The quickstart explicitly opts into `execution: ssh`. When `execution` is omitted, the default is **client** execution: Compose runs on this machine against `docker --host ssh://<host>`. SSH execution writes `compose.yaml`, `.env` and declared assets into a flat host stack folder. Reuse an older image with `deploy --tag <tag>`.
 
+### Keep deployment configuration separately
+
+For `Repositories/localcloud/compose/foo/deploy.yaml`, point at the app repository:
+
+```yaml
+workingDirectory: ../../../foo
+```
+
+Git checks and builds use `Repositories/foo`. Compose files, assets, dotenv files and app templates stay beside `deploy.yaml`. Relative Dockerfile and build-context paths use the app directory. See [separate source and deployment folders](docs/configuration.md#separate-source-and-deployment-folders).
+
 ## Execution and image transport
 
 Two independent settings decide how a deploy runs:
@@ -179,14 +189,15 @@ cp -R .agents/skills/deploy .agents/skills/compoza /path/to/app/.agents/skills/
 
 ## Documentation
 
-| Document                                                   | Covers                                                                                                   |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| [Comparing deployment tools](docs/comparisons.md)          | Kamal, Dokploy, Coolify and Compose: deployment models, strengths, limits and when to choose each        |
-| [Configuration](docs/configuration.md)                     | `hosts.yaml`, `deploy.yaml`, destinations, execution and transport, client deploys, lifecycle, `publish` |
-| [Ingress](docs/ingress.md)                                 | Provider selection, Caddy host/app settings and setup, Cloudflare Tunnel, route ownership and migration  |
-| [Caddy templates](docs/caddy-templates.md)                 | File and inline templates, placeholders, app overrides and custom proxy headers                          |
-| [Caddy production operations](docs/caddy-production.md)    | Hardening defaults, monitoring, backups, recovery and existing-host migration                            |
-| [Cloudflare provisioning](docs/cloudflare-provisioning.md) | Host connector setup, native credentials, manual routes, hardening and Compose/route templates           |
-| [Secrets](docs/secrets.md)                                 | Providers, 1Password authentication, dotenv rules, collisions, access checks, private SSH dotenv         |
-| [SSH deployment](docs/ssh-deployment.md)                   | Host prerequisites, flat stack layout, assets, validation, privacy and image-tag recovery                |
-| [Development](docs/development.md)                         | Source layout, checks, tests and host-runtime conventions                                                |
+| Document                                                   | Covers                                                                                                             |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| [Comparing deployment tools](docs/comparisons.md)          | Kamal, Dokploy, Coolify and Compose: deployment models, strengths, limits and when to choose each                  |
+| [Examples](docs/examples.md)                               | Complete host and app configurations, central source directories, destinations, credentials and ingress variations |
+| [Configuration](docs/configuration.md)                     | `hosts.yaml`, `deploy.yaml`, destinations, execution and transport, client deploys, lifecycle, `publish`           |
+| [Ingress](docs/ingress.md)                                 | Provider selection, Caddy host/app settings and setup, Cloudflare Tunnel, route ownership and migration            |
+| [Caddy templates](docs/caddy-templates.md)                 | File and inline templates, placeholders, app overrides and custom proxy headers                                    |
+| [Caddy production operations](docs/caddy-production.md)    | Hardening defaults, monitoring, backups, recovery and existing-host migration                                      |
+| [Cloudflare provisioning](docs/cloudflare-provisioning.md) | Host connector setup, native credentials, manual routes, hardening and Compose/route templates                     |
+| [Secrets](docs/secrets.md)                                 | Providers, 1Password authentication, dotenv rules, collisions, access checks, private SSH dotenv                   |
+| [SSH deployment](docs/ssh-deployment.md)                   | Host prerequisites, flat stack layout, assets, validation, privacy and image-tag recovery                          |
+| [Development](docs/development.md)                         | Source layout, checks, tests and host-runtime conventions                                                          |

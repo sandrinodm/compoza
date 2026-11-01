@@ -1,7 +1,9 @@
 import { Effect, FileSystem, Path, Schema } from 'effect';
+import { resolve } from 'node:path';
 
 import { DeployError, platformFailure } from '../errors.ts';
 import { readConfigFile } from './config-file.ts';
+import { expandHome } from './hosts.ts';
 import { AbsolutePath, Name, Target } from './schema.ts';
 
 export { HealthPath, CaddyIngress, NoIngress } from '../extensions/config.ts';
@@ -145,7 +147,7 @@ export const Destination = Schema.Struct({
 /**
  * The contents of an app's `deploy.yaml`, the file that opts a folder into this tool.
  *
- * Paths in it are relative to the folder holding the file, except host folders, which are absolute on the host.
+ * Deployment paths are relative to the file; build paths use `workingDirectory`. Host folders are absolute on the host.
  */
 export const DeployConfig = Schema.Struct({
   /**
@@ -164,12 +166,26 @@ export const DeployConfig = Schema.Struct({
   host: Name,
 
   /**
-   * The Dockerfile, relative to the deploy folder; defaults to `Dockerfile` next to `deploy.yaml`.
+   * The source directory for Git and builds, relative to this file; absolute and `~/` paths are also accepted. Defaults
+   * to the deploy folder. Compose, assets, secrets and templates remain relative to this file.
+   */
+  workingDirectory: Schema.optionalKey(
+    Schema.String.pipe(
+      Schema.check(
+        Schema.isPattern(/^(?=.*\S)[^\p{Cc}]+$/u, {
+          message: 'expected a nonempty directory path without control characters',
+        }),
+      ),
+    ),
+  ),
+
+  /**
+   * The Dockerfile, relative to the working directory; defaults to `Dockerfile` there.
    */
   dockerfile: Schema.optionalKey(Schema.String),
 
   /**
-   * The build context, relative to the deploy folder; defaults to the root of the Git repository.
+   * The build context, relative to the working directory; defaults to the root of the Git repository.
    */
   context: Schema.optionalKey(Schema.String),
 
@@ -257,8 +273,8 @@ export const DeployConfig = Schema.Struct({
 export type DeployConfig = typeof DeployConfig.Type;
 
 /**
- * An app ready to deploy: its configuration and the absolute folder it was read from, against which the relative paths
- * in the configuration resolve.
+ * An app ready to deploy: its configuration and the absolute folder used to resolve deployment files. Git and builds
+ * use `workingDirectoryOf`.
  */
 export interface App {
   /**
@@ -275,6 +291,13 @@ export interface App {
    * The decoded `deploy.yaml`.
    */
   readonly config: DeployConfig;
+}
+
+/**
+ * The source directory used by Git and builds, without requiring a checkout for source-free commands.
+ */
+export function workingDirectoryOf(app: App): string {
+  return resolve(app.dir, expandHome(app.config.workingDirectory ?? '.'));
 }
 
 /**

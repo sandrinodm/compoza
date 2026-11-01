@@ -14,6 +14,10 @@ self-contained when copied into another repository.
 ## Resolve scope first
 
 - Locate the requested `deploy.yaml`. Ask if the app or destination is ambiguous.
+  It may live outside the app repository. `workingDirectory` selects the source for Git
+  and builds, relative to the YAML unless absolute or `~/`; it defaults to the YAML folder.
+  Compose, assets, dotenv files and app templates keep the YAML folder as their base.
+  Destinations share this source; hosts discovery still uses the CLI working directory.
 - Preserve `--destination <name>` and any `--hosts` override on every app command.
   Global hosts live in `~/.config/compoza/hosts.yaml`; `./hosts.yaml` in the current
   working directory overrides complete entries by name. `--hosts` or `COMPOZA_HOSTS`
@@ -65,7 +69,8 @@ compoza status infra
 ```
 
 `--tag` skips Git/builds and reuses images with the current local configuration and
-currently selected secret source. There is no release rollback command, saved
+currently selected secret source. A missing source checkout is allowed for `--tag`,
+`targets: []`, status, logs and lifecycle commands. There is no release rollback command, saved
 configuration history or backup folder. Check out an earlier app revision separately
 when its configuration is required. Never imply reversal of database migrations.
 

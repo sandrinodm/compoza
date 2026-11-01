@@ -2,7 +2,7 @@ import { devNull } from 'node:os';
 import { resolve } from 'node:path';
 
 import { type Command, command, REMOTE_PATH, shellQuote, type Step } from './command.ts';
-import { type App, composeFilesOf, environmentOf, projectNameOf } from './config/deploy.ts';
+import { type App, composeFilesOf, environmentOf, projectNameOf, workingDirectoryOf } from './config/deploy.ts';
 import { dockerHost, type HostConfig } from './config/hosts.ts';
 import { secretSource, validateSecrets } from './config/secrets.ts';
 
@@ -63,13 +63,13 @@ export function imageReference(app: App, host: HostConfig, target: string, tag: 
 }
 
 /**
- * The absolute Dockerfile path, defaulting to `Dockerfile` in the deploy folder.
+ * The absolute Dockerfile path, defaulting to `Dockerfile` in the working directory.
  *
- * A relative `dockerfile` resolves against the deploy folder and an absolute one is kept as is, the same rule the build
- * context follows in `deploy.ts`; `join` would instead append an absolute path to the folder.
+ * A relative `dockerfile` resolves against the working directory and an absolute one is kept as is, the same rule the
+ * build context follows in `deploy.ts`; `join` would instead append an absolute path to the folder.
  */
 export function dockerfileOf(app: App): string {
-  return resolve(app.dir, app.config.dockerfile ?? 'Dockerfile');
+  return resolve(workingDirectoryOf(app), app.config.dockerfile ?? 'Dockerfile');
 }
 
 /**
@@ -143,7 +143,7 @@ export function planDeployment(options: PlanOptions): ReadonlyArray<Step> {
           options.context,
         ],
         {
-          cwd: app.dir,
+          cwd: workingDirectoryOf(app),
           ...(!local && host.transport.mode === 'remote-build'
             ? { env: { DOCKER_CONTEXT: '', BUILDX_BUILDER: '', BUILDX_HOST: '' } }
             : {}),
