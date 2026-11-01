@@ -29,27 +29,18 @@ For differences in deployment behavior, operational scope and trade-offs, see [C
 
 ## Install
 
-Requires Node.js 22.18 or newer and pnpm 12 (`devEngines` downloads pnpm when it is missing). From a checkout of this repository:
+Requires Node.js 22.18 or newer. Install the CLI globally with pnpm:
 
 ```sh
-pnpm install
-pnpm build
-pnpm link --global   # puts `compoza` on PATH, pointing at this checkout
+pnpm add -g compoza
+compoza --help
 ```
 
-Or call it from an app repository's `package.json` without linking:
-
-```json
-{
-  "scripts": {
-    "deploy": "node ../compoza/bin/compoza.ts deploy infra"
-  }
-}
-```
+The `compoza` command is then available from any app repository. For running from source, see the [development guide](docs/development.md).
 
 A normal install includes the optional 1Password SDK. Dotenv secrets, ordinary checks and dry runs also work without optional dependencies.
 
-When upgrading an installation from before the Compoza rename, relink the CLI, update scripts to call `compoza`,
+When upgrading an installation from before the Compoza rename, install the CLI as above, update scripts to call `compoza`,
 and move the global host inventory to `~/.config/compoza/hosts.json` (or select it explicitly with `--hosts`).
 Update operator environment variables to `COMPOZA_HOSTS` and `COMPOZA_1PASSWORD_ACCOUNT` where used.
 Deploy a fresh SSH release before using lifecycle commands or rollback with Compoza; archived releases must carry
