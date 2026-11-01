@@ -138,11 +138,11 @@ A deployed stack contains:
 
 There are no release, activation, current/previous, backup or archived-secret directories. The transient `.deploy-lock` holds upload files and disappears when the operation exits. No runtime shell scripts or jq filters are installed in the stack.
 
-`.compoza.json` records the deployed project, tag, profiles, declared files, host env/overlay paths, credential policy and ingress removal operation. Lifecycle commands use these settings rather than undeployed local edits. It contains no resolved credentials and no history.
+`.compoza.json` records the deployed project, tag, profiles, declared files, owned file paths, host env/overlay paths, credential policy and ingress removal operation. Lifecycle commands use these settings rather than undeployed local edits. It contains no resolved credentials or previous deployment snapshots.
 
 The CLI replaces only its own stack files. It refuses symlinked stack ancestors and outputs, invalid existing metadata, and preexisting files it does not own. An existing `.env` without lifecycle metadata is treated as operator data: move it to a separate host file and select that file with `remote.envFile`, or choose a fresh `stackDir`. Explicit host env/overlay paths must be separate from generated outputs.
 
-Operator overlays, separate host env files, persistent data and undeclared files are retained. Assets removed from configuration are left in place; the CLI does not prune operator storage. Existing directories from older deployment layouts are not removed or migrated automatically.
+Operator overlays, separate host env files, persistent data and undeclared files are retained. Assets removed from configuration are left in place, and their ownership is remembered so they can be declared again later. Retained assets must be declared again before use as relative file references or binds. The CLI does not prune operator storage. Existing directories from older deployment layouts are not removed or migrated automatically.
 
 ## Stack bundle and assets
 
@@ -177,7 +177,7 @@ Managed status projects only service/state/health/exit-code fields and redacts s
 2. Acquire the per-stack `mkdir` lock and upload into its temporary folder.
 3. Normalize and validate Compose, dotenv, asset references and the live host overlay.
 4. Replace `compose.yaml`, `.env`, declared assets and lifecycle metadata in place.
-5. Create configured persistent directories and run `up --detach --remove-orphans --no-build --wait`.
+5. Create configured persistent directories and run `up --detach --force-recreate --remove-orphans --no-build --wait`. Every deployment recreates services, including when reusing image tags, so file bind mounts see updated assets. This restarts containers even when their configuration is unchanged.
 6. Apply the ingress route and run configured HTTP readiness checks.
 
 Upload or validation failures leave deployed files unchanged. File replacement is in place, without backups or an atomic multi-file commit. An interruption during replacement can leave a mixed set of files; a Compose, route or health failure can leave changed containers or routes. Redeploy to recover. Database migrations are never reversed.

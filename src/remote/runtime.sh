@@ -35,11 +35,14 @@ compoza_decode() {
 
 compoza_metadata() {
   [ -f "$metadata" ] && [ ! -L "$metadata" ] || { compoza_fail 'No safe deployed configuration; deploy this destination first'; return 1; }
-  jq -se 'length == 1 and (.[0] |
+  jq -se 'def file_paths:
+    type == "array" and all(.[]; type == "string" and test("^[a-zA-Z0-9_/-][a-zA-Z0-9_./-]*$") and (split("/") | all(. != "" and (startswith(".") | not))));
+    length == 1 and (.[0] |
     .version == 1 and
     (.project | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]*$")) and
     (.profiles | type == "array" and all(.[]; type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]*$"))) and
-    (.files | type == "array" and all(.[]; type == "string" and test("^[a-zA-Z0-9_/-][a-zA-Z0-9_./-]*$") and (split("/") | all(. != "" and (startswith(".") | not))))) and
+    (.files | file_paths) and
+    (if has("ownedFiles") then (.ownedFiles | file_paths) and ((.files - .ownedFiles) | length == 0) else true end) and
     (.overlay | . == null or (type == "string" and startswith("/") and (explode | all(. >= 32)))) and
     (.hostEnv | . == null or (type == "string" and startswith("/") and (explode | all(. >= 32)))) and
     (.managed | type == "boolean") and (.unroute | type == "string"))' "$metadata" >/dev/null 2>&1 || { compoza_fail 'Invalid deployed lifecycle metadata; redeploy with the current CLI'; return 1; }
@@ -59,7 +62,14 @@ compoza_target() {
   if [ "$relative" = .env ] && [ ! -f "$root/.compoza.json" ]; then
     compoza_fail 'Existing .env is operator-owned; move it to a separate host file and select remote.envFile before deploying'; return 1
   fi
-  [ -f "$root/.compoza.json" ] && jq -e --arg file "$relative" '$file == ".env" or $file == ".compoza.json" or (.files | index($file) != null)' "$root/.compoza.json" >/dev/null 2>&1 || { compoza_fail 'Refusing to overwrite an operator-owned stack file; move it or choose another stackDir'; return 1; }
+  [ -f "$root/.compoza.json" ] && jq -e --arg file "$relative" '$file == ".env" or $file == ".compoza.json" or ((.ownedFiles // .files) | index($file) != null)' "$root/.compoza.json" >/dev/null 2>&1 || { compoza_fail 'Refusing to overwrite an operator-owned stack file; move it or choose another stackDir'; return 1; }
+}
+
+# Remember retained files without adding them to the current model's asset allowlist.
+compoza_merge_ownership() {
+  [ -f "$root/.compoza.json" ] || return 0
+  jq --slurpfile previous "$root/.compoza.json" '.ownedFiles = ((.files + ($previous[0].ownedFiles // $previous[0].files)) | unique)' "$metadata" > "$root/.deploy-lock/metadata.json"
+  mv -f -- "$root/.deploy-lock/metadata.json" "$metadata"
 }
 
 # Resolve paths without requiring GNU realpath, including missing optional host files.

@@ -2,11 +2,14 @@ import { assert, describe, it } from '@effect/vitest';
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
+  closeSync,
   mkdirSync,
   mkdtempDisposableSync,
+  openSync,
   readFileSync,
   readdirSync,
   realpathSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -43,7 +46,7 @@ function composeFixture(
     join(bin, 'docker'),
     `#!/bin/bash
 set -eu
-case " $* " in *' up '*|*' stop '*|*' down '*) exit 0;; esac
+case " $* " in *' up '*|*' stop '*|*' down '*) printf '%s\\n' "$*" >> ${shellQuote(join(dir, 'calls'))}; exit 0;; esac
 exec ${shellQuote(docker)} "$@"
 `,
     { mode: 0o700 },
@@ -75,6 +78,75 @@ exec ${shellQuote(docker)} "$@"
 }
 
 describe.skipIf(!composeAvailable)('flat stack with the actual Compose parser', { timeout: 15_000 }, () => {
+  it('recreates services after replacing assets even when Compose hashes and image tags stay unchanged', () =>
+    composeFixture(({ app, dir, root, run }) => {
+      Object.assign(app.config, { composeFiles: ['compose.yaml'] });
+      const source = {
+        path: 'compose.yaml',
+        encoded: Buffer.from(
+          'services: {web: {image: nginx:alpine, volumes: ["./settings.txt:/settings:ro"]}}',
+        ).toString('base64'),
+      };
+      const deployAsset = (value: string) => {
+        const plan = deploymentScript(app, host, 'same', [
+          source,
+          { path: 'settings.txt', encoded: Buffer.from(value).toString('base64') },
+        ]);
+        const result = run(plan.script, plan.input);
+        assert.strictEqual(result.status, 0, String(result.stderr));
+      };
+      const hash = () => {
+        const result = spawnSync(docker, ['compose', '--file', join(root, 'compose.yaml'), 'config', '--hash', 'web'], {
+          encoding: 'utf8',
+        });
+        assert.strictEqual(result.status, 0, result.stderr);
+        return result.stdout;
+      };
+      deployAsset('old');
+      const beforeHash = hash();
+      const beforeInode = statSync(join(root, 'settings.txt')).ino;
+      const previous = openSync(join(root, 'settings.txt'), 'r');
+      try {
+        deployAsset('new');
+        assert.strictEqual(hash(), beforeHash);
+        assert.notStrictEqual(statSync(join(root, 'settings.txt')).ino, beforeInode);
+        assert.strictEqual(readFileSync(previous, 'utf8'), 'old');
+        assert.strictEqual(readFileSync(join(root, 'settings.txt'), 'utf8'), 'new');
+        const calls = readFileSync(join(dir, 'calls'), 'utf8').trim().split('\n');
+        assert.strictEqual(calls.length, 2);
+        for (const call of calls) {
+          assert.include(call, 'up --detach --force-recreate');
+        }
+      } finally {
+        closeSync(previous);
+      }
+    }));
+
+  it('allows normalized.yaml as a Compose source and as an asset', () =>
+    composeFixture(({ app, root, run }) => {
+      Object.assign(app.config, { composeFiles: ['normalized.yaml'] });
+      const source = Buffer.from('services: {web: {image: nginx:alpine}}').toString('base64');
+      const first = deploymentScript(app, host, 'one', [{ path: 'normalized.yaml', encoded: source }]);
+      const firstResult = run(first.script, first.input);
+      assert.strictEqual(firstResult.status, 0, String(firstResult.stderr));
+      assert.include(readFileSync(join(root, 'compose.yaml'), 'utf8'), 'nginx:alpine');
+
+      Object.assign(app.config, { composeFiles: ['compose.yaml'] });
+      const second = deploymentScript(app, host, 'two', [
+        {
+          path: 'compose.yaml',
+          encoded: Buffer.from(
+            'services: {web: {image: nginx:alpine, volumes: ["./normalized.yaml:/settings:ro"]}}',
+          ).toString('base64'),
+        },
+        { path: 'normalized.yaml', encoded: Buffer.from('asset content').toString('base64') },
+      ]);
+      const secondResult = run(second.script, second.input);
+      assert.strictEqual(secondResult.status, 0, String(secondResult.stderr));
+      assert.strictEqual(readFileSync(join(root, 'normalized.yaml'), 'utf8'), 'asset content');
+      assert.isFalse(existsSync(join(root, '.deploy-lock')));
+    }));
+
   it('merges selected files, preserves interpolation and raw env files, and resolves assets from the flat stack', () =>
     composeFixture(({ app, dir, root, run }) => {
       const external = join(dir, 'service.env');

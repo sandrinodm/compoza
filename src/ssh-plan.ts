@@ -102,7 +102,8 @@ done
  * Builds a flat stack upload and validation transaction with no retained deployment history.
  *
  * Compose source files are normalized without interpolation in the temporary lock folder. The selected dotenv and live
- * operator overlay validate that output before tool-owned stack files are replaced. Containers can still change
+ * operator overlay validate that output before tool-owned stack files are replaced. Services are recreated so file bind
+ * mounts pick up replaced assets even when image tags and Compose settings are unchanged. Containers can still change
  * partially if Compose, routing or health fails; recovery is another deployment with a known image tag.
  */
 export function deploymentScript(
@@ -139,6 +140,7 @@ export function deploymentScript(
     tag,
     profiles: app.config.profiles ?? [],
     files,
+    ownedFiles: files,
     overlay: app.config.remote?.overlayFile ?? null,
     hostEnv: app.config.remote?.envFile ?? null,
     managed: secrets !== undefined,
@@ -182,10 +184,11 @@ metadata="$upload/.compoza.json"
 env_file="$upload/.env"
 compose_file="$upload/compose.yaml"
 compoza_metadata
-if ! compoza_compose normalize ${app.config.composeFiles.map((file) => `"$upload"/${shellQuote(file)}`).join(' ')} > "$upload/normalized.yaml" 2>/dev/null; then
+compoza_merge_ownership
+if ! compoza_compose normalize ${app.config.composeFiles.map((file) => `"$upload"/${shellQuote(file)}`).join(' ')} > "$root/.deploy-lock/normalized.yaml" 2>/dev/null; then
   echo 'Compose normalization failed; inspect selected files privately' >&2; exit 1
 fi
-mv -f -- "$upload/normalized.yaml" "$compose_file"
+mv -f -- "$root/.deploy-lock/normalized.yaml" "$compose_file"
 echo 'Validating stack Compose configuration'
 if ! compoza_compose config --quiet >/dev/null 2>&1; then
   echo 'Compose validation failed; inspect host env and overlay privately' >&2; exit 1
@@ -200,7 +203,7 @@ env_file="$root/.env"
 compose_file="$root/compose.yaml"
 ${directoriesOf(app.config).length === 0 ? '' : `mkdir -p -- ${directoriesOf(app.config).map(shellQuote).join(' ')}`}
 echo 'Starting stack and waiting for running/healthy services'
-if ! compoza_compose up --detach --remove-orphans --no-build --pull ${host.transport.mode === 'registry' ? 'always' : 'missing'} --wait --wait-timeout ${app.config.remote?.waitTimeoutSeconds ?? 180} >/dev/null 2>&1; then
+if ! compoza_compose up --detach --force-recreate --remove-orphans --no-build --pull ${host.transport.mode === 'registry' ? 'always' : 'missing'} --wait --wait-timeout ${app.config.remote?.waitTimeoutSeconds ?? 180} >/dev/null 2>&1; then
   echo 'Compose failed; containers may be partially updated. Recover by deploying a known image tag.' >&2; exit 1
 fi
 ${ingress === undefined ? '' : `bash -c ${shellQuote(ingressOperationScript(ingress.route))}`}

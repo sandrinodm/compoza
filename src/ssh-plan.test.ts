@@ -155,6 +155,66 @@ describe('flat SSH stack transactions', { timeout: 15_000 }, () => {
       assert.isFalse(readFileSync(join(dir, 'calls'), 'utf8').includes('fixture-web:bad'));
     }));
 
+  it('retains asset ownership across removal and reintroduction without expanding the active allowlist', () =>
+    fixture(({ dir, root, deploy }) => {
+      const asset = { path: 'settings.txt', encoded: Buffer.from('original').toString('base64') };
+      succeeded(deploy('one', undefined, [source, asset]));
+
+      const metadataFile = join(root, '.compoza.json');
+      const legacy = JSON.parse(readFileSync(metadataFile, 'utf8'));
+      delete legacy.ownedFiles;
+      writeFileSync(metadataFile, JSON.stringify(legacy));
+      succeeded(deploy('two'));
+
+      const retained = readFileSync(metadataFile, 'utf8');
+      assert.deepStrictEqual(JSON.parse(retained).files, ['compose.yaml']);
+      assert.deepStrictEqual(JSON.parse(retained).ownedFiles, ['compose.yaml', 'settings.txt']);
+      assert.strictEqual(readFileSync(join(root, 'settings.txt'), 'utf8'), 'original');
+
+      writeFileSync(
+        join(dir, 'model.json'),
+        JSON.stringify({
+          services: { web: { volumes: [{ type: 'bind', source: './settings.txt', read_only: true }] } },
+        }),
+      );
+      assert.notStrictEqual(deploy('invalid').status, 0);
+      assert.strictEqual(readFileSync(metadataFile, 'utf8'), retained);
+
+      writeFileSync(join(dir, 'model.json'), JSON.stringify({ services: { web: { image: 'fixture' } } }));
+      writeFileSync(join(root, 'operator.txt'), 'operator');
+      assert.notStrictEqual(
+        deploy('invalid', undefined, [
+          source,
+          { path: 'operator.txt', encoded: Buffer.from('replace').toString('base64') },
+        ]).status,
+        0,
+      );
+      assert.strictEqual(readFileSync(join(root, 'operator.txt'), 'utf8'), 'operator');
+      assert.strictEqual(readFileSync(metadataFile, 'utf8'), retained);
+
+      succeeded(deploy('three', undefined, [source, { ...asset, encoded: Buffer.from('updated').toString('base64') }]));
+      assert.strictEqual(readFileSync(join(root, 'settings.txt'), 'utf8'), 'updated');
+      assert.deepStrictEqual(JSON.parse(readFileSync(metadataFile, 'utf8')).files, ['compose.yaml', 'settings.txt']);
+    }));
+
+  it('rejects malformed retained ownership before replacing deployed files', () =>
+    fixture(({ root, deploy }) => {
+      succeeded(deploy());
+      const metadataFile = join(root, '.compoza.json');
+      const original = JSON.parse(readFileSync(metadataFile, 'utf8'));
+      const environment = readFileSync(join(root, '.env'), 'utf8');
+
+      for (const ownedFiles of [null, {}, [], ['../outside'], ['/outside'], ['.env'], ['a//b'], [42]]) {
+        const malformed = JSON.stringify({ ...original, ownedFiles });
+        writeFileSync(metadataFile, malformed);
+        const result = deploy('replacement');
+        assert.notStrictEqual(result.status, 0, JSON.stringify(ownedFiles));
+        assert.include(String(result.stderr), 'Invalid deployed lifecycle metadata');
+        assert.strictEqual(readFileSync(metadataFile, 'utf8'), malformed);
+        assert.strictEqual(readFileSync(join(root, '.env'), 'utf8'), environment);
+      }
+    }));
+
   it('cleans interrupted staging and preserves existing stack files', () =>
     fixture(({ app, root, deploy, run }) => {
       succeeded(deploy());
