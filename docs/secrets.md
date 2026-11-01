@@ -64,9 +64,23 @@ Select one source, never competing aliases: declaring `secrets` together with a 
 
 The 1Password provider lazily loads the official optional `@1password/sdk` (pinned to 0.5.0) and calls `client.environments.getVariables(environmentId)` on the CLI machine.
 
-- It imports **every** returned variable. The SDK's `masked` flag is display metadata and does not exclude a value.
+- By default it imports **every** returned variable. Set `variables` to an allowlist of exact names to retain only the secrets this deployment needs. The SDK's `masked` flag is display metadata and does not exclude a value.
 - It does not invoke the beta CLI environment export, install anything on the host, or require 1Password in application containers.
 - A normal install includes the SDK. Dotenv, ordinary checks and dry runs also work when optional dependencies are omitted.
+
+For example, share one Environment across applications while selecting only this API's key:
+
+```yaml
+secrets:
+  1password:
+    environmentId: fictional-atlas-environment-id
+    variables:
+      - PROMPTSUB_API_KEY
+```
+
+`variables` accepts environment identifiers, matched exactly and case-sensitively, with no wildcards or renaming. A missing requested variable fails the secret read before builds or host writes. An empty list imports nothing and skips the SDK read; omitting the field retains the existing import-all behavior. An existing variable with an empty value is still imported; applications can require a nonempty value in Compose with `${PROMPTSUB_API_KEY:?required}`.
+
+The SDK still reads the complete Environment into CLI memory. Compoza discards excluded entries before validating deployment variables or producing commands and payloads, so excluded names and values are absent from the generated `.env`, SSH upload and secret-access report. This applies to client and SSH execution, named and legacy 1Password selections, destinations and explicit local sources. Other providers are unchanged. Ordinary nonsecret settings and image references are still written to `.env`.
 
 ### Authentication
 

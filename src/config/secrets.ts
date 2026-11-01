@@ -129,7 +129,7 @@ export function secretEnvironment(values: Readonly<Record<string, string>>): str
 }
 
 /**
- * Resolves all variables on the CLI machine, suppressing third-party failures and every value in diagnostics.
+ * Resolves selected provider variables on the CLI machine, suppressing failures and every value in diagnostics.
  *
  * Dry runs validate source selection but fetch no provider and read no secret file. The ordinary check command does not
  * call this function; explicit access checks do, including before a first SSH deployment.

@@ -101,6 +101,11 @@ export const onePasswordProvider: CredentialProvider = {
       return yield* new DeployError({ message: 'Invalid 1Password source selection' });
     }
 
+    const allowed = source.variables === undefined ? undefined : new Set(source.variables);
+    if (allowed?.size === 0) {
+      return {};
+    }
+
     const reader = yield* OnePasswordReader;
     const variables = yield* Effect.tryPromise({
       try: () => reader(source.environmentId),
@@ -117,6 +122,10 @@ export const onePasswordProvider: CredentialProvider = {
     const values: Record<string, string> = Object.create(null);
 
     for (const [index, variable] of variables.entries()) {
+      if (allowed !== undefined && !allowed.has(variable?.name)) {
+        continue;
+      }
+
       if (
         typeof variable?.name !== 'string' ||
         typeof variable.value !== 'string' ||
@@ -127,6 +136,11 @@ export const onePasswordProvider: CredentialProvider = {
       }
 
       values[variable.name] = variable.value;
+    }
+
+    const missing = [...(allowed ?? [])].filter((name) => !Object.hasOwn(values, name));
+    if (missing.length > 0) {
+      return yield* new DeployError({ message: `Missing 1Password variables: ${missing.join(', ')}` });
     }
 
     return values;

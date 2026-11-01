@@ -1,4 +1,6 @@
+import { NodeServices } from '@effect/platform-node';
 import { assert, describe, it } from '@effect/vitest';
+import { Effect } from 'effect';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
@@ -22,6 +24,8 @@ import type { App } from './config/deploy.ts';
 import type { HostConfig } from './config/hosts.ts';
 
 import { REMOTE_PATH, shellQuote } from './command.ts';
+import { readSecrets } from './config/secrets.ts';
+import { OnePasswordReader } from './extensions/1password/index.ts';
 import { cloudflareIngress } from './extensions/cloudflare-tunnel/index.ts';
 import { deployedScript, deploymentScript, generatedEnvironment, sshReadinessScript } from './ssh-plan.ts';
 
@@ -115,6 +119,42 @@ function succeeded(result: ReturnType<typeof spawnSync>): void {
 }
 
 describe('flat SSH stack transactions', { timeout: 15_000 }, () => {
+  it.effect('writes only allowlisted provider secrets to the private stack dotenv', () =>
+    Effect.gen(function* () {
+      const values = yield* readSecrets({
+        dir: '/nonexistent',
+        config: {
+          name: 'fixture',
+          host: 'host',
+          targets: ['web'],
+          composeFiles: ['compose.yaml'],
+          secrets: { '1password': { environmentId: 'fictional', variables: ['TOKEN'] } },
+        },
+      });
+      fixture(({ root, deploy }) => {
+        succeeded(deploy('one', values));
+        const environment = readFileSync(join(root, '.env'), 'utf8');
+        assert.include(environment, 'TOKEN="included-secret"');
+        assert.deepStrictEqual(
+          environment
+            .trim()
+            .split('\n')
+            .map((line) => line.slice(0, line.indexOf('=')))
+            .sort((left, right) => left.localeCompare(right)),
+          ['TOKEN', 'WEB_IMAGE'],
+        );
+        assert.notInclude(environment, 'excluded-secret');
+        assert.strictEqual(statSync(join(root, '.env')).mode & 0o777, 0o600);
+      });
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(OnePasswordReader, async () => [
+        { name: 'TOKEN', value: 'included-secret', masked: true },
+        { name: 'OTHER_TOKEN', value: 'excluded-secret', masked: true },
+      ]),
+    ),
+  );
+
   it('keeps only Compose, private dotenv, assets and one metadata file, replacing image tags without history', () =>
     fixture(({ app, dir, root, deploy, run }) => {
       const asset = { path: 'settings.txt', encoded: Buffer.from([0, 1, 255]).toString('base64') };

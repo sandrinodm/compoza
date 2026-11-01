@@ -256,6 +256,49 @@ describe('named extension configuration', () => {
     assert.throws(() => hostIngress({ ...host, ingress: { none: {} } }), 'Host has no proxy');
   });
 
+  it('preserves 1Password allowlists in named, legacy, destination and local selections', () => {
+    for (const secrets of [
+      { '1password': { environmentId: 'prod', variables: ['TOKEN'] } },
+      { provider: '1password', environmentId: 'prod', variables: ['TOKEN'] },
+    ]) {
+      const config = Schema.decodeUnknownSync(DeployConfig, { onExcessProperty: 'error' })({
+        ...app.config,
+        secrets,
+        destinations: { staging: { secrets: { '1password': { environmentId: 'stage', variables: [] } } } },
+        local: { secrets: { '1password': { environmentId: 'dev', variables: ['LOCAL_TOKEN'] } } },
+      });
+      const selected = { ...app, config };
+      assert.deepStrictEqual(secretSource(selected), {
+        provider: '1password',
+        environmentId: 'prod',
+        variables: ['TOKEN'],
+      });
+      assert.deepStrictEqual(secretSource(selected, true), {
+        provider: '1password',
+        environmentId: 'dev',
+        variables: ['LOCAL_TOKEN'],
+      });
+      assert.deepStrictEqual(secretSource(selectDestination(selected, 'staging')), {
+        provider: '1password',
+        environmentId: 'stage',
+        variables: [],
+      });
+    }
+  });
+
+  it('rejects invalid 1Password variable allowlists', () => {
+    for (const variables of ['TOKEN', [123], [''], ['BAD-NAME'], ['TOKEN*'], ['TOKEN\n']]) {
+      for (const secrets of [
+        { '1password': { environmentId: 'prod', variables } },
+        { provider: '1password', environmentId: 'prod', variables },
+      ]) {
+        assert.throws(() =>
+          Schema.decodeUnknownSync(DeployConfig, { onExcessProperty: 'error' })({ ...app.config, secrets }),
+        );
+      }
+    }
+  });
+
   it('rejects ambiguous, unknown or incomplete credential selections', () => {
     for (const secrets of [
       {},

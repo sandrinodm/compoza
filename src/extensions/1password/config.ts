@@ -8,6 +8,11 @@ export const OnePasswordSettings = Schema.Struct({
    * The Environment identifier, without authentication material.
    */
   environmentId: Schema.NonEmptyString,
+
+  /**
+   * Exact variable names to import. Omission imports all; an empty list imports none.
+   */
+  variables: Schema.optionalKey(Schema.Array(Schema.String.check(Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/)))),
 });
 
 /**

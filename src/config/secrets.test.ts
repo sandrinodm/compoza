@@ -9,6 +9,7 @@ import type { App } from './deploy.ts';
 
 import { OnePasswordReader } from '../extensions/1password/index.ts';
 import { DryRun } from '../services/Shell.ts';
+import { deploymentScript } from '../ssh-plan.ts';
 import { selectDestination, validateSecretSettings } from './deploy.ts';
 import { parseEnvFile } from './env-file.ts';
 import { readSecrets, secretSource, validateSecrets } from './secrets.ts';
@@ -23,6 +24,16 @@ const app: App = {
     secrets: { provider: '1password', environmentId: 'fictional-environment' },
   },
 };
+
+const allowlisted = (variables: ReadonlyArray<string>): App => ({
+  ...app,
+  config: {
+    ...app.config,
+    execution: 'ssh',
+    remote: { stackDir: '/srv/app' },
+    secrets: { '1password': { environmentId: 'fictional-environment', variables } },
+  },
+});
 
 describe('secret sources', () => {
   it('replaces the entire inherited source and legacy source at destinations', () => {
@@ -81,6 +92,95 @@ describe('secret sources', () => {
     ),
   );
 
+  it.effect('allowlists exact names before validation and SSH dotenv serialization', () =>
+    Effect.gen(function* () {
+      const selected = allowlisted(['TOKEN', 'EMPTY']);
+      const values = yield* readSecrets(selected);
+      assert.deepStrictEqual(values, { TOKEN: '$HOME "literal"', EMPTY: '' });
+
+      const plan = deploymentScript(
+        selected,
+        { ssh: 'fixture', platform: 'linux/arm64', transport: { mode: 'ssh-load' } },
+        'one',
+        [],
+        values,
+      );
+      const uploaded = plan.input
+        .trim()
+        .split('\n')
+        .map((line) => Buffer.from(line, 'base64').toString())
+        .join('\n');
+      assert.include(uploaded, String.raw`TOKEN="$$HOME \"literal\""`);
+      assert.include(uploaded, 'EMPTY=""');
+      assert.include(uploaded, 'WEB_IMAGE="app-web:one"');
+      for (const excluded of ['OTHER', 'SENTINEL_EXCLUDED', 'PATH', 'WEB_IMAGE_SECRET', 'token']) {
+        assert.notInclude(uploaded, excluded);
+      }
+      assert.notInclude(plan.script, '$HOME "literal"');
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(OnePasswordReader, async () => [
+        { name: 'TOKEN', value: '$HOME "literal"', masked: true },
+        { name: 'EMPTY', value: '', masked: false },
+        { name: 'OTHER', value: 'SENTINEL_EXCLUDED', masked: true },
+        { name: 'PATH', value: 'SENTINEL_EXCLUDED', masked: true },
+        { name: 'WEB_IMAGE', value: 'WEB_IMAGE_SECRET', masked: true },
+        { name: 'token', value: 'SENTINEL_EXCLUDED\nmultiline', masked: true },
+      ]),
+    ),
+  );
+
+  it.effect('fails closed when any allowlisted name is absent without echoing values', () =>
+    Effect.gen(function* () {
+      const error = yield* readSecrets(allowlisted(['TOKEN', 'MISSING'])).pipe(Effect.flip);
+      assert.include(error.message, 'Missing 1Password variables: MISSING');
+      assert.notInclude(JSON.stringify(error), 'SENTINEL_SECRET');
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(OnePasswordReader, async () => [
+        { name: 'TOKEN', value: 'SENTINEL_SECRET', masked: true },
+        { name: 'missing', value: 'SENTINEL_SECRET', masked: true },
+      ]),
+    ),
+  );
+
+  it.effect('imports nothing for an empty allowlist without loading the SDK', () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* readSecrets(allowlisted([])), {});
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(OnePasswordReader, async () => {
+        throw new Error('Empty allowlist must not access the SDK');
+      }),
+    ),
+  );
+
+  it.effect('still rejects duplicate selected variables and unsafe selected values', () =>
+    Effect.gen(function* () {
+      const duplicate = yield* readSecrets(allowlisted(['TOKEN'])).pipe(
+        Effect.provideService(OnePasswordReader, async () => [
+          { name: 'TOKEN', value: 'SENTINEL_SECRET', masked: true },
+          { name: 'TOKEN', value: 'other', masked: false },
+        ]),
+        Effect.flip,
+      );
+      assert.include(duplicate.message, 'duplicate');
+      assert.notInclude(JSON.stringify(duplicate), 'SENTINEL_SECRET');
+
+      for (const [name, value, message] of [
+        ['PATH', 'SENTINEL_SECRET', 'Reserved'],
+        ['TOKEN', 'SENTINEL_SECRET\nsecond', 'Unsupported'],
+      ]) {
+        const error = yield* readSecrets(allowlisted([name!])).pipe(
+          Effect.provideService(OnePasswordReader, async () => [{ name: name!, value: value!, masked: true }]),
+          Effect.flip,
+        );
+        assert.include(error.message, message!);
+        assert.notInclude(JSON.stringify(error), 'SENTINEL_SECRET');
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect('replaces SDK exception contents with a safe message', () =>
     Effect.gen(function* () {
       const error = yield* readSecrets(app).pipe(Effect.flip);
@@ -112,6 +212,7 @@ describe('secret sources', () => {
   it.effect('dry-runs without loading either provider or a missing env file', () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* readSecrets(app), {});
+      assert.deepStrictEqual(yield* readSecrets(allowlisted(['MISSING'])), {});
       assert.deepStrictEqual(
         yield* readSecrets({
           ...app,
