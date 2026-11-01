@@ -6,7 +6,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
+  mkdtempDisposableSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -14,6 +14,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { mkdtempDisposable } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import YAML from 'yaml';
@@ -49,7 +50,8 @@ function fixture(
     calls: () => string[][];
   }) => void,
 ): void {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'compoza-cloudflare-')));
+  using temporary = mkdtempDisposableSync(join(realpathSync(tmpdir()), 'compoza-cloudflare-'));
+  const dir = temporary.path;
 
   const bin = join(dir, 'bin');
   mkdirSync(bin);
@@ -141,36 +143,32 @@ process.exit(95);
     provision: { envFile: join(dir, 'credentials.env') },
   };
 
-  try {
-    use({
-      dir,
-      proxy,
-      calls: () =>
-        existsSync(join(dir, 'calls'))
-          ? readFileSync(join(dir, 'calls'), 'utf8')
-              .trim()
-              .split('\n')
-              .map((s) => JSON.parse(s))
-          : [],
-      run: (selected = proxy, credentials) => {
-        const operation = provisionOperation(selected);
-        return spawnSync(
-          '/bin/bash',
-          ['-c', operation.script.replace(REMOTE_PATH, `export PATH=${shellQuote(bin)}:$PATH`)],
-          {
-            input: JSON.stringify({
-              ...JSON.parse(operation.input!),
-              ...(credentials === undefined ? {} : { credentials }),
-            }),
-            encoding: 'utf8',
-            timeout: 10000,
-          },
-        );
-      },
-    });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  use({
+    dir,
+    proxy,
+    calls: () =>
+      existsSync(join(dir, 'calls'))
+        ? readFileSync(join(dir, 'calls'), 'utf8')
+            .trim()
+            .split('\n')
+            .map((s) => JSON.parse(s))
+        : [],
+    run: (selected = proxy, credentials) => {
+      const operation = provisionOperation(selected);
+      return spawnSync(
+        '/bin/bash',
+        ['-c', operation.script.replace(REMOTE_PATH, `export PATH=${shellQuote(bin)}:$PATH`)],
+        {
+          input: JSON.stringify({
+            ...JSON.parse(operation.input!),
+            ...(credentials === undefined ? {} : { credentials }),
+          }),
+          encoding: 'utf8',
+          timeout: 10000,
+        },
+      );
+    },
+  });
 }
 
 /**
@@ -197,6 +195,7 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
       failed(f.run(proxy, `TUNNEL_TOKEN=${token}\n`));
       rmSync(join(f.dir, 'fail-config'));
       succeeded(f.run(proxy, `TUNNEL_TOKEN=${token}\n`));
+
       assert.isTrue(existsSync(join(f.proxy.dir!, 'compose.yaml')));
     }));
 
@@ -241,7 +240,9 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
       const env = join(f.proxy.dir!, '.credentials.env');
       assert.strictEqual(statSync(env).mode & 0o777, 0o600);
       assert.strictEqual(readFileSync(env, 'utf8'), `TUNNEL_TOKEN=${token}\n`);
+
       succeeded(f.run(proxy, `TUNNEL_TOKEN=${token}\n`));
+
       assert.notInclude(readFileSync(join(f.proxy.dir!, 'compose.yaml'), 'utf8'), token);
       assert.notInclude(readFileSync(join(f.dir, 'calls'), 'utf8'), token);
     }));
@@ -263,6 +264,7 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
       failed(f.run());
       symlinkSync(f.proxy.dir!, join(f.dir, 'link'));
       failed(f.run({ ...f.proxy, dir: join(f.dir, 'link', 'nested') }));
+
       assert.isFalse(existsSync(join(f.dir, 'link', 'nested')));
     }));
 
@@ -275,6 +277,7 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
         writeFileSync(join(f.dir, 'credentials.env'), `TUNNEL_TOKEN=${value}\n`);
         failed(f.run());
       }
+
       assert.isFalse(f.calls().some((a) => a.includes('up')));
     }));
 
@@ -284,8 +287,10 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
         writeFileSync(join(f.dir, flag), 'yes');
         failed(f.run());
         rmSync(join(f.dir, flag));
+
         assert.isFalse(existsSync(join(f.proxy.dir!, '.compoza-cloudflare.lock')));
       }
+
       succeeded(f.run());
     }));
 
@@ -361,6 +366,7 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
           ingress: { 'cloudflare-tunnel': { domain: 'app.example.com', service: 'http://app:80' } },
         },
       };
+
       const host = {
         ssh: 'fixture',
         platform: 'linux/arm64',
@@ -391,6 +397,7 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
           ingress: { 'cloudflare-tunnel': { domain: 'app.example.com', service: 'https://app:443' } },
         },
       };
+
       const template = {
         inline:
           'hostname: {{domain}}\nservice: {{service}}\noriginRequest:\n  connectTimeout: 20\n  httpHostHeader: origin.example.com\n',
@@ -421,12 +428,14 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
       }).pipe(
         Effect.provideService(OnePasswordReader, async () => {
           calls++;
+
           return [
             { name: 'CLOUDFLARE_TUNNEL_TOKEN', value: token, masked: true },
             { name: 'OTHER_SECRET', value: 'discard', masked: true },
           ];
         }),
       );
+
       assert.strictEqual(calls, 1);
       assert.strictEqual(JSON.parse(input!).credentials, `TUNNEL_TOKEN=${token}\n`);
       assert.notInclude(input!, 'discard');
@@ -435,48 +444,47 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
 
   it.effect('loads templates and dotenv sources relative to external host files', () =>
     Effect.gen(function* () {
-      const dir = mkdtempSync(join(tmpdir(), 'compoza-cloudflare-load-'));
+      const { path: dir } = yield* Effect.acquireRelease(
+        Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'compoza-cloudflare-load-'))),
+        (directory) => Effect.promise(() => directory.remove()),
+      );
 
-      try {
-        writeFileSync(join(dir, 'connector.tmpl'), defaultComposeTemplate);
-        writeFileSync(
-          join(dir, 'host.yaml'),
-          YAML.stringify({
-            ssh: 'fixture',
-            platform: 'linux/arm64',
-            transport: { mode: 'ssh-load' },
-            ingress: {
-              'cloudflare-tunnel': {
-                accountId,
-                tunnelId,
-                routing: 'manual',
-                stateDir: '/srv/state',
-                dir: '/srv/cloudflared',
-                container: 'cf',
-                network: 'edge',
-                provision: { secrets: { 'env-file': { path: 'credentials.env' } } },
-                templates: { compose: 'connector.tmpl' },
-              },
+      writeFileSync(join(dir, 'connector.tmpl'), defaultComposeTemplate);
+      writeFileSync(
+        join(dir, 'host.yaml'),
+        YAML.stringify({
+          ssh: 'fixture',
+          platform: 'linux/arm64',
+          transport: { mode: 'ssh-load' },
+          ingress: {
+            'cloudflare-tunnel': {
+              accountId,
+              tunnelId,
+              routing: 'manual',
+              stateDir: '/srv/state',
+              dir: '/srv/cloudflared',
+              container: 'cf',
+              network: 'edge',
+              provision: { secrets: { 'env-file': { path: 'credentials.env' } } },
+              templates: { compose: 'connector.tmpl' },
             },
-          }),
-        );
-        writeFileSync(join(dir, 'hosts.yaml'), YAML.stringify({ fixture: { $ref: 'host.yaml' } }));
+          },
+        }),
+      );
+      writeFileSync(join(dir, 'hosts.yaml'), YAML.stringify({ fixture: { $ref: 'host.yaml' } }));
 
-        const hosts = yield* loadHosts(join(dir, 'hosts.yaml'));
+      const hosts = yield* loadHosts(join(dir, 'hosts.yaml'));
 
-        const selected = hosts.fixture!.ingress!;
-        assert.isTrue('cloudflare-tunnel' in selected);
+      const selected = hosts.fixture!.ingress!;
+      assert.isTrue('cloudflare-tunnel' in selected);
 
-        if ('cloudflare-tunnel' in selected) {
-          assert.deepStrictEqual(selected['cloudflare-tunnel'].templates?.compose, { inline: defaultComposeTemplate });
-          assert.deepStrictEqual(selected['cloudflare-tunnel'].provision?.secrets, {
-            'env-file': { path: join(dir, 'credentials.env') },
-          });
-        }
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
+      if ('cloudflare-tunnel' in selected) {
+        assert.deepStrictEqual(selected['cloudflare-tunnel'].templates?.compose, { inline: defaultComposeTemplate });
+        assert.deepStrictEqual(selected['cloudflare-tunnel'].provision?.secrets, {
+          'env-file': { path: join(dir, 'credentials.env') },
+        });
       }
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it('previews setup through the CLI without SSH or provider access', () =>

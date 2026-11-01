@@ -26,7 +26,7 @@ export interface IngressOperation {
   readonly input?: string;
 
   /**
-   * Optional setup-only credential source, resolved after dry-run handling; never frozen into application releases.
+   * Optional setup-only credential source, resolved after dry-run handling; never frozen into application stacks.
    */
   readonly secrets?: SecretsConfig;
 
@@ -42,7 +42,7 @@ export interface IngressOperation {
 }
 
 /**
- * The complete routing plan frozen into SSH releases or executed after client Compose.
+ * The complete routing plan retained with deployed SSH configuration or executed after client Compose.
  */
 export interface IngressPlan {
   /**
@@ -69,7 +69,7 @@ export interface IngressPlan {
 /**
  * A pure ingress integration covering checks, host setup, activation and removal.
  *
- * Extensions describe operations; Docker, SSH execution, dry runs and release history remain core responsibilities.
+ * Extensions describe operations; Docker, SSH execution, dry runs and stack files remain core responsibilities.
  */
 export interface IngressExtension {
   /**
@@ -124,6 +124,7 @@ export function ingressExtension(id: string): IngressExtension {
   if (extension === undefined) {
     throw new Error('Unknown ingress extension');
   }
+
   return extension;
 }
 
@@ -143,14 +144,15 @@ export function hostIngress(host: HostConfig): IngressExtension {
   if (proxy === undefined) {
     throw new Error('Host has no proxy entry; configure an ingress extension before setup-proxy');
   }
+
   return ingressExtension(proxy.provider ?? 'caddy-sites');
 }
 
 /**
- * Freezes an ingress operation into a standalone release script without executing it.
+ * Freezes an ingress operation into a standalone host script without executing it.
  *
  * Quoted printf input preserves literal configuration and cannot collide with a heredoc delimiter in an extension's
- * payload. Credentials are forbidden in ingress plans; managed secrets use the separate private snapshot channel.
+ * payload. Credentials are forbidden in ingress plans; managed secrets use the private deployment stdin channel.
  */
 export function ingressOperationScript(operation: IngressOperation): string {
   return operation.input === undefined

@@ -46,6 +46,7 @@ describe('naming', () => {
       config: { ...app.config, dockerfile: '/abs/Dockerfile', composeFiles: ['/abs/compose.yaml'] },
     };
     assert.strictEqual(dockerfileOf(absolute), '/abs/Dockerfile');
+
     const steps = planDeployment({
       app: absolute,
       host: registryHost,
@@ -96,6 +97,7 @@ describe('planDeployment', () => {
       'docker buildx build --platform linux/arm64 --push --file /repo/infra/Dockerfile --target web --tag registry.example.com/demo-web:abc123 /repo',
       'DEMO_PORT=8090 PG_PASSWORD=*** BUILDER_IMAGE=registry.example.com/demo-builder:abc123 WEB_IMAGE=registry.example.com/demo-web:abc123 docker --host ssh://deploy@atlas.example.com compose --project-name demo --project-directory /repo/infra --env-file /dev/null --file /repo/infra/compose.yaml --file /repo/infra/compose.production.yaml up --detach --remove-orphans --no-build --pull always',
     ]);
+
     const compose = steps.at(-1);
     assert.isTrue(compose !== undefined && !isPipeline(compose) && compose.env?.PG_PASSWORD === 'x');
   });
@@ -107,6 +109,7 @@ describe('planDeployment', () => {
       'docker buildx build --platform linux/arm64 --load --file /repo/infra/Dockerfile --target builder --tag demo-builder:abc123 /repo',
       "docker save demo-builder:abc123 | gzip | ssh -o BatchMode=yes deploy@atlas.example.com bash -c 'export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH\ngunzip | docker load'",
     ]);
+
     const transport = steps[1]!;
     assert.isTrue(isPipeline(transport));
     assert.deepStrictEqual(isPipeline(transport) ? transport.stages.at(-1)?.args : [], [

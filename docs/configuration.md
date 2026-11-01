@@ -148,7 +148,7 @@ local:
 | `environment`           | Non-secret variables passed to Compose.                                                                                               |
 | `secrets`               | Exactly one secret source; see [Secrets](secrets.md). Legacy `envFile` remains an alias for the dotenv provider.                      |
 | `local`                 | Overrides for `--local` runs; see [Local runs](#local-runs).                                                                          |
-| `assets`                | SSH execution only: declared read-only files bundled with the release.                                                                |
+| `assets`                | SSH execution only: declared read-only files uploaded to the stack.                                                                   |
 | `remote`                | SSH execution only: `stackDir`, `envFile`, `overlayFile`, `waitTimeoutSeconds`.                                                       |
 | `destinations`          | Named alternative deployments of the same app; see [Destinations](#destinations).                                                     |
 
@@ -158,7 +158,7 @@ SSH-specific fields are described in [SSH deployment](ssh-deployment.md).
 
 - Each target is named `<name>-<target>:<tag>`, prefixed with the registry for registry transport, and handed to Compose as `<TARGET>_IMAGE`. Compose files read `${WEB_IMAGE}`, `${WORKER_IMAGE}` and so on.
 - A deploy requires a clean checkout with at least one commit and tags images with the commit's first twelve characters. `--allow-dirty` permits a dirty checkout and tags `<commit>-dirty`.
-- `--tag <tag>` reuses images built earlier and skips Git and builds, so it works from a deploy folder that is no longer inside a checkout. It always uses the **current local configuration**; with SSH execution it does not restore an earlier Compose release.
+- `--tag <tag>` reuses images built earlier and skips Git and builds, so it works from a deploy folder that is no longer inside a checkout. It always uses the **current local configuration**; there is no saved Compose configuration history.
 - With `targets: []` there is no Git, Dockerfile or build-context requirement, and no build or application-registry authentication check. Compose still pulls missing third-party images.
 
 ### Ingress
@@ -169,7 +169,7 @@ See the [Ingress guide](ingress.md) for provider selection, host and app setting
 
 ### Host folders and mounts
 
-Compose resolves relative bind mounts on the host, so host paths must be absolute. With client execution, configuration files belong in images, not mounts. SSH execution additionally supports declared read-only [assets](ssh-deployment.md#release-bundle-and-assets).
+Compose resolves relative bind mounts on the host, so host paths must be absolute. With client execution, configuration files belong in images, not mounts. SSH execution additionally supports declared read-only [assets](ssh-deployment.md#stack-bundle-and-assets).
 
 ### Local runs
 
@@ -179,7 +179,7 @@ Compose resolves relative bind mounts on the host, so host paths must be absolut
 
 ## Destinations
 
-One `deploy.yaml` can deploy to several hosts or projects. Select one with `--destination <name>`, which every app command accepts, including `check`, `logs`, lifecycle commands, `rollback` and `publish`. Without the flag the default destination is used.
+One `deploy.yaml` can deploy to several hosts or projects. Select one with `--destination <name>`, which every app command accepts, including `check`, `logs`, lifecycle commands and `publish`. Without the flag the default destination is used.
 
 ```yaml
 name: sample-app
@@ -220,7 +220,7 @@ Execution and image transport are independent:
 | `ssh`              | `ssh-load`              | Client builds and loads; `docker save` over SSH into host | Host `docker compose`                  |
 | `ssh`              | `remote-build`          | Host daemon's default BuildKit builder; image loads there | Host `docker compose`                  |
 
-`remote-build` requires SSH execution. `--local` keeps the client build-and-run behavior in every mode. SSH execution uses a versioned release workflow, described in [SSH deployment](ssh-deployment.md).
+`remote-build` requires SSH execution. `--local` keeps the client build-and-run behavior in every mode. SSH execution updates a flat stack folder, described in [SSH deployment](ssh-deployment.md).
 
 ## Client execution
 
@@ -269,7 +269,7 @@ An app on a host is deployed, stopped or deleted, and one command moves it to ea
 - `delete` is also available as `down`.
 - `stop`, `start` and `delete` take `--dry-run`, which prints the commands and scripts without running them.
 
-With SSH execution these commands use the host's deployed release instead; see [SSH deployment](ssh-deployment.md#lifecycle-on-ssh-execution).
+With SSH execution these commands use the host's deployed stack instead; see [SSH deployment](ssh-deployment.md#lifecycle-on-ssh-execution).
 
 ## Publishing content
 
@@ -290,4 +290,4 @@ compoza publish infra public ./public --destination cedar
 
 Publishing deletes destination files absent from the source. Review `*deleting` entries in the dry run. Dotfiles and `node_modules` are excluded.
 
-The folder argument is required for `publish` because two more arguments follow it. Content folders are persistent host storage: they are not release assets, and `delete` leaves them in place.
+The folder argument is required for `publish` because two more arguments follow it. Content folders are persistent host storage: they are not stack assets, and `delete` leaves them in place.

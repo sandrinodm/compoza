@@ -1,4 +1,4 @@
-# Host-only Cloudflare authentication never enters argv, release assets or diagnostic output.
+# Host-only Cloudflare authentication never enters argv, stack assets or diagnostic output.
 cf_error() { printf '%s\n' "$1" >&2; return 1; }
 cf_tools() { command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; }
 cf_auth() {

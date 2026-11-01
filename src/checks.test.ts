@@ -45,6 +45,7 @@ describe('evaluateChecks', () => {
     const { address: _address, ...withoutAddress } = host;
     assert.isTrue(evaluateChecks(app, withoutAddress, ['2001:db8::1'], ready)[0]!.ok);
     assert.isFalse(evaluateChecks(app, withoutAddress, [], ready)[0]!.ok);
+
     const ipv6 = { ...withoutAddress, proxy: { ...host.proxy, address: '2001:db8:0:0::1' } };
     assert.isTrue(evaluateChecks(app, ipv6, ['2001:db8::1'], ready)[0]!.ok);
     assert.isFalse(evaluateChecks(app, ipv6, ['2001:db8::2'], ready)[0]!.ok);
@@ -60,6 +61,7 @@ describe('evaluateChecks', () => {
       assert.isFalse(check.ok);
       assert.include(check.detail, 'Caddy is not ready');
     }
+
     const provisioned = { ...host, proxy: { ...host.proxy, provision: { image: 'caddy:2' } } };
     assert.isFalse(evaluateChecks(app, provisioned, [host.address!], ready)[1]!.ok);
     assert.isTrue(evaluateChecks(app, provisioned, [host.address!], { ...ready, container_health: 'healthy' })[1]!.ok);
@@ -167,6 +169,7 @@ describe('evaluateChecks', () => {
       evaluateChecks(plain, host, [], { registry_login: 'yes' }).map((check) => check.name),
       ['registry'],
     );
+
     const sshHost: HostConfig = { ...host, transport: { mode: 'ssh-load' } };
     assert.deepStrictEqual(evaluateChecks(plain, sshHost, [], {}), []);
   });

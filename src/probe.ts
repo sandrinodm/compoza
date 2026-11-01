@@ -5,12 +5,14 @@ import { REMOTE_PATH, shellQuote } from './command.ts';
  */
 export function parseCheck(output: string): Record<string, string> {
   const values: Record<string, string> = {};
+
   for (const line of output.split('\n')) {
     const separator = line.indexOf('=');
     if (separator > 0) {
       values[line.slice(0, separator)] = line.slice(separator + 1).trim();
     }
   }
+
   return values;
 }
 

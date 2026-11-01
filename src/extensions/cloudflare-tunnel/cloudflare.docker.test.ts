@@ -1,7 +1,7 @@
 import { assert, it } from '@effect/vitest';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempDisposableSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import YAML from 'yaml';
@@ -18,6 +18,7 @@ const image = process.env.COMPOZA_TEST_CLOUDFLARED_IMAGE;
  */
 function run(args: string[], required = true) {
   const result = spawnSync('docker', args, { encoding: 'utf8', timeout: 30000 });
+
   if (required) {
     assert.strictEqual(result.status, 0, result.stderr);
   }
@@ -29,7 +30,8 @@ it.skipIf(image === undefined)(
   'runs the pinned native connector with production isolation and account-free readiness probes',
   { timeout: 60000 },
   () => {
-    const dir = mkdtempSync(join(tmpdir(), 'compoza-cloudflare-native-'));
+    using temporary = mkdtempDisposableSync(join(tmpdir(), 'compoza-cloudflare-native-'));
+    const dir = temporary.path;
 
     const name = `compoza-cf-${randomBytes(6).toString('hex')}`;
     const accountId = 'a'.repeat(32);
@@ -58,6 +60,7 @@ it.skipIf(image === undefined)(
     model.services.connector.network_mode = 'none';
     delete model.services.connector.networks;
     delete model.networks;
+
     const file = join(dir, 'compose.yaml');
     writeFileSync(file, YAML.stringify(model));
 
@@ -94,7 +97,6 @@ it.skipIf(image === undefined)(
       );
     } finally {
       run([...args, 'down', '--remove-orphans', '--timeout', '3']);
-      rmSync(dir, { recursive: true, force: true });
     }
   },
 );

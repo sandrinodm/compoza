@@ -129,12 +129,15 @@ export function resolveIngress(config: Ingress): ResolvedIngress {
   if ('mode' in config) {
     return config;
   }
+
   if ('caddy' in config) {
     return { mode: 'caddy-sites', ...config.caddy };
   }
+
   if ('cloudflare-tunnel' in config) {
     return { mode: 'cloudflare-tunnel', ...config['cloudflare-tunnel'] };
   }
+
   return { mode: 'none' };
 }
 
@@ -145,9 +148,11 @@ export function resolveHostIngress(config: HostIngress): ProxyConfig | undefined
   if ('caddy' in config) {
     return { provider: 'caddy-sites', ...config.caddy };
   }
+
   if ('cloudflare-tunnel' in config) {
     return { provider: 'cloudflare-tunnel', ...config['cloudflare-tunnel'] };
   }
+
   return undefined;
 }
 
@@ -158,11 +163,14 @@ export function resolveSecrets(config: SecretsConfig): ResolvedSecretsConfig {
   if ('provider' in config) {
     return config;
   }
+
   if ('1password' in config) {
     return { provider: '1password', ...config['1password'] };
   }
+
   if ('env-file' in config) {
     return { provider: 'env-file', ...config['env-file'] };
   }
+
   return { provider: 'none' };
 }

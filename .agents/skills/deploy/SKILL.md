@@ -1,6 +1,6 @@
 ---
 name: deploy
-description: Deploy an application with the compoza CLI by resolving its deploy.yaml and destination, checking readiness, previewing the plan, deploying, and verifying the result. Use for a deployment request; use compoza for inspection, rollback, or other operations.
+description: Deploy an application with the compoza CLI by resolving its deploy.yaml and destination, checking readiness, previewing the plan, deploying, and verifying the result. Use for a deployment request; use compoza for inspection, recovery, or other operations.
 ---
 
 # Deploy with compoza
@@ -12,7 +12,8 @@ information that cannot be established from the repository or current session.
 ## Resolve the target
 
 1. Locate `compoza` on `PATH`. Otherwise locate its checkout and invoke
-   `node /path/to/compoza/bin/compoza.ts`. Check `--help` before assuming flags.
+   `node /path/to/compoza/bin/compoza.ts`. The CLI machine needs Node.js 26.0 or newer;
+   remote Docker hosts do not need Node.js. Check `--help` before assuming flags.
 2. Find the requested `deploy.yaml`, commonly under `infra/` or an app's deploy folder.
    If several apps fit and the target is unclear, ask which one. Never guess host addresses.
 3. Select the requested `--destination <name>`, or retain the app defaults. Carry the
@@ -63,8 +64,8 @@ compoza logs infra --tail 50
   `COMPOZA_1PASSWORD_ACCOUNT`. Never place credentials in app YAML, assets,
   image builds, command arguments, or chat. Never read a personal vault just to test
   the CLI implementation.
-- Do not print resolved Compose configuration or host validation logs. Managed
-  validation output is discarded; legacy host diagnostics can contain secrets.
+- Do not print resolved Compose configuration or secret-bearing host diagnostics. Managed
+  validation output is discarded; host dotenv diagnostics can contain secrets.
 
 ## SSH recovery boundaries
 
@@ -72,20 +73,27 @@ SSH execution needs Bash 3.2+, jq 1.6+, Docker/Compose and the documented host u
 Readiness probes do not enforce every minimum version. Registry, SSH image loading,
 and remote BuildKit builds are separate from Compose execution mode; remote builds require SSH execution.
 
-Activation commits a release, predecessor, and secret source together. Failed activation
-keeps the old pointer, but containers or routes may already have changed. Do not promise
-automatic container rollback or reversal of migrations.
+SSH deployment normalizes selected Compose files into `<stackDir>/compose.yaml`,
+writes private `.env` and declared assets, and keeps one nonsecret `.compoza.json`
+for deployed lifecycle settings and the removal operation. An operator overlay remains
+separate and live. No releases, activation records, current/previous pointers, backups
+or helper scripts are installed. Existing old folders and data are left alone.
 
-Use `rollback` for supported version-2 release configuration and images with the
-**currently active** secrets. Older wrappers require redeploying the intended app
-revision as a new release. `deploy --tag` reuses images with current local configuration;
-it does not restore archived Compose files. Direct `current/compose.sh` recovery bypasses
-the CLI lock and promotion. Do not use it during a deployment or remove a lock without
-establishing that its owner is no longer active.
+The CLI owns only its declared outputs. An existing unowned `.env` must be moved to
+a separate host path and selected with `remote.envFile`, or use a fresh stack folder.
+Never overwrite operator data to bypass an ownership error.
+
+Upload and validation failure preserve deployed files. Replacement is in place, and
+later failure can leave changed files, containers or routes. Recover using
+`deploy --tag <known-image-tag>` with current local configuration and the current
+credential source. There is no saved release configuration or rollback command.
+Do not promise automatic recovery or reversal of migrations. Lifecycle uses the
+deployed files without fetching a provider. Do not remove a lock without establishing
+that its owner is no longer active.
 
 ## Handoff
 
-Report the destination, tag/release, verification result, and URL when configured.
+Report the destination, image tag, verification result, and URL when configured.
 Identify any remaining action, such as publishing a content section. Do not claim
 success when a phase failed or cleanup is still required.
 

@@ -72,6 +72,7 @@ async function fetchEnvironment(environmentId: string): Promise<ReadonlyArray<En
   if (!token && !account) {
     throw new Error('Missing operator authentication');
   }
+
   const client = await sdk.createClient({
     auth: token || new sdk.DesktopAuth(account!),
     integrationName: 'compoza',
@@ -99,6 +100,7 @@ export const onePasswordProvider: CredentialProvider = {
     if (source.provider !== '1password') {
       return yield* new DeployError({ message: 'Invalid 1Password source selection' });
     }
+
     const reader = yield* OnePasswordReader;
     const variables = yield* Effect.tryPromise({
       try: () => reader(source.environmentId),
@@ -111,7 +113,9 @@ export const onePasswordProvider: CredentialProvider = {
     if (!Array.isArray(variables)) {
       return yield* new DeployError({ message: 'Invalid 1Password Environment response' });
     }
+
     const values: Record<string, string> = Object.create(null);
+
     for (const [index, variable] of variables.entries()) {
       if (
         typeof variable?.name !== 'string' ||
@@ -121,8 +125,10 @@ export const onePasswordProvider: CredentialProvider = {
       ) {
         return yield* new DeployError({ message: `Invalid or duplicate 1Password variable at entry ${index + 1}` });
       }
+
       values[variable.name] = variable.value;
     }
+
     return values;
   }),
 };

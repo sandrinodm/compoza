@@ -74,9 +74,11 @@ function cloudflareAppSettings(ingress: App['config']['ingress']) {
   if (ingress === undefined) {
     return undefined;
   }
+
   if ('cloudflare-tunnel' in ingress) {
     return ingress['cloudflare-tunnel'];
   }
+
   return 'mode' in ingress && ingress.mode === 'cloudflare-tunnel' ? ingress : undefined;
 }
 
@@ -129,11 +131,12 @@ export function routeRule(proxy: CloudflareProxy, app: App, name: string) {
     { name: JSON.stringify(name), domain: JSON.stringify(selected.domain), service: JSON.stringify(selected.service) },
     'Cloudflare route template',
   );
-
   if (Buffer.byteLength(text) > 256 * 1024) {
     throw new Error('Cloudflare route template is too large');
   }
+
   let rule: unknown;
+
   try {
     rule = parseConfig(text);
   } catch {

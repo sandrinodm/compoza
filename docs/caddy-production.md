@@ -50,7 +50,7 @@ Load-test representative traffic, uploads, slow clients, WebSockets and reloads 
 
 ## Locks and recovery
 
-Every new setup, route and removal operation uses `<dir>/.compoza-caddy.lock`. An overlapping operation fails rather than overwriting another app's changes. Retry once the other operation completes. Direct manual edits, older CLI versions, old frozen release scripts, and other admin API clients do not honor this lock; coordinate them separately. Deploy fresh releases to capture the updated route runtime before relying on it during rollback.
+Every new setup, route and removal operation uses `<dir>/.compoza-caddy.lock`. An overlapping operation fails rather than overwriting another app's changes. Retry once the other operation completes. Direct manual edits, older CLI versions, old frozen host scripts, and other admin API clients do not honor this lock; coordinate them separately. Redeploy to refresh the removal operation stored in lifecycle metadata.
 
 On reload failure, the extension restores the old file and tries a recovery reload to handle ambiguous outcomes such as a lost response. If recovery succeeds, the command still reports failure. If it fails, the lock and `sites/.compoza-route.*` directory remain; the CLI prints its path but not its contents. This directory is private and does not match `sites/*.caddy` imports.
 

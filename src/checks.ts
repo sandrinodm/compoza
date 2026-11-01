@@ -55,6 +55,7 @@ export function lookup(domain: string): Effect.Effect<ReadonlyArray<string>> {
     try: async () => {
       const resolver = new Resolver({ timeout: DNS_TIMEOUT_MILLIS, tries: 2 });
       resolver.setServers(PUBLIC_RESOLVERS);
+
       const answers = await Promise.allSettled([resolver.resolve4(domain), resolver.resolve6(domain)]);
       return answers.flatMap((answer) => (answer.status === 'fulfilled' ? answer.value : []));
     },
@@ -90,6 +91,7 @@ export function evaluateChecks(
       fix: 'manual',
     });
   }
+
   return checks;
 }
 
@@ -131,6 +133,7 @@ export const runChecks = Effect.fn('runChecks')(function* (app: App, host: HostC
     { concurrency: 'unbounded' },
   );
   const checks = [...evaluateChecks(app, host, addresses, parseCheck(output))];
+
   if (app.config.execution === 'ssh') {
     const script = yield* Effect.try({
       try: () => sshReadinessScript(app, host),
@@ -138,6 +141,7 @@ export const runChecks = Effect.fn('runChecks')(function* (app: App, host: HostC
         new DeployError({ message: cause instanceof Error ? cause.message : 'Invalid SSH configuration' }),
     });
     const readiness = parseCheck(yield* remote.probe(host, script));
+
     for (const [name, value] of Object.entries(readiness)) {
       checks.push({
         name,
@@ -150,5 +154,6 @@ export const runChecks = Effect.fn('runChecks')(function* (app: App, host: HostC
       });
     }
   }
+
   return checks;
 });

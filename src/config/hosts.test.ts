@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { assert, describe, it } from '@effect/vitest';
 import { Effect, Option, Schema } from 'effect';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtempDisposable, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as YAML from 'yaml';
@@ -52,12 +52,15 @@ describe('Hosts', () => {
       const atlas = yield* hostFor({ host: 'atlas' } as never, hosts);
       assert.strictEqual(dockerHost(atlas), 'ssh://deploy@atlas.example.com');
       assert.strictEqual(registryOf(atlas), 'registry.example.com');
+
       const proxy = yield* proxyOf(atlas, 'atlas');
       assert.strictEqual(proxyComposeFile(proxy), 'docker-compose.yaml');
       assert.strictEqual(proxyService(proxy), 'caddy');
+
       const cedar = hosts.cedar;
       assert.isDefined(cedar);
       assert.isUndefined(registryOf(cedar!));
+
       const error = yield* proxyOf(cedar!, 'cedar').pipe(Effect.flip);
       assert.include(error.message, 'cedar');
     }),
@@ -105,9 +108,12 @@ describe('hostsPath', () => {
   it('prefers the flag, then the environment, then the default', () => {
     const previous = process.env.COMPOZA_HOSTS;
     delete process.env.COMPOZA_HOSTS;
+
     try {
       assert.strictEqual(hostsPath(Option.none()), expandHome(DEFAULT_HOSTS_PATH));
+
       process.env.COMPOZA_HOSTS = '/etc/hosts.yaml';
+
       assert.strictEqual(hostsPath(Option.none()), '/etc/hosts.yaml');
       assert.strictEqual(hostsPath(Option.some('~/mine.yaml')), join(homedir(), 'mine.yaml'));
     } finally {
@@ -124,12 +130,13 @@ describe('hostsPath', () => {
  * Creates isolated local/global host files and cleans them up after each loader test.
  */
 const fixture = Effect.gen(function* () {
-  const dir = yield* Effect.acquireRelease(
-    Effect.promise(() => mkdtemp(join(tmpdir(), 'dd-hosts-'))),
-    (folder) => Effect.promise(() => rm(folder, { recursive: true, force: true })),
+  const { path: dir } = yield* Effect.acquireRelease(
+    Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'dd-hosts-'))),
+    (directory) => Effect.promise(() => directory.remove()),
   );
   yield* Effect.promise(() => mkdir(join(dir, 'repo')));
   yield* Effect.promise(() => mkdir(join(dir, 'global')));
+
   return {
     dir,
     local: join(dir, 'repo', 'hosts.yaml'),
@@ -149,6 +156,7 @@ describe('host file loading', () => {
       const f = yield* fixture;
       yield* yamlFile(f.global, valid);
       yield* yamlFile(f.local, { atlas: valid.cedar });
+
       assert.deepStrictEqual(yield* loadDefaultHosts(f.directory, f.global), {
         atlas: valid.cedar,
         cedar: valid.cedar,
@@ -162,10 +170,14 @@ describe('host file loading', () => {
       const error = yield* loadDefaultHosts(f.directory, f.global).pipe(Effect.flip);
       assert.include(error.message, f.local);
       assert.include(error.message, f.global);
+
       yield* yamlFile(f.local, valid);
+
       assert.deepStrictEqual(yield* loadDefaultHosts(f.directory, f.global), valid);
+
       yield* Effect.promise(() => rm(f.local));
       yield* yamlFile(f.global, valid);
+
       assert.deepStrictEqual(yield* loadDefaultHosts(f.directory, f.global), valid);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -180,6 +192,7 @@ describe('host file loading', () => {
         cedar: { $ref: './host.yaml' },
         other: { $ref: join(f.dir, 'global', 'host.yaml') },
       });
+
       assert.deepStrictEqual(yield* loadDefaultHosts(f.directory, f.global), {
         ...valid,
         other: valid.atlas,
@@ -193,6 +206,7 @@ describe('host file loading', () => {
       const f = yield* fixture;
       yield* yamlFile(f.global, { atlas: { $ref: './missing.yaml' } });
       yield* yamlFile(f.local, { atlas: valid.cedar });
+
       assert.deepStrictEqual(yield* loadDefaultHosts(f.directory, f.global), { atlas: valid.cedar });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -201,12 +215,16 @@ describe('host file loading', () => {
     Effect.gen(function* () {
       const f = yield* fixture;
       yield* yamlFile(f.global, valid);
+
       for (const value of [{ atlas: { ssh: 'partial' } }, { atlas: { ...valid.atlas, typo: true } }]) {
         yield* yamlFile(f.local, value);
+
         const error = yield* loadDefaultHosts(f.directory, f.global).pipe(Effect.flip);
         assert.include(error.message, f.local);
       }
+
       yield* Effect.promise(() => writeFile(f.local, '{'));
+
       const error = yield* loadDefaultHosts(f.directory, f.global).pipe(Effect.flip);
       assert.include(error.message, 'not valid YAML');
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -216,18 +234,24 @@ describe('host file loading', () => {
     Effect.gen(function* () {
       const f = yield* fixture;
       yield* yamlFile(f.global, { atlas: { $ref: './missing.yaml' } });
+
       const missing = yield* loadHosts(f.global).pipe(Effect.flip);
       assert.include(missing.message, 'missing.yaml');
       assert.include(missing.message, 'atlas');
       assert.include(missing.message, f.global);
+
       for (const entry of [{ $ref: '' }, { $ref: '   ' }, { $ref: './host.yaml', ...valid.atlas }]) {
         yield* yamlFile(f.global, { atlas: entry });
+
         const error = yield* loadHosts(f.global).pipe(Effect.flip);
         assert.include(error.message, f.global);
       }
+
       yield* yamlFile(f.global, { atlas: { $ref: './host.yaml' } });
+
       for (const value of [{ $ref: './hosts.yaml' }, { ...valid.atlas, typo: true }, valid]) {
         yield* yamlFile(join(f.dir, 'global', 'host.yaml'), value);
+
         const error = yield* loadHosts(f.global).pipe(Effect.flip);
         assert.include(error.message, join(f.dir, 'global', 'host.yaml'));
       }
@@ -239,14 +263,20 @@ describe('host file loading', () => {
       const f = yield* fixture;
       yield* yamlFile(f.global, valid);
       yield* yamlFile(f.local, { local: valid.cedar });
+
       const previous = process.env.COMPOZA_HOSTS;
+
       try {
         process.env.COMPOZA_HOSTS = f.local;
+
         assert.deepStrictEqual(yield* loadHostsForRun(Option.none()), { local: valid.cedar });
         assert.deepStrictEqual(yield* loadHostsForRun(Option.some(f.global)), valid);
+
         const error = yield* loadHostsForRun(Option.some(join(f.dir, 'absent.yaml'))).pipe(Effect.flip);
         assert.include(error.message, 'absent.yaml');
+
         process.env.COMPOZA_HOSTS = join(f.dir, 'missing-env.yaml');
+
         const envError = yield* loadHostsForRun(Option.none()).pipe(Effect.flip);
         assert.include(envError.message, 'missing-env.yaml');
       } finally {

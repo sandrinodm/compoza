@@ -90,8 +90,10 @@ export class Remote extends Context.Service<
           if (!stream && output !== '') {
             yield* Console.log(output);
           }
+
           return yield* new DeployError({ message: `ssh ${host.ssh} exited with ${code}` });
         }
+
         return output;
       });
 
@@ -103,9 +105,11 @@ export class Remote extends Context.Service<
         stream = false,
       ) {
         yield* Console.log(`$ ssh ${host.ssh} ${label ?? scriptLabel(script)}`);
+
         if (yield* DryRun) {
           return '';
         }
+
         const output = yield* execute(host, script, input, stream);
         return stream ? '' : output;
       });

@@ -16,6 +16,7 @@ export const envFileProvider: CredentialProvider = {
     if (source.provider !== 'env-file') {
       return yield* new DeployError({ message: 'Invalid env-file source selection' });
     }
+
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const file = path.resolve(directory, expandHome(source.path));

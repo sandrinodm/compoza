@@ -63,6 +63,7 @@ describe('checkScript', () => {
     assert.include(full, `'${SITES_IMPORT}'`);
     assert.include(full, "'sites/demo.caddy'");
     assert.include(full, `'"registry.example.com"'`);
+
     const registryOnly = registryProbe('registry.example.com');
     assert.notInclude(registryOnly, 'proxy_dir');
     assert.include(registryOnly, 'registry_login');
@@ -73,6 +74,7 @@ describe('checkScript', () => {
     const script = [checkScript({ proxy, name: 'demo' }), registryProbe('registry.example.com')].join('\n');
     assert.notInclude(script, 'exit');
     assert.include(script, "if cd '/srv/proxy' 2>/dev/null; then");
+
     const missing = script.indexOf('echo proxy_dir=missing\nfi\n');
     assert.isAbove(missing, 0);
     assert.isAbove(script.indexOf('echo site_sha256='), 0);

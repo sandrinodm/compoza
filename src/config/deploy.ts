@@ -5,6 +5,7 @@ import { readConfigFile } from './config-file.ts';
 import { AbsolutePath, Name, Target } from './schema.ts';
 
 export { HealthPath, CaddyIngress, NoIngress } from '../extensions/config.ts';
+
 export { Ingress, SecretsConfig } from '../extensions/config.ts';
 import { Ingress, SecretsConfig, resolveIngress, type ResolvedIngress } from '../extensions/config.ts';
 
@@ -31,12 +32,12 @@ export const LocalOverrides = Schema.Struct({
 /**
  * Host-owned paths and health deadlines for SSH execution.
  *
- * The overlay, legacy host dotenv and persistent data remain operator-owned. Client-resolved providers are uploaded
- * separately as protected snapshots outside the release assets.
+ * The overlay, legacy host dotenv and persistent data remain operator-owned. Client-resolved providers are uploaded in
+ * the protected stack .env file.
  */
 export const RemoteConfig = Schema.Struct({
   /**
-   * The absolute stack root containing `releases`, `current` and the deployment lock.
+   * The absolute stack root containing compose.yaml, .env, assets and lifecycle metadata.
    */
   stackDir: AbsolutePath,
 
@@ -46,7 +47,7 @@ export const RemoteConfig = Schema.Struct({
   envFile: Schema.optionalKey(AbsolutePath),
 
   /**
-   * The optional absolute host-owned Compose overlay, applied after release files.
+   * The optional absolute host-owned Compose overlay, applied after compose.yaml.
    */
   overlayFile: Schema.optionalKey(AbsolutePath),
 
@@ -225,7 +226,7 @@ export const DeployConfig = Schema.Struct({
   remote: Schema.optionalKey(RemoteConfig),
 
   /**
-   * The explicit deploy-relative regular files included with SSH Compose releases.
+   * The explicit deploy-relative regular files included with the SSH stack.
    */
   assets: Schema.optionalKey(Schema.Array(Schema.String)),
 
@@ -339,6 +340,7 @@ export const loadApp = Effect.fn('loadApp')(function* (target: string) {
       file = alternate;
     }
   }
+
   const config = yield* readConfigFile(
     file,
     DeployConfig,
@@ -353,6 +355,7 @@ export const loadApp = Effect.fn('loadApp')(function* (target: string) {
         message: 'Ambiguous secret sources: use secrets, envFile, or remote.envFile, never a combination',
       }),
   });
+
   return app;
 });
 
@@ -365,21 +368,27 @@ export function selectDestination(app: App, name?: string): App {
   if (name === undefined) {
     return app;
   }
+
   const selected = app.config.destinations?.[name];
   if (selected === undefined) {
     throw new Error(
       `Unknown destination "${name}"; choices: ${Object.keys(app.config.destinations ?? {}).join(', ') || 'none'}`,
     );
   }
+
   const config = { ...app.config, ...selected, environment: { ...app.config.environment, ...selected.environment } };
+
   if (selected.secrets !== undefined) {
     delete config.envFile;
+
     if (config.remote !== undefined) {
       const { envFile: _legacy, ...remote } = config.remote;
       config.remote = remote;
     }
   }
+
   validateSecretSettings(config);
+
   return { ...app, config };
 }
 
@@ -396,12 +405,25 @@ export function projectNameOf(app: App): string {
  * Destination provider objects replace inherited sources, while conflicting declarations within one level are errors.
  */
 export function validateSecretSettings(config: DeployConfig): void {
-  if ([config.secrets, config.envFile, config.remote?.envFile].filter((source) => source !== undefined).length > 1) {
-    throw new Error('Ambiguous secret sources: use secrets, envFile, or remote.envFile, never a combination');
+  const issue = secretSettingsIssue(config);
+  if (issue !== undefined) {
+    throw new Error(issue);
   }
+}
+
+/**
+ * Describes ambiguous source settings without throwing, for both pure planners and typed Effect callers.
+ */
+export function secretSettingsIssue(config: DeployConfig): string | undefined {
+  if ([config.secrets, config.envFile, config.remote?.envFile].filter((source) => source !== undefined).length > 1) {
+    return 'Ambiguous secret sources: use secrets, envFile, or remote.envFile, never a combination';
+  }
+
   for (const destination of Object.values(config.destinations ?? {})) {
     if (destination.secrets !== undefined && destination.remote?.envFile !== undefined) {
-      throw new Error('Ambiguous destination secret sources');
+      return 'Ambiguous destination secret sources';
     }
   }
+
+  return undefined;
 }

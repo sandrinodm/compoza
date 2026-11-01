@@ -17,6 +17,7 @@ function caddyProxy(host: HostConfig): ProxyConfig {
   if (proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy-sites')) {
     throw new Error('caddy-sites requires a host proxy configured for the Caddy ingress extension');
   }
+
   return proxy;
 }
 
@@ -28,13 +29,15 @@ function settings(app: App) {
   if (ingress?.mode !== 'caddy-sites') {
     throw new Error('Invalid Caddy ingress selection');
   }
+
   return ingress;
 }
 
 /**
  * The bundled shared-Caddy ingress extension, including setup, readiness and reversible route operations.
  *
- * Every method is pure. The core executes the returned operations and freezes them into SSH release snapshots.
+ * Every method is pure. The core executes the returned operations and stores the deployed removal operation in SSH
+ * lifecycle metadata.
  */
 export const caddyIngress: IngressExtension = {
   id: 'caddy-sites',
@@ -61,6 +64,7 @@ export const caddyIngress: IngressExtension = {
     if (proxy.provision !== undefined) {
       return provisionOperation(proxy);
     }
+
     return {
       script: setupScript(proxy),
       label: `<set up ${proxy.dir}/sites, recreate Caddy>`,

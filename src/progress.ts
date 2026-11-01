@@ -38,6 +38,7 @@ export function formatDuration(millis: number): string {
   if (tenths < 600) {
     return `${(tenths / 10).toFixed(1)} s`;
   }
+
   const seconds = Math.round(tenths / 10);
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
@@ -78,9 +79,11 @@ export function runPhases<E, R>(phases: ReadonlyArray<Phase<E, R>>): Effect.Effe
   return Effect.gen(function* () {
     const started = yield* Clock.currentTimeMillis;
     yield* Effect.logDebug(`phases: ${phases.map((planned) => planned.key).join(', ')}`);
+
     for (const [index, planned] of phases.entries()) {
       const line = phaseLine(index + 1, phases.length, planned.title);
       yield* Console.log(line);
+
       const start = yield* Clock.currentTimeMillis;
       yield* Effect.onExit(planned.run, (exit) =>
         Effect.gen(function* () {
@@ -94,6 +97,7 @@ export function runPhases<E, R>(phases: ReadonlyArray<Phase<E, R>>): Effect.Effe
         }),
       );
     }
+
     return (yield* Clock.currentTimeMillis) - started;
   });
 }
@@ -124,9 +128,11 @@ export function formatLogLine(logLevel: LogLevel, message: unknown, cause: Cause
   const parts = (Array.isArray(message) ? message : [message]).map((part: unknown) =>
     typeof part === 'string' ? part : Formatter.format(part),
   );
+
   if (cause.reasons.length > 0) {
     parts.push(Cause.pretty(cause));
   }
+
   return `[${LEVEL_LABELS[logLevel]}] ${parts.join(' ')}`.replaceAll('\n', '\n  ');
 }
 

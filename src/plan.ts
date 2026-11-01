@@ -111,6 +111,7 @@ export function composePrefix(app: App, host?: HostConfig): ReadonlyArray<string
 export function planDeployment(options: PlanOptions): ReadonlyArray<Step> {
   const { app, host, tag, local } = options;
   validateSecrets(app, options.secrets, local);
+
   const steps: Array<Step> = [];
   const images: Record<string, string> = {};
   const dockerfile = dockerfileOf(app);
@@ -121,6 +122,7 @@ export function planDeployment(options: PlanOptions): ReadonlyArray<Step> {
     if (options.reuseImages) {
       continue;
     }
+
     const push = !local && host.transport.mode === 'registry';
     steps.push(
       command(
@@ -148,6 +150,7 @@ export function planDeployment(options: PlanOptions): ReadonlyArray<Step> {
         },
       ),
     );
+
     if (!local && host.transport.mode === 'ssh-load') {
       steps.push({
         stages: [
@@ -184,5 +187,6 @@ export function planDeployment(options: PlanOptions): ReadonlyArray<Step> {
     },
   );
   steps.push(compose);
+
   return steps;
 }

@@ -24,11 +24,13 @@ export const DryRun = Context.Reference<boolean>('compoza/DryRun', { defaultValu
  */
 export function childEnvironment(command?: Command): Record<string, string | undefined> {
   const environment = { ...process.env, ...command?.env };
+
   for (const key of Object.keys(environment)) {
     if (isCredentialEnvironment(key)) {
       delete environment[key];
     }
   }
+
   return environment;
 }
 
@@ -102,6 +104,7 @@ export function collect(
             Effect.as(''),
           )
         : Stream.mkString(decoded);
+
       const code = yield* handle.exitCode;
       return { output, code };
     }),
@@ -152,6 +155,7 @@ function runPipeline(
   return Effect.scoped(
     Effect.gen(function* () {
       const handles: Array<ChildProcessSpawner.ChildProcessHandle> = [];
+
       for (const [index, stage] of stages.entries()) {
         const upstream = handles.at(-1);
         const stdio: Stdio = {
@@ -172,6 +176,7 @@ function runPipeline(
               if (stopped.has(upstream) || !(yield* handle.isRunning)) {
                 return;
               }
+
               stopped.add(upstream);
               yield* handle.kill({ forceKillAfter: STOP_GRACE });
             }).pipe(Effect.ignore),
@@ -193,9 +198,11 @@ function runPipeline(
         if (stopped.has(index)) {
           continue;
         }
+
         if (Result.isFailure(result)) {
           return yield* result.failure;
         }
+
         if (result.success !== 0) {
           return yield* new DeployError({ message: `${stages[index]?.program} exited with ${result.success}` });
         }
@@ -240,12 +247,15 @@ export class Shell extends Context.Service<
       const run = Effect.fn('Shell.run')(function* (step: Step, options: RunOptions = {}) {
         const line = printableStep(step);
         yield* Console.log(`$ ${line}`);
+
         if (options.alwaysRun !== true && (yield* DryRun)) {
           return;
         }
+
         if (isPipeline(step)) {
           return yield* runPipeline(spawner, step.stages);
         }
+
         const code = yield* spawner
           .exitCode(childProcess(step, { stdin: 'inherit', stdout: 'inherit' }))
           .pipe(
@@ -270,6 +280,7 @@ export class Shell extends Context.Service<
         if (code !== 0) {
           return yield* new DeployError({ message: `${label} exited with ${code}` });
         }
+
         return output;
       });
 

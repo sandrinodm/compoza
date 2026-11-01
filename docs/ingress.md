@@ -197,7 +197,7 @@ atlas:
       stateDir: /home/deploy/.local/state/compoza/cloudflare
 ```
 
-`apiTokenFile` is an absolute **host** path to a private regular file containing only a Cloudflare API token, preferably mode `0600`. Use a token scoped to the tunnel's account with **Cloudflare Tunnel Write** (or the equivalent cloudflared connector write permission). A connector's tunnel token cannot manage routes. The API token is read only on the host and passed to curl on stdin, not in arguments, generated scripts, release assets, or diagnostic output. [Cloudflare configuration API permissions](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/configurations/methods/update/).
+`apiTokenFile` is an absolute **host** path to a private regular file containing only a Cloudflare API token, preferably mode `0600`. Use a token scoped to the tunnel's account with **Cloudflare Tunnel Write** (or the equivalent cloudflared connector write permission). A connector's tunnel token cannot manage routes. The API token is read only on the host and passed to curl on stdin, not in arguments, generated scripts, stack assets, or diagnostic output. [Cloudflare configuration API permissions](https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/configurations/methods/update/).
 
 ### App settings
 
@@ -228,7 +228,7 @@ compoza deploy infra
 
 ### Ownership and recovery
 
-Deployment preserves other hostname rules, the final catch-all, and global origin settings. It refuses to take over an unowned exact hostname or overwrite a managed rule edited outside compoza. `projectName` identifies the route owner. Changing this app's domain updates its managed rule; create the new DNS record separately. Delete removes the owned rule, leaving the tunnel, connectors, DNS, Access policies and state directory intact. SSH rollback applies the earlier release's route using the token currently at the configured host path.
+Deployment preserves other hostname rules, the final catch-all, and global origin settings. It refuses to take over an unowned exact hostname or overwrite a managed rule edited outside compoza. `projectName` identifies the route owner. Changing this app's domain updates its managed rule; create the new DNS record separately. Delete removes the owned rule, leaving the tunnel, connectors, DNS, Access policies and state directory intact. Redeployment uses current local route settings and the token currently at the configured host path.
 
 Use **one writer host and one `stateDir` per shared tunnel**. A shared host lock serializes app deployments, and a version recheck detects changes made before the update. Cloudflare's full-configuration update is not an atomic compare-and-swap: concurrent dashboard, Terraform, or other-host writers can still race after that recheck. Keep those writers idle while deploying.
 
@@ -250,7 +250,6 @@ compoza deploy infra
 | `deploy`         | Activates the route after Compose and waits for the configured public URL.                                                                  |
 | `stop` / `start` | Keeps the route while stopping or starting the app's containers.                                                                            |
 | `delete`         | Removes the managed route while retaining shared ingress infrastructure.                                                                    |
-| SSH `rollback`   | Uses the selected release's frozen route operation; credentials come from current host/provider state.                                      |
 | `--local`        | Runs the app locally without remote ingress setup, checks or routing.                                                                       |
 
 The standard public HTTP wait accepts any status below 500. A login page or 404 can therefore count as reachable; choose an app-specific health endpoint when appropriate. Route activation followed by a health failure can leave a changed route. Deployment does not promise an atomic rollback of containers and routing.

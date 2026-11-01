@@ -24,7 +24,7 @@ export default defineConfig({
   pack: {
     entry: ['bin/compoza.ts'],
     platform: 'node',
-    target: 'node22',
+    target: 'node26',
     format: ['esm'],
     dts: false,
     unbundle: true,

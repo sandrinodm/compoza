@@ -21,6 +21,7 @@ const host: HostConfig = {
 function fakeRemote(spawned: Array<ChildProcess.Command>): Layer.Layer<Remote> {
   const spawner = ChildProcessSpawner.make((command) => {
     spawned.push(command);
+
     return Effect.succeed(
       ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),

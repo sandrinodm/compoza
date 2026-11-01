@@ -21,6 +21,7 @@ export function caddyChecks(
   const selected = ingressConfigOf(host);
   const proxy = selected?.provider === undefined || selected.provider === 'caddy-sites' ? selected : undefined;
   const address = proxy?.address ?? host.address;
+
   if (ingress.mode === 'caddy-sites' && proxy === undefined) {
     checks.push({
       name: 'proxy',
@@ -29,6 +30,7 @@ export function caddyChecks(
       fix: 'manual',
     });
   }
+
   if (ingress.mode === 'caddy-sites' && proxy !== undefined) {
     const expectedSite = sha256(siteFile(projectNameOf(app), ingress, proxy));
     const proxyReady =
@@ -37,6 +39,7 @@ export function caddyChecks(
       probe.running_mount === 'yes' &&
       probe.container_running === 'yes' &&
       (probe.container_health === 'healthy' || (proxy.provision === undefined && probe.container_health === 'none'));
+
     const dnsOk =
       address === undefined
         ? addresses.length > 0
@@ -92,6 +95,7 @@ export function caddyChecks(
       },
     );
   }
+
   return checks;
 }
 

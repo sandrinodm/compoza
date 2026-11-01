@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { assert, describe, it } from '@effect/vitest';
 import { Effect, Schema } from 'effect';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -42,10 +42,11 @@ EQUALS=a=b
 describe('readSecrets', () => {
   it.effect('resolves a relative envFile against the deploy folder, not the working directory', () =>
     Effect.acquireUseRelease(
-      Effect.promise(() => mkdtemp(join(tmpdir(), 'compoza-'))),
-      (dir) =>
+      Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'compoza-'))),
+      ({ path: dir }) =>
         Effect.gen(function* () {
           yield* Effect.promise(() => writeFile(join(dir, 'secrets.env'), 'PG_PASSWORD=s3cret\n'));
+
           const config = yield* Schema.decodeUnknownEffect(DeployConfig)({
             name: 'demo',
             host: 'atlas',
@@ -53,10 +54,11 @@ describe('readSecrets', () => {
             composeFiles: ['compose.yaml'],
             envFile: 'secrets.env',
           });
+
           assert.notStrictEqual(process.cwd(), dir);
           assert.deepStrictEqual(yield* readSecrets({ dir, config }), { PG_PASSWORD: 's3cret' });
         }),
-      (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+      (directory) => Effect.promise(() => directory.remove()),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 

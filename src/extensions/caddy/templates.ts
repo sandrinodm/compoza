@@ -38,28 +38,34 @@ export function renderTemplate(
   if (typeof source === 'string') {
     throw new Error(`${label}: template file must be loaded before planning`);
   }
+
   const template = (source?.inline ?? fallback).replaceAll('\r\n', '\n');
   const stack: Array<{ key: string; active: boolean }> = [];
   let cursor = 0;
   let output = '';
   const active = () => stack.every((section) => section.active);
+
   for (const match of template.matchAll(/\{\{([\s\S]*?)\}\}/g)) {
     const before = template.slice(cursor, match.index);
     if (before.includes('{{')) {
       throw new Error(`${label}: malformed template placeholder`);
     }
+
     if (active()) {
       output += before;
     }
+
     const token = /^\s*([#^/]?)([a-zA-Z][a-zA-Z0-9]*)\s*$/.exec(match[1]!);
     if (token === null) {
       throw new Error(`${label}: invalid template placeholder`);
     }
+
     const kind = token[1]!;
     const key = token[2]!;
     if (!Object.hasOwn(values, key)) {
       throw new Error(`${label}: unknown template variable ${key}`);
     }
+
     if (kind === '/') {
       if (stack.pop()?.key !== key) {
         throw new Error(`${label}: mismatched template section ${key}`);
@@ -69,18 +75,23 @@ export function renderTemplate(
     } else if (active()) {
       output += values[key];
     }
+
     cursor = match.index + match[0].length;
   }
+
   const tail = template.slice(cursor);
   if (tail.includes('{{')) {
     throw new Error(`${label}: unclosed template placeholder`);
   }
+
   if (stack.length > 0) {
     throw new Error(`${label}: unclosed template section`);
   }
+
   if (active()) {
     output += tail;
   }
+
   return output;
 }
 
@@ -95,6 +106,7 @@ export const loadTemplate = Effect.fn('loadTemplate')(function* (
   if (typeof source !== 'string') {
     return source;
   }
+
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const resolved = path.resolve(
@@ -109,10 +121,12 @@ export const loadTemplate = Effect.fn('loadTemplate')(function* (
   if (info.type !== 'File' || Number(info.size) > MAX_TEMPLATE_BYTES) {
     return yield* fail();
   }
+
   const inline = yield* fs.readFileString(resolved).pipe(Effect.mapError(fail));
   if (Buffer.byteLength(inline) > MAX_TEMPLATE_BYTES) {
     return yield* fail();
   }
+
   return { inline };
 });
 
@@ -137,6 +151,7 @@ const loadCheckedTemplate = Effect.fn('loadCheckedCaddyTemplate')(function* (
     try: () => renderTemplate(loaded, '', templateVariables[kind], `Caddy ${kind} template declared in ${file}`),
     catch: (cause) => new DeployError({ message: cause instanceof Error ? cause.message : 'Invalid Caddy template' }),
   });
+
   return loaded;
 });
 
@@ -148,17 +163,21 @@ export const loadHostTemplates = Effect.fn('loadCaddyHostTemplates')(function* (
   if (proxy === undefined || ('provider' in proxy && proxy.provider === 'cloudflare-tunnel')) {
     return host;
   }
+
   const caddy = proxy as ProxyConfig;
   if (caddy.templates === undefined) {
     return host;
   }
+
   const templates = { ...caddy.templates };
   if (templates.site !== undefined) {
     templates.site = yield* loadCheckedTemplate(templates.site, file, 'site');
   }
+
   if (templates.config !== undefined) {
     templates.config = yield* loadCheckedTemplate(templates.config, file, 'config');
   }
+
   return host.ingress !== undefined && 'caddy' in host.ingress
     ? { ...host, ingress: { caddy: { ...host.ingress.caddy, templates } } }
     : { ...host, proxy: { ...caddy, templates } };
@@ -172,11 +191,13 @@ export const loadAppTemplates = Effect.fn('loadCaddyAppTemplates')(function* (ap
   if (ingress === undefined) {
     return app;
   }
+
   const settings =
     'caddy' in ingress ? ingress.caddy : 'mode' in ingress && ingress.mode === 'caddy-sites' ? ingress : undefined;
   if (settings?.siteTemplate === undefined) {
     return app;
   }
+
   const siteTemplate = yield* loadCheckedTemplate(settings.siteTemplate, app.file ?? `${app.dir}/deploy.yaml`, 'site');
   return {
     ...app,

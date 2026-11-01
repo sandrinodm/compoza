@@ -4,7 +4,7 @@
 
 ## Requirements
 
-- Node.js 22.18 or newer; Node runs the TypeScript directly.
+- Node.js 26.0 or newer on the CLI machine; Node runs the TypeScript directly. Remote Docker hosts do not need Node.js.
 - pnpm 12 (`devEngines` downloads it when missing).
 - Bash, jq and standard Unix utilities for the host-script tests.
 - Optionally, the Docker Compose CLI for the parser tests.
@@ -30,11 +30,10 @@ The pre-commit hook runs `vp check --fix` and `jsdoc-lint` on staged files.
 | `src/cli.ts`              | The commands and their flags (`effect/cli`)                                             |
 | `src/deploy.ts`           | The deploy pipeline                                                                     |
 | `src/publish.ts`          | `publish`: rsync of a local folder into a content section                               |
-| `src/ssh-plan.ts`         | Plans uploads and host runtime calls for deploy, lifecycle and rollback                 |
-| `src/ssh-runtime.ts`      | Loads versioned host assets for planning and release staging                            |
-| `src/remote/`             | Bash state, validation, locking and activation; jq JSON filters                         |
-| `src/ssh-state.ts`        | Planning adapter for the host runtime's checked state lookup                            |
-| `src/ssh-deploy.ts`       | SSH execution pipeline and deployed-release inspection                                  |
+| `src/ssh-plan.ts`         | Plans uploads and host runtime calls for deploy and lifecycle                           |
+| `src/ssh-runtime.ts`      | Loads Bash/jq sources sent with each host transaction                                   |
+| `src/remote/`             | Bash validation, flat stack updates and locking; jq JSON filters                        |
+| `src/ssh-deploy.ts`       | SSH execution pipeline and deployed-stack inspection                                    |
 | `src/bundle.ts`           | Bounded explicit Compose asset loading and path validation                              |
 | `src/plan.ts`             | Builds the Docker commands of a deployment from configuration                           |
 | `src/extensions/`         | Ingress integrations and credential providers                                           |
@@ -89,44 +88,44 @@ To add a provider:
 
 ### Ingress extensions
 
-An ingress extension supplies pure plans for readiness probes, host setup, route activation, removal and an optional public health URL. The core runs these plans through `Remote`, preserving dry-run behavior. SSH releases freeze the generated activation and removal scripts, so recovery uses the deployed version's operations. Scripts must support Bash 3.2, and ingress configuration must contain no credentials; secret snapshots remain a separate core channel.
+An ingress extension supplies pure plans for readiness probes, host setup, route activation, removal and an optional public health URL. The core runs these plans through `Remote`, preserving dry-run behavior. SSH lifecycle metadata retains the deployed removal operation; deployment sends route operations without installing script files. Scripts must support Bash 3.2, and ingress configuration must contain no credentials; managed values use the private stack dotenv channel.
 
 To add ingress:
 
 1. Add the implementation and app/host configuration schemas under `src/extensions/<ingress>/`.
 2. Include its named app/host schemas in `Ingress` and `HostIngress` in `src/extensions/config.ts`. Add its normalized input to `ResolvedIngress` / `ProxyConfig` and extend the corresponding resolution functions. Keep legacy configuration accepted during migration.
 3. Register the implementation in `ingressExtensions`, covering setup, probes, check interpretation, activation and removal. Check failures with `fix: "deploy"` are repaired by deployment and do not block it; other failures block.
-4. Test both client execution and frozen SSH operations, including route failure, removal and recovery.
+4. Test both client execution and deployed SSH operations, including route failure, removal and recovery.
 
-Apps and hosts select Caddy through `ingress.caddy`, or Cloudflare through `ingress["cloudflare-tunnel"]`, with settings nested under the extension name. Credential sources use `secrets["1password"]` and `secrets["env-file"]`. Exactly one extension is allowed per block. Omitted ingress or `none: {}` bypasses ingress. Legacy flat selectors and host `proxy` entries normalize to the existing internal contracts, so planners and frozen SSH scripts preserve their behavior. `setup-proxy` dispatches to the host's selected extension and remains explicit.
+Apps and hosts select Caddy through `ingress.caddy`, or Cloudflare through `ingress["cloudflare-tunnel"]`, with settings nested under the extension name. Credential sources use `secrets["1password"]` and `secrets["env-file"]`. Exactly one extension is allowed per block. Omitted ingress or `none: {}` bypasses ingress. Legacy flat selectors and host `proxy` entries normalize to the existing internal contracts, so planners and deployed SSH operations preserve their behavior. `setup-proxy` dispatches to the host's selected extension and remains explicit.
 
 ### Caddy implementation
 
 Caddy's optional host `provision` settings dispatch to `extensions/caddy/provision.ts` and `provision.sh`. Planning generates non-secret Compose/Caddyfile content; the host script validates it with credentials from an existing host env file. Bootstrap never overwrites differing files or adopts another stack's container. Repeat runs retain per-app routes and persistent storage. `setup-proxy --dry-run` renders the planned script and input without opening SSH. Provisioning remains separate from ordinary app deployment and from the legacy existing-proxy setup script.
 
-Caddy defaults live in `extensions/caddy/templates/*.tmpl`. Host `templates.site`/`templates.config` and app `siteTemplate` accept filenames or `{ inline }` sources. Extension configuration loading resolves winning host files relative to their declaring YAML and app files after destination selection, replacing paths with inline text before pure planning. The renderer supports literal variables and truthy/inverted sections; it never evaluates JavaScript, shell code or environment variables. Frozen SSH routes contain the rendered configuration, not local template dependencies.
+Caddy defaults live in `extensions/caddy/templates/*.tmpl`. Host `templates.site`/`templates.config` and app `siteTemplate` accept filenames or `{ inline }` sources. Extension configuration loading resolves winning host files relative to their declaring YAML and app files after destination selection, replacing paths with inline text before pure planning. The renderer supports literal variables and truthy/inverted sections; it never evaluates JavaScript, shell code or environment variables. Rendered SSH routes contain the rendered configuration, not local template dependencies.
 
-Route mutations run the frozen `route.sh` runtime under the same proxy lock as setup. Files are staged and renamed before a validating reload; failures restore the file and attempt a recovery reload. Recovery failure retains the lock and private staging directory. Fresh stacks have healthchecks, bounded logs and explicit drain budgets.
+Route mutations run the embedded `route.sh` runtime under the same proxy lock as setup. Files are staged and renamed before a validating reload; failures restore the file and attempt a recovery reload. Recovery failure retains the lock and private staging directory. Fresh stacks have healthchecks, bounded logs and explicit drain budgets.
 
 Operator guides: [Ingress](ingress.md), [Caddy templates](caddy-templates.md) and [Caddy production operations](caddy-production.md). The production guide also documents the opt-in real-Docker smoke test.
 
 ### Cloudflare implementation
 
-Cloudflare host provisioning shares the explicit `setup-proxy` workflow. `provision.ts` renders and validates connector Compose configuration; `provision.sh` owns a per-stack lock, checks foreign-file/container ownership, validates a token's tunnel identity privately and waits for the native readiness check. `ingress-setup.ts` resolves optional native credential providers only after CLI dry-run handling and transports selected values over stdin. Route plans and application releases never carry setup credentials. Manual routing avoids API calls; managed routing retains the ownership journal and accepts bounded YAML origin templates. See [Cloudflare provisioning](cloudflare-provisioning.md).
+Cloudflare host provisioning shares the explicit `setup-proxy` workflow. `provision.ts` renders and validates connector Compose configuration; `provision.sh` owns a per-stack lock, checks foreign-file/container ownership, validates a token's tunnel identity privately and waits for the native readiness check. `ingress-setup.ts` resolves optional native credential providers only after CLI dry-run handling and transports selected values over stdin. Route plans and application stacks never carry setup credentials. Manual routing avoids API calls; managed routing retains the ownership journal and accepts bounded YAML origin templates. See [Cloudflare provisioning](cloudflare-provisioning.md).
 
 ## Tests
 
-- **Host-script tests** run real Bash and jq against temporary directories and a fake Docker executable. They cover activation, rollback, secret isolation, malformed metadata, and execution with Python blocked.
+- **Host-script tests** run real Bash and jq against temporary directories and a fake Docker executable. They cover flat file ownership, in-place updates, secret isolation, malformed metadata and path validation.
 - **Optional Compose parser tests** run `docker compose config` when the Docker CLI is available.
 - **Limits:** ordinary tests use fake daemons or local Compose parsing and never access live accounts. Opt-in Docker tests run disposable local stacks with synthetic credentials. 1Password behavior is covered through SDK API/type checks and mocked integrations only.
 - The multi-process integration groups use a 15-second per-test limit; ordinary unit tests keep five seconds.
 
 ## Host runtime conventions
 
-- Edit host behavior in `src/remote/runtime.sh` and its jq filters, and keep launch parameters in `compose.json` as data.
+- Edit host behavior in `src/remote/runtime.sh` and its jq filters, and keep deployed lifecycle settings in `.compoza.json` as data.
 - Do not regenerate executable code from configuration or add Python dependencies.
 - Remote actions run under `bash -c` regardless of the login shell, so scripts must not depend on the login shell.
-- New releases freeze `runtime.sh`, `model.jq`, `status.jq` and `compose.json`; changes affect only releases deployed afterwards. The runtime executes only version-2 release wrappers; see [Upgrading older SSH releases](ssh-deployment.md#upgrading-older-ssh-releases).
+- Runtime Bash and jq filters are sent with each operation. Host stacks retain only `compose.yaml`, private `.env`, declared assets and small `.compoza.json` lifecycle metadata; no runtime scripts or history directories are installed.
 
 ## Distribution
 
@@ -143,9 +142,9 @@ The package smoke check installs the tarball into a temporary consumer, runs the
 
 ## CI and npm releases
 
-`ci.yml` checks formatting, lint, types and JSDoc, runs the test suite on Linux (Node 22.18, 24 and 26) and macOS (Node 24), and builds and installs the npm tarball on every matrix entry. Bash and jq are required; no personal hosts or provider credentials are used.
+`ci.yml` checks formatting, lint, types and JSDoc on the latest Node 26 release. It runs the test suite, builds and installs the npm tarball on Linux with both Node 26.0.0 and the latest Node 26 release, and on macOS with the latest Node 26 release. Bash and jq are required; no personal hosts or provider credentials are used.
 
-`publish.yml` publishes stable GitHub releases through [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/). It requires the tag `v<package.json version>`, a commit on `main`, and a successful push-triggered CI run for that exact commit. It reruns checks and tests, builds with pnpm, verifies the installed package, and publishes that tarball with provenance. Manual workflow dispatch is available for retrying a release; select its **tag**, not `main`.
+`publish.yml` uses Node 26 from its first verification step and publishes stable GitHub releases through [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/). It requires the tag `v<package.json version>`, a commit on `main`, and a successful push-triggered CI run for that exact commit. It reruns checks and tests, builds with pnpm, verifies the installed package, and publishes that tarball with provenance. Manual workflow dispatch is available for retrying a release; select its **tag**, not `main`.
 
 One-time setup:
 

@@ -21,6 +21,7 @@ export function contentTarget(app: App, section: string): Effect.Effect<string, 
       new DeployError({ message: `${app.config.name} has no content section "${section}" (sections: ${known})` }),
     );
   }
+
   return Effect.succeed(target);
 }
 
@@ -67,14 +68,17 @@ export const publish = Effect.fn('publish')(function* (
   const remote = yield* Remote;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+
   const source = path.resolve(folder);
   const exists = yield* fs.exists(source).pipe(Effect.mapError(platformFailure(`Looking for ${source}`)));
   if (!exists) {
     return yield* new DeployError({ message: `No such folder: ${source}` });
   }
+
   const target = yield* contentTarget(app, section);
   yield* remote.run(host, mkdirScript([target]));
   yield* shell.run(rsyncCommand(host, target, source, dryRun), { alwaysRun: true });
+
   yield* Console.log(
     dryRun
       ? 'Dry run: the lines above are what would change (*deleting marks removals).'

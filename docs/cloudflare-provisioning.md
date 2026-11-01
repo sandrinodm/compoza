@@ -34,7 +34,7 @@ compoza setup-proxy atlas --dry-run
 compoza setup-proxy atlas
 ```
 
-The dry run prints nonsecret scripts and rendered configuration, with no SSH connection, provider read or host writes. A real setup fetches the selected provider once and sends only the selected token over SSH stdin. The host stores it in `dir/.credentials.env`, mode `0600`. Docker reads that file and supplies `TUNNEL_TOKEN` only to the connector. The token is absent from Compose templates, process arguments, setup output and application releases. Docker administrators can inspect container environment values.
+The dry run prints nonsecret scripts and rendered configuration, with no SSH connection, provider read or host writes. A real setup fetches the selected provider once and sends only the selected token over SSH stdin. The host stores it in `dir/.credentials.env`, mode `0600`. Docker reads that file and supplies `TUNNEL_TOKEN` only to the connector. The token is absent from Compose templates, process arguments, setup output and application stacks. Docker administrators can inspect container environment values.
 
 Alternatively, use `provision.secrets["env-file"].path` for a dotenv source on the CLI machine. Its path resolves relative to the host YAML declaring the configuration, including external `$ref` files. Or use `provision.envFile` for an existing absolute host file containing `TUNNEL_TOKEN=<raw-token>` without surrounding quotes. The latter uses Compose's raw env-file format. Select exactly one of `envFile` and `secrets`. Existing host credential files must have owner-only permissions.
 
@@ -76,9 +76,9 @@ networks:
     name: cloudflare-edge
 ```
 
-Create a proxied CNAME to `<tunnel-id>.cfargotunnel.com`, then publish the application route in the tunnel dashboard using the same hostname and HTTP service URL. With `routing: "manual"`, Compoza checks DNS and local connector/network health and performs the public readiness wait. Deploy, rollback and delete leave dashboard routes untouched and make no Cloudflare API calls. The public URL wait accepts HTTP statuses below 500; verify the expected application response as well.
+Create a proxied CNAME to `<tunnel-id>.cfargotunnel.com`, then publish the application route in the tunnel dashboard using the same hostname and HTTP service URL. With `routing: "manual"`, Compoza checks DNS and local connector/network health and performs the public readiness wait. Deploy and delete leave dashboard routes untouched and make no Cloudflare API calls. The public URL wait accepts HTTP statuses below 500; verify the expected application response as well.
 
-For API-managed routes, omit `routing` or set it to `managed`, and supply `apiTokenFile` and `stateDir` as described in [Ingress](ingress.md#cloudflare-tunnel). The API token needs Cloudflare Tunnel Write permission and is distinct from the connector token. Existing ownership, conflict detection and rollback behavior are preserved. Provisioning checks API access before starting the managed connector.
+For API-managed routes, omit `routing` or set it to `managed`, and supply `apiTokenFile` and `stateDir` as described in [Ingress](ingress.md#cloudflare-tunnel). The API token needs Cloudflare Tunnel Write permission and is distinct from the connector token. Existing ownership, conflict detection and recovery behavior are preserved. Provisioning checks API access before starting the managed connector.
 
 ## Customize the connector Compose template
 

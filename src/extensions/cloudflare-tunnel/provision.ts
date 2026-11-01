@@ -30,7 +30,9 @@ function validateCompose(compose: string, proxy: CloudflareProxy, service: strin
   if (Buffer.byteLength(compose) > 256 * 1024) {
     throw new Error('Cloudflare Compose template is too large');
   }
+
   let model;
+
   try {
     model = YAML.parse(compose, { uniqueKeys: true, maxAliasCount: 0 });
   } catch {
@@ -44,6 +46,7 @@ function validateCompose(compose: string, proxy: CloudflareProxy, service: strin
     'define a services mapping',
   );
   requireCondition(Object.keys(model.services).length === 1, 'define exactly one connector service');
+
   const connector = model.services[service];
   requireCondition(
     connector && typeof connector === 'object' && !Array.isArray(connector),
@@ -99,6 +102,7 @@ function validateCompose(compose: string, proxy: CloudflareProxy, service: strin
     'preserve the credential env-file source',
   );
   requireCondition(JSON.stringify(connector.entrypoint) === '["cloudflared"]', 'use the cloudflared entrypoint');
+
   const command = connector.command;
   requireCondition(Array.isArray(command), 'define the connector command as an argument list');
   requireCondition(
@@ -106,6 +110,7 @@ function validateCompose(compose: string, proxy: CloudflareProxy, service: strin
     'use literal single-line command arguments',
   );
   requireCondition(command[0] === 'tunnel' && command.at(-1) === 'run', 'run the cloudflared tunnel command');
+
   for (const flag of [
     '--token',
     '--token-file',
@@ -119,6 +124,7 @@ function validateCompose(compose: string, proxy: CloudflareProxy, service: strin
       `omit the ${flag} command option`,
     );
   }
+
   requireCondition(command.includes('--no-autoupdate'), 'disable connector autoupdates');
 
   // Metrics stay private and the command uses the configured drain deadline.
@@ -131,6 +137,7 @@ function validateCompose(compose: string, proxy: CloudflareProxy, service: strin
     command[command.indexOf('--metrics') + 1] === '127.0.0.1:20241',
     'bind metrics to the private listener',
   );
+
   const gracePeriodSeconds = proxy.provision?.gracePeriodSeconds ?? 30;
   requireCondition(
     command.filter((argument) => argument === '--grace-period').length === 1,
@@ -174,6 +181,7 @@ function validateCompose(compose: string, proxy: CloudflareProxy, service: strin
     'define only the edge and egress networks',
   );
   requireCondition(JSON.stringify(model.networks.egress) === '{}', 'keep the egress network private');
+
   const edge = model.networks.edge;
   requireCondition(edge && typeof edge === 'object' && !Array.isArray(edge), 'define the shared edge network');
   requireCondition(

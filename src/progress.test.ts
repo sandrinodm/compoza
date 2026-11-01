@@ -34,6 +34,7 @@ describe('runPhases', () => {
           return `HTTP ${code}`;
         }),
       ]);
+
       assert.strictEqual(status, 200);
       assert.strictEqual(total, 14_300);
       assert.deepStrictEqual(yield* TestConsole.logLines, [
@@ -66,6 +67,7 @@ describe('runPhases', () => {
       );
       yield* TestClock.adjust(4_000);
       yield* Fiber.interrupt(fiber);
+
       assert.deepStrictEqual(yield* TestConsole.logLines, [
         '[1/1] Waiting for https://demo.example.com/ …',
         '[1/1] Waiting for https://demo.example.com/ … interrupted (4.0 s)',
@@ -94,6 +96,7 @@ describe('formatLogLine', () => {
     Effect.gen(function* () {
       yield* Effect.logDebug('hidden at the default level');
       yield* Effect.logInfo('shown');
+
       assert.deepStrictEqual(yield* TestConsole.errorLines, ['[info] shown']);
       assert.deepStrictEqual(yield* TestConsole.logLines, []);
     }).pipe(Effect.provide([Logger.layer([humanLogger]), TestConsole.layer])),

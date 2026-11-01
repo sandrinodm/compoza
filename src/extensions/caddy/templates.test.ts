@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { assert, describe, it } from '@effect/vitest';
 import { Effect, Option } from 'effect';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtempDisposable, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import * as YAML from 'yaml';
@@ -21,6 +21,7 @@ const caddy = {
   network: 'edge',
   provision: { image: 'caddy:2' },
 } as const;
+
 const host = { ssh: 'server', platform: 'linux/arm64', transport: { mode: 'ssh-load' }, ingress: { caddy } } as const;
 const site = { mode: 'caddy-sites', domain: 'budget.example.com', upstream: 'host.docker.internal:8300' } as const;
 const budget = '{{domain}} {\n\treverse_proxy http://{{upstream}} {\n\t\theader_up X-Real-IP {remote_host}\n\t}\n}\n';
@@ -29,13 +30,15 @@ const budget = '{{domain}} {\n\treverse_proxy http://{{upstream}} {\n\t\theader_
  * Provides isolated local, global and referenced host directories without touching the operator's configuration.
  */
 const fixture = Effect.gen(function* () {
-  const dir = yield* Effect.acquireRelease(
-    Effect.promise(() => mkdtemp(join(tmpdir(), 'dd-template-'))),
-    (path) => Effect.promise(() => rm(path, { recursive: true, force: true })),
+  const { path: dir } = yield* Effect.acquireRelease(
+    Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'dd-template-'))),
+    (directory) => Effect.promise(() => directory.remove()),
   );
+
   for (const folder of ['global', 'repo', 'shared', 'repo/templates']) {
     yield* Effect.promise(() => mkdir(join(dir, folder), { recursive: true }));
   }
+
   return dir;
 });
 
@@ -127,20 +130,27 @@ describe('Caddy templates', () => {
       yield* yaml(join(dir, 'repo', 'hosts.yaml'), {
         local: { ...host, ingress: { caddy: { ...caddy, templates: { site: './site.tmpl' } } } },
       });
+
       const hosts = yield* loadDefaultHosts(join(dir, 'repo'), join(dir, 'global', 'hosts.yaml'));
       const external = ingressConfigOf(hosts.external!)!;
       assert.strictEqual(external.provider, 'caddy-sites');
+
       if (external.provider !== 'caddy-sites') {
         throw new Error('Wrong extension');
       }
+
       assert.include(siteFile('budget', site, external), 'header_up X-Real-IP {remote_host}');
       assert.include(JSON.parse(provisionOperation(external).input!).caddyfile, '# shared custom config');
+
       const local = ingressConfigOf(hosts.local!)!;
       if (local.provider !== 'caddy-sites') {
         throw new Error('Wrong extension');
       }
+
       assert.include(siteFile('budget', site, local), 'respond "local"');
+
       yield* file(join(dir, 'shared', 'site.tmpl'), '{{domain}} { respond "changed" }');
+
       assert.include(siteFile('budget', site, external), 'header_up');
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -150,6 +160,7 @@ describe('Caddy templates', () => {
       const dir = yield* fixture;
       const path = join(dir, 'site.tmpl');
       yield* file(path, budget);
+
       for (const source of [path, `~/${relative(homedir(), path)}`]) {
         yield* yaml(join(dir, 'hosts.yaml'), {
           server: {
@@ -159,6 +170,7 @@ describe('Caddy templates', () => {
             proxy: { ...caddy, templates: { site: source } },
           },
         });
+
         const hosts = yield* loadHosts(join(dir, 'hosts.yaml'));
         assert.deepStrictEqual(
           hosts.server!.proxy &&
@@ -189,6 +201,7 @@ describe('Caddy templates', () => {
           },
         },
       });
+
       const resolved = yield* resolve(join(dir, 'repo'), Option.some(join(dir, 'hosts.yaml')), 'staging');
       const operation = caddyIngress.plan(resolved.app, resolved.host).route;
       const frozen = ingressOperationScript(operation);
@@ -196,7 +209,9 @@ describe('Caddy templates', () => {
       assert.include(frozen, 'budget.example.com');
       assert.notInclude(frozen, '{{domain}}');
       assert.notInclude(frozen, 'budget.tmpl');
+
       yield* rmTemplate(join(dir, 'repo', 'templates', 'budget.tmpl'));
+
       assert.strictEqual(ingressOperationScript(caddyIngress.plan(resolved.app, resolved.host).route), frozen);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -205,17 +220,21 @@ describe('Caddy templates', () => {
     Effect.gen(function* () {
       const dir = yield* fixture;
       const hostsFile = join(dir, 'hosts.yaml');
+
       for (const source of ['./missing.tmpl', './repo', { inline: 'PRIVATE_TEMPLATE_SENTINEL {{typo}}' }]) {
         yield* yaml(hostsFile, { server: { ...host, ingress: { caddy: { ...caddy, templates: { site: source } } } } });
+
         const error = yield* loadHosts(hostsFile).pipe(Effect.flip);
         assert.strictEqual(error._tag, 'DeployError');
         assert.include(error.message, 'template');
         assert.notInclude(error.message, 'PRIVATE_TEMPLATE_SENTINEL');
       }
+
       yield* file(join(dir, 'large.tmpl'), 'x'.repeat(256 * 1024 + 1));
       yield* yaml(hostsFile, {
         server: { ...host, ingress: { caddy: { ...caddy, templates: { site: './large.tmpl' } } } },
       });
+
       assert.include((yield* loadHosts(hostsFile).pipe(Effect.flip)).message, '256 KiB');
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

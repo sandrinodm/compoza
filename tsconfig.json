@@ -2,8 +2,8 @@
   "compilerOptions": {
     "strict": true,
     "noEmit": true,
-    "target": "ES2024",
-    "lib": ["ES2024"],
+    "target": "ES2025",
+    "lib": ["ES2025", "ESNext.Disposable"],
     "types": ["node"],
     "module": "nodenext",
     "moduleResolution": "nodenext",
@@ -12,6 +12,9 @@
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "esModuleInterop": true,
+    "noImplicitReturns": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "skipLibCheck": true

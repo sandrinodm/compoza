@@ -11,7 +11,7 @@ Secrets are resolved on the CLI machine from one explicitly selected source. Nev
 - [Names and dotenv format](#names-and-dotenv-format)
 - [Using secrets in Compose](#using-secrets-in-compose)
 - [SSH execution](#ssh-execution)
-- [Rollback and lifecycle](#rollback-and-lifecycle)
+- [Recovery and lifecycle](#recovery-and-lifecycle)
 
 ## Sources
 
@@ -128,19 +128,15 @@ services:
 
 ## SSH execution
 
-With a managed source (`env-file` or `1password`):
+With a managed source (`env-file` or `1password`), the selected values travel over SSH stdin and are combined with generated nonsecret variables and image references in the stack `.env`, mode `0600`. Compose validates the staged files before replacing the flat stack. No resolved credentials enter `compose.yaml`, `.compoza.json`, process arguments or deployment logs; private validation diagnostics are discarded.
 
-1. The resolved source is uploaded over SSH stdin to a mode-0600 snapshot in the mode-0700 `<stackDir>/.secrets` directory, outside release bundles.
-2. The candidate release is validated with that snapshot before any Compose mutation. Managed-source validation output is discarded.
-3. Activation binds the successful release, its predecessor and the effective source in one immutable record behind `current`.
+Upload or validation failure preserves the deployed `.env`. Later replacement, Compose or readiness failure may leave updated files or containers; recover by redeploying. No older credential copies or deployment backups are retained.
 
-No values are stored in manifests or deployment logs. A failed fetch or validation leaves the active snapshot unchanged. Staged snapshots may remain, still private, after a failed candidate; `delete` retains them, and cleanup is deliberately manual. See [host layout](ssh-deployment.md#host-layout-and-ownership).
+An explicit `remote.envFile` selects a separate live operator-owned host file. It cannot be the generated `<stackDir>/.env`; move an existing operator `.env` to a separate path before deploying into that folder. Host overlays remain live and are never overwritten. See [host layout](ssh-deployment.md#host-layout-and-ownership).
 
-Legacy host dotenv (`remote.envFile` or `<stackDir>/.env`) remains live, operator-owned input, and host overlays remain live in every mode.
+## Recovery and lifecycle
 
-## Rollback and lifecycle
-
-- `status`, `logs`, `stop`, `start`, `delete` and `rollback` use the active host source without contacting 1Password or reading client dotenv.
-- Rollback combines the older configuration and images with the **currently active** source: the active managed snapshot or the live legacy host dotenv. It never selects an earlier password snapshot.
-- Explicitly deploying `none`, or returning to legacy host dotenv, changes the effective source without falling back to a previous managed snapshot.
-- Upgrading an older release resolves the configured source again; it does not infer credentials from an old wrapper or reuse its snapshot. See [Upgrading older SSH releases](ssh-deployment.md#upgrading-older-ssh-releases).
+- `status`, `logs`, `stop`, `start` and `delete` read deployed host files without fetching 1Password or client dotenv.
+- `deploy --tag <known-tag>` reuses older images with current local configuration and freshly resolves the selected source. It does not restore older passwords or archived configuration.
+- Deploying `none` writes the generated `.env` without managed secret values; there is no fallback to an earlier source.
+- Delete retains the stack `.env` and other files; remove sensitive files separately only when that cleanup is explicitly intended.

@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { assert, describe, it } from '@effect/vitest';
 import { Effect, Schema } from 'effect';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as YAML from 'yaml';
@@ -13,9 +13,9 @@ import { composeFilesOf, DeployConfig, directoriesOf, environmentOf, ingressOf, 
  */
 function withTempDir<A, E, R>(use: (dir: string) => Effect.Effect<A, E, R>): Effect.Effect<A, E, R> {
   return Effect.acquireUseRelease(
-    Effect.promise(() => mkdtemp(join(tmpdir(), 'compoza-'))),
-    use,
-    (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+    Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'compoza-'))),
+    (directory) => use(directory.path),
+    (directory) => Effect.promise(() => directory.remove()),
   );
 }
 
@@ -49,6 +49,7 @@ describe('DeployConfig', () => {
       const { ingress: _ingress, ...withoutIngress } = valid;
       const config = yield* Schema.decodeUnknownEffect(DeployConfig)(withoutIngress);
       assert.deepStrictEqual(ingressOf(config), { mode: 'none' });
+
       const { directories: _directories, content: _content, ...bare } = config;
       assert.deepStrictEqual(directoriesOf(bare), []);
     }),
@@ -77,8 +78,10 @@ describe('loadApp', () => {
     withTempDir((dir) =>
       Effect.gen(function* () {
         yield* Effect.promise(() => writeFile(join(dir, 'deploy.yaml'), YAML.stringify(valid)));
+
         const fromFolder = yield* loadApp(dir);
         const fromFile = yield* loadApp(join(dir, 'deploy.yaml'));
+
         assert.strictEqual(fromFolder.dir, dir);
         assert.strictEqual(fromFile.dir, dir);
         assert.strictEqual(fromFile.config.name, 'demo');
@@ -100,9 +103,12 @@ describe('loadApp', () => {
     withTempDir((dir) =>
       Effect.gen(function* () {
         yield* Effect.promise(() => writeFile(join(dir, 'deploy.yaml'), '{'));
+
         const invalidJson = yield* loadApp(dir).pipe(Effect.flip);
         assert.include(invalidJson.message, 'not valid YAML');
+
         yield* Effect.promise(() => writeFile(join(dir, 'deploy.yaml'), YAML.stringify({ name: 'x' })));
+
         const invalidConfig = yield* loadApp(dir).pipe(Effect.flip);
         assert.include(invalidConfig.message, join(dir, 'deploy.yaml'));
       }),
@@ -113,9 +119,12 @@ describe('loadApp', () => {
       Effect.gen(function* () {
         const alternate = join(dir, 'deploy.yml');
         yield* Effect.promise(() => writeFile(alternate, YAML.stringify(valid)));
+
         assert.strictEqual((yield* loadApp(dir)).file, alternate);
         assert.strictEqual((yield* loadApp(alternate)).file, alternate);
+
         yield* Effect.promise(() => writeFile(join(dir, 'deploy.yaml'), YAML.stringify(valid)));
+
         assert.strictEqual((yield* loadApp(dir)).file, join(dir, 'deploy.yaml'));
       }),
     ).pipe(Effect.provide(NodeServices.layer)),

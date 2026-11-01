@@ -35,8 +35,8 @@ function settings(app: App) {
 /**
  * Builds self-contained host operations from installed Bash/jq assets and non-secret configuration.
  *
- * SSH releases freeze these sources just like the Caddy operations. Only the host reads its API token, including on
- * rollback; the script contains a token file path but never the token itself.
+ * SSH stack operations embed these sources just like the Caddy operations. Only the host reads its API token; the
+ * script contains a token file path but never the token itself.
  */
 function script(proxy: CloudflareProxy, action: 'setup' | 'probe' | 'route' | 'unroute', app?: App): string {
   if (proxy.routing === 'manual') {
@@ -151,6 +151,7 @@ function checks(
             fix: 'setup-proxy',
           },
         ];
+
   const checks: Array<Check> = [
     {
       name: 'dns',

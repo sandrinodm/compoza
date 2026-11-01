@@ -20,19 +20,23 @@ export function provisionOperation(proxy: ProxyConfig): IngressOperation {
   if (config === undefined) {
     throw new Error('Caddy provisioning settings are missing');
   }
+
   const composeFile = proxyComposeFile(proxy);
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.ya?ml$/.test(composeFile)) {
     throw new Error('Caddy provisioning requires composeFile to be a YAML filename inside the proxy directory');
   }
+
   if (proxy.dir.includes('$') || config.envFile?.includes('$')) {
     throw new Error('Caddy provisioning paths cannot contain Compose interpolation characters');
   }
+
   if (
     config.envFile !== undefined &&
     [composeFile, 'Caddyfile'].some((file) => config.envFile === `${proxy.dir}/${file}`)
   ) {
     throw new Error('Caddy envFile must be separate from generated configuration');
   }
+
   const project = `${proxy.container}-ingress`;
   const compose = YAML.stringify({
     name: project,
@@ -70,6 +74,7 @@ export function provisionOperation(proxy: ProxyConfig): IngressOperation {
     },
     networks: { edge: { external: true, name: proxy.network } },
   });
+
   const caddyfile = renderTemplate(
     proxy.templates?.config,
     defaultConfigTemplate,
@@ -84,6 +89,7 @@ export function provisionOperation(proxy: ProxyConfig): IngressOperation {
   if (!caddyfile.split(/\r?\n/).includes(SITES_IMPORT)) {
     throw new Error('Caddy config template must include {{sitesImport}} on its own line to load app routes');
   }
+
   return {
     label: `<provision Caddy in ${proxy.dir}, validate, start ${proxy.container}>`,
     input: JSON.stringify({ compose, caddyfile }),

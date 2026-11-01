@@ -124,6 +124,7 @@ export interface ProbeOptions {
  */
 export function checkScript(options: ProbeOptions): string {
   const lines = ['set -u', REMOTE_PATH];
+
   if (options.proxy !== undefined) {
     const proxy = options.proxy;
     const site = shellQuote(`sites/${options.name}.caddy`);
@@ -144,6 +145,7 @@ export function checkScript(options: ProbeOptions): string {
       `docker network inspect ${shellQuote(proxy.network)} >/dev/null 2>&1 && echo network=yes || echo network=no`,
     );
   }
+
   return `${lines.join('\n')}\n`;
 }
 
@@ -255,7 +257,7 @@ export function unrouteScript(proxy: ProxyConfig, name: string): string {
 }
 
 /**
- * Embeds the portable route runtime so stored SSH releases remain independent of the local CLI installation.
+ * Embeds the portable route runtime so host operations remain independent of the local CLI installation.
  */
 function mutationScript(proxy: ProxyConfig, name: string, action: 'route' | 'unroute'): string {
   return `set +x

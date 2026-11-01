@@ -13,7 +13,7 @@ import { lifecycle, projectArgs, remove } from './lifecycle.ts';
 import { publish } from './publish.ts';
 import { Remote } from './services/Remote.ts';
 import { DryRun, Shell } from './services/Shell.ts';
-import { inspectSsh, rollbackSsh } from './ssh-deploy.ts';
+import { inspectSsh } from './ssh-deploy.ts';
 
 /**
  * The deploy folder argument shared by the app commands: a folder holding `deploy.yaml`, or the file itself, defaulting
@@ -94,6 +94,7 @@ const check = Command.make(
     const { hosts, destination } = yield* root;
     const { app, host } = yield* resolve(folder, hosts, Option.getOrUndefined(destination));
     const checks: Array<Check> = [...(local ? [] : yield* runChecks(app, host))];
+
     if (secrets) {
       const access = yield* readSecrets(app, local).pipe(
         Effect.map((values): Check => ({
@@ -108,14 +109,17 @@ const check = Command.make(
       );
       checks.push(access);
     }
+
     if (json) {
       yield* Console.log(JSON.stringify({ app: app.config.name, host: app.config.host, checks }, null, 2));
     } else {
       if (checks.length > 0) {
         yield* Console.log(formatChecks(checks));
       }
+
       yield* Console.log(checkSummary(checks));
     }
+
     if (blocking(checks).length > 0) {
       yield* exitCode2;
     }
@@ -144,7 +148,7 @@ const deployCommand = Command.make(
       Flag.withDefault(false),
     ),
     tag: Flag.String('tag').pipe(
-      Flag.withDescription('Reuse images with this tag with the current local config (use rollback for a release)'),
+      Flag.withDescription('Reuse images with this tag with the current local config'),
       Flag.optional,
     ),
   },
@@ -192,14 +196,18 @@ const setupProxy = Command.make(
       catch: (cause) =>
         new DeployError({ message: cause instanceof Error ? cause.message : 'Invalid ingress configuration' }),
     });
+
     if (dryRun) {
       yield* Console.log(operation.label);
       yield* Console.log(operation.script);
+
       if (operation.input !== undefined) {
         yield* Console.log(operation.input);
       }
+
       return;
     }
+
     const input = yield* setupOperationInput(operation);
     const output = yield* remote.run(host, operation.script, input, operation.label);
     yield* Console.log(output.trimEnd());
@@ -275,8 +283,10 @@ const logs = Command.make(
         ...(follow ? ['--follow'] : []),
         ...Option.match(service, { onNone: () => [], onSome: (name) => [name] }),
       ]);
+
       return;
     }
+
     yield* shell.run(
       command('docker', [
         ...projectArgs(resolved),
@@ -354,41 +364,8 @@ const deleteCommand = Command.make(
 );
 
 /**
- * Restores a successful SSH release including Compose files, profiles and image references.
- *
- * This differs from `deploy --tag`, which reuses images with the current local configuration.
- */
-const rollback = Command.make(
-  'rollback',
-  {
-    folder,
-    release: Flag.String('release').pipe(
-      Flag.withDescription('Supported version-2 release ID; defaults to the previous successful release'),
-      Flag.optional,
-    ),
-    dryRun: dryRunFlag,
-  },
-  Effect.fn(function* ({ folder, release, dryRun }) {
-    const { hosts, destination } = yield* root;
-    const { app, host } = yield* resolve(folder, hosts, Option.getOrUndefined(destination));
-    yield* rollbackSsh(app, host, Option.getOrUndefined(release)).pipe(Effect.provideService(DryRun, dryRun));
-  }),
-).pipe(Command.withDescription('Restore a supported SSH release using current secrets; data migrations stay'));
-
-/**
  * The whole command tree.
  */
 export const cli = root.pipe(
-  Command.withSubcommands([
-    check,
-    deployCommand,
-    stop,
-    start,
-    deleteCommand,
-    setupProxy,
-    publishCommand,
-    status,
-    logs,
-    rollback,
-  ]),
+  Command.withSubcommands([check, deployCommand, stop, start, deleteCommand, setupProxy, publishCommand, status, logs]),
 );

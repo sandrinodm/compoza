@@ -50,6 +50,7 @@ export function credentialProvider(id: string): CredentialProvider {
   if (provider === undefined) {
     throw new Error('Unknown credential provider');
   }
+
   return provider;
 }
 

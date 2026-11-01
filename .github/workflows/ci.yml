@@ -23,13 +23,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            node: '22.18.0'
-          - os: ubuntu-latest
-            node: '24'
+            node: '26.0.0'
           - os: ubuntu-latest
             node: '26'
           - os: macos-latest
-            node: '24'
+            node: '26'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -47,7 +45,7 @@ jobs:
           jq --version
       - run: pnpm install --frozen-lockfile
       - name: Format, lint, types and documentation checks
-        if: matrix.os == 'ubuntu-latest' && matrix.node == '24'
+        if: matrix.os == 'ubuntu-latest' && matrix.node == '26'
         run: pnpm check
       - run: pnpm test
       - name: Build and pack the npm package

@@ -36,6 +36,7 @@ function fakeShell(spawned: Array<string>, answers: Readonly<Record<string, Answ
   const spawner = ChildProcessSpawner.make((child) => {
     const program = ChildProcess.isStandardCommand(child) ? child.command : 'piped';
     spawned.push(program);
+
     const answer = answers[program] ?? { code: 0 };
     const exited = Deferred.makeUnsafe<ChildProcessSpawner.ExitCode>();
     const exit = Deferred.succeed(exited, ChildProcessSpawner.ExitCode(answer.code));
@@ -73,6 +74,7 @@ describe('Shell.run', () => {
       const shell = yield* Shell;
       yield* shell.run(command('docker', ['compose', 'up'], { env: { TOKEN: 'x' }, secret: ['TOKEN'] }));
       yield* shell.run(transport);
+
       assert.lengthOf(spawned, 0);
       assert.deepStrictEqual(yield* TestConsole.logLines, [
         '$ TOKEN=*** docker compose up',
@@ -86,6 +88,7 @@ describe('Shell.run', () => {
     return Effect.gen(function* () {
       const shell = yield* Shell;
       yield* shell.run(command('rsync', ['--dry-run', 'a/', 'host:b/']), { alwaysRun: true });
+
       assert.deepStrictEqual(spawned, ['rsync']);
       assert.deepStrictEqual(yield* TestConsole.logLines, ['$ rsync --dry-run a/ host:b/']);
     }).pipe(Effect.provideService(DryRun, true), Effect.provide(Layer.merge(fakeShell(spawned), TestConsole.layer)));
@@ -106,6 +109,7 @@ describe('Shell.run', () => {
     return Effect.gen(function* () {
       const shell = yield* Shell;
       yield* shell.run(transport);
+
       assert.deepStrictEqual(spawned, ['docker', 'gzip', 'ssh']);
     }).pipe(Effect.provide(Layer.merge(fakeShell(spawned), TestConsole.layer)));
   });
@@ -185,9 +189,11 @@ describe('secret-safe subprocess boundary', () => {
       const commands: Array<ChildProcess.StandardCommand> = [];
       const spawner = ChildProcessSpawner.make((child) => {
         assert.isTrue(ChildProcess.isStandardCommand(child));
+
         if (ChildProcess.isStandardCommand(child)) {
           commands.push(child);
         }
+
         return Effect.succeed(
           ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(1),
@@ -217,6 +223,7 @@ describe('secret-safe subprocess boundary', () => {
             sensitive: true,
           }),
         );
+
         const child = commands[0]!;
         assert.strictEqual(child.options.stdout, 'ignore');
         assert.strictEqual(child.options.stderr, 'ignore');

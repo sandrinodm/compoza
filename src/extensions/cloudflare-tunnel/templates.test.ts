@@ -12,6 +12,7 @@ const proxy: CloudflareProxy = {
   apiTokenFile: '/private/api-token',
   stateDir: '/private/state',
 };
+
 const settings = { domain: 'app.example.com', service: 'http://app:80' };
 const app: App = { dir: '/app', config: { name: 'app', host: 'host', targets: [], composeFiles: ['compose.yaml'] } };
 

@@ -2,7 +2,7 @@ import { NodeServices } from '@effect/platform-node';
 import { assert, describe, it } from '@effect/vitest';
 import { Effect, Layer, Option } from 'effect';
 import { FetchHttpClient } from 'effect/http';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as YAML from 'yaml';
@@ -39,6 +39,7 @@ const app: App = {
     },
   },
 };
+
 const host: HostConfig = {
   ssh: 'host',
   address: '192.0.2.1',
@@ -73,8 +74,10 @@ describe('SSH deployment selection and transports', () => {
       });
       const build = steps[0]!;
       assert.isTrue('program' in build);
+
       if ('program' in build) {
         assert.include(build.args, mode === 'registry' ? '--push' : '--load');
+
         if (mode === 'remote-build') {
           assert.deepStrictEqual(build.args.slice(0, 6), [
             '--host',
@@ -87,7 +90,9 @@ describe('SSH deployment selection and transports', () => {
           assert.deepStrictEqual(build.env, { DOCKER_CONTEXT: '', BUILDX_BUILDER: '', BUILDX_HOST: '' });
         }
       }
+
       assert.lengthOf(steps, mode === 'ssh-load' ? 3 : 2);
+
       const reused = planDeployment({
         app,
         host: selectedHost,
@@ -126,19 +131,21 @@ describe('SSH deployment selection and transports', () => {
             Effect.gen(function* () {
               assert.isTrue(yield* DryRun);
               assert.include(label, 'stage');
+
               return '';
             }),
           probe: (_host, script) =>
             Effect.sync(() => {
               probes.push(script);
+
               return 'docker=yes\ncompose=yes\njq=yes\nstack_path=yes\nhost_env=yes\nhost_overlay=yes\ncurl=yes\nbuildkit=yes\n';
             }),
         }),
       ),
     );
     return Effect.acquireUseRelease(
-      Effect.promise(() => mkdtemp(join(tmpdir(), 'dd-dry-'))),
-      (dir) =>
+      Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'dd-dry-'))),
+      ({ path: dir }) =>
         Effect.gen(function* () {
           yield* Effect.promise(() => writeFile(join(dir, 'compose.yaml'), 'services: {web: {image: nginx}}'));
           yield* Effect.promise(() =>
@@ -168,10 +175,11 @@ describe('SSH deployment selection and transports', () => {
             allowDirty: false,
             tag: Option.none(),
           });
+
           assert.lengthOf(writes, 0);
           assert.lengthOf(probes, 1);
         }).pipe(Effect.provide(services), Effect.provideService(DryRun, true)),
-      (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+      (directory) => Effect.promise(() => directory.remove()),
     );
   });
 });

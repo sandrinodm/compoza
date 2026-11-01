@@ -27,6 +27,7 @@ export const readConfigFile = Effect.fn('readConfigFile')(function* <T>(
   if (!exists) {
     return yield* new DeployError({ message: missingMessage });
   }
+
   const text = yield* fs.readFileString(file).pipe(Effect.mapError(platformFailure(`Reading ${file}`)));
   const value = yield* Effect.try({
     try: () => parseConfig(text),
@@ -58,5 +59,6 @@ export function parseConfig(text: string): unknown {
   if (issue !== undefined) {
     throw issue;
   }
+
   return document.toJS({ maxAliasCount: 100 }) as unknown;
 }

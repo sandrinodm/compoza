@@ -20,9 +20,11 @@ function validCloudflareHost(config: {
   if (config.routing !== 'manual' && (config.apiTokenFile === undefined || config.stateDir === undefined)) {
     return false;
   }
+
   if (config.provision !== undefined || config.routing === 'manual') {
     return config.dir !== undefined && config.container !== undefined && config.network !== undefined;
   }
+
   return true;
 }
 
@@ -74,7 +76,7 @@ export const CloudflareProvision = Schema.Struct({
  * The public HTTP application routed through an existing remotely managed Cloudflare Tunnel.
  *
  * The service URL is resolved from the connector's network, not from the CLI machine. Authentication in URLs is
- * deliberately unsupported so generated plans and release scripts contain no credentials.
+ * deliberately unsupported so generated plans and host scripts contain no credentials.
  */
 export const CloudflareSettings = Schema.Struct({
   /**

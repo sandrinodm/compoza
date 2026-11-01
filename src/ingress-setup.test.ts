@@ -57,6 +57,7 @@ describe('setupOperationInput', () => {
         Effect.flip,
       );
       assert.match(error.message, /must contain only a connector token|Unsupported multiline or NUL secret value/);
+
       if (value !== '') {
         assert.notInclude(error.message, value);
       }

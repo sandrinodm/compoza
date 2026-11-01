@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { assert, describe, it } from '@effect/vitest';
 import { Effect, Schema } from 'effect';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as YAML from 'yaml';
@@ -15,19 +15,20 @@ import { Hosts, ingressConfigOf, loadHosts } from '../config/hosts.ts';
 import { readSecrets, secretSource } from '../config/secrets.ts';
 import { DryRun } from '../services/Shell.ts';
 import { deploymentScript } from '../ssh-plan.ts';
-import { candidateSecrets } from '../ssh-secrets.ts';
 import { OnePasswordReader } from './1password/index.ts';
 import { hostIngress, ingressFor } from './ingress.ts';
 
 const caddy = { domain: 'app.example.com', upstream: 'web:80', healthPath: '/health' };
 const caddyHost = { address: '192.0.2.1', dir: '/srv/caddy', container: 'caddy', network: 'edge' };
 const cloudflare = { domain: 'app.example.com', service: 'http://web:80' };
+
 const cloudflareHost = {
   accountId: 'a'.repeat(32),
   tunnelId: '12345678-1234-1234-1234-123456789abc',
   apiTokenFile: '/srv/cloudflare/token',
   stateDir: '/srv/cloudflare/state',
 };
+
 const app: App = {
   dir: '/repo',
   config: {
@@ -41,6 +42,7 @@ const app: App = {
     secrets: { none: {} },
   },
 };
+
 const host: HostConfig = {
   ssh: 'server',
   platform: 'linux/amd64',
@@ -52,29 +54,36 @@ const host: HostConfig = {
  * Reads real YAML files through the same loaders used by the CLI.
  */
 const loadFixture = Effect.fn(function* () {
-  const dir = yield* Effect.promise(() => mkdtemp(join(tmpdir(), 'dd-config-')));
+  const directory = yield* Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'dd-config-')));
+  const dir = directory.path;
   return yield* Effect.gen(function* () {
     yield* Effect.promise(() => writeFile(join(dir, 'deploy.yaml'), YAML.stringify(app.config)));
     yield* Effect.promise(() => writeFile(join(dir, 'hosts.yaml'), YAML.stringify({ server: host })));
+
     const loadedApp = yield* loadApp(dir);
     const loadedHosts = yield* loadHosts(join(dir, 'hosts.yaml'));
+
     assert.deepStrictEqual(loadedApp.config, app.config);
     assert.deepStrictEqual(loadedHosts.server, host);
     assert.strictEqual(ingressFor(loadedApp), hostIngress(loadedHosts.server!));
+
     yield* Effect.promise(() =>
       writeFile(
         join(dir, 'deploy.yaml'),
         YAML.stringify({ ...app.config, ingress: { caddy, 'cloudflare-tunnel': cloudflare } }),
       ),
     );
+
     const invalidApp = yield* loadApp(dir).pipe(Effect.flip);
     assert.include(invalidApp.message, 'invalid configuration');
+
     yield* Effect.promise(() =>
       writeFile(join(dir, 'hosts.yaml'), YAML.stringify({ server: { ...host, proxy: caddyHost } })),
     );
+
     const invalidHost = yield* loadHosts(join(dir, 'hosts.yaml')).pipe(Effect.flip);
     assert.include(invalidHost.message, 'never both');
-  }).pipe(Effect.ensuring(Effect.promise(() => rm(dir, { recursive: true, force: true }))));
+  }).pipe(Effect.ensuring(Effect.promise(() => directory.remove())));
 });
 
 describe('named extension configuration', () => {
@@ -85,8 +94,10 @@ describe('named extension configuration', () => {
   it('keeps Caddy planning and frozen SSH releases equivalent to legacy configuration', () => {
     const canonical = Schema.decodeUnknownSync(DeployConfig, { onExcessProperty: 'error' })(app.config);
     const hosts = Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({ server: host });
+
     assert.deepStrictEqual(ingressOf(canonical), { mode: 'caddy-sites', ...caddy });
     assert.deepStrictEqual(ingressConfigOf(hosts.server!), { provider: 'caddy-sites', ...caddyHost });
+
     const { address, ...proxy } = caddyHost;
     const { ingress: _hostIngress, ...baseHost } = host;
     const legacyHost: HostConfig = { ...baseHost, address, proxy };
@@ -94,13 +105,12 @@ describe('named extension configuration', () => {
       ...app,
       config: { ...app.config, ingress: { mode: 'caddy-sites', ...caddy }, secrets: { provider: 'none' } },
     };
+
     const extension = ingressFor(app)!;
     assert.deepStrictEqual(extension.plan(app, host), extension.plan(legacyApp, legacyHost));
     assert.deepStrictEqual(extension.setup(host), extension.setup(legacyHost));
-    assert.deepStrictEqual(
-      deploymentScript(app, host, 'one', 'one', []),
-      deploymentScript(legacyApp, legacyHost, 'one', 'one', []),
-    );
+    assert.deepStrictEqual(deploymentScript(app, host, 'one', []), deploymentScript(legacyApp, legacyHost, 'one', []));
+
     const checks = extension.checks(app, host, [address], {
       proxy_dir: 'present',
       caddyfile_import: 'yes',
@@ -121,6 +131,7 @@ describe('named extension configuration', () => {
         ingress: { 'cloudflare-tunnel': cloudflare },
       }),
     };
+
     const namedHost = Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({
       server: { ...host, ingress: { 'cloudflare-tunnel': cloudflareHost } },
     }).server!;
@@ -128,6 +139,7 @@ describe('named extension configuration', () => {
     assert.strictEqual(extension.id, 'cloudflare-tunnel');
     assert.strictEqual(hostIngress(namedHost), extension);
     assert.strictEqual(extension.plan(selected, namedHost).healthUrl, 'https://app.example.com/');
+
     const { ingress: _hostIngress, ...baseHost } = namedHost;
     const legacyHost: HostConfig = { ...baseHost, proxy: { provider: 'cloudflare-tunnel', ...cloudflareHost } };
     const legacyApp: App = {
@@ -135,8 +147,8 @@ describe('named extension configuration', () => {
       config: { ...selected.config, ingress: { mode: 'cloudflare-tunnel', ...cloudflare } },
     };
     assert.deepStrictEqual(
-      deploymentScript(selected, namedHost, 'one', 'one', []),
-      deploymentScript(legacyApp, legacyHost, 'one', 'one', []),
+      deploymentScript(selected, namedHost, 'one', []),
+      deploymentScript(legacyApp, legacyHost, 'one', []),
     );
   });
 
@@ -168,6 +180,7 @@ describe('named extension configuration', () => {
         Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({ server: { ...host, ingress } }),
       );
     }
+
     assert.throws(
       () => Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({ server: { ...host, proxy: caddyHost } }),
       'never both',
@@ -192,10 +205,10 @@ describe('named extension configuration', () => {
     );
     assert.deepStrictEqual(selected.config.ingress, { 'cloudflare-tunnel': cloudflare });
     assert.deepStrictEqual(secretSource(selected), { provider: 'env-file', path: 'staging.env' });
+
     const privateApp = selectDestination(selected, 'private');
     assert.isUndefined(ingressFor(privateApp));
     assert.deepStrictEqual(secretSource(privateApp), { provider: 'none' });
-    assert.include(candidateSecrets(privateApp, '/srv/app', 'one', false), "secret_file='-'");
     assert.isUndefined(ingressConfigOf({ ...host, ingress: { none: {} } }));
     assert.throws(() => hostIngress({ ...host, ingress: { none: {} } }), 'Host has no proxy');
   });
@@ -226,11 +239,14 @@ describe('named extension configuration', () => {
           local: { secrets: { none: {} } },
         },
       };
+
       let calls = 0;
       const read = readSecrets(selected).pipe(
         Effect.provideService(OnePasswordReader, async (id) => {
           calls++;
+
           assert.strictEqual(id, 'prod');
+
           return [{ name: 'TOKEN', value: 'fake', masked: true }];
         }),
       );
@@ -239,6 +255,7 @@ describe('named extension configuration', () => {
       assert.deepStrictEqual(yield* read, { TOKEN: 'fake' });
       assert.strictEqual(calls, 1);
       assert.deepStrictEqual(yield* readSecrets(selected, true), {});
+
       const { local: _local, ...config } = selected.config;
       assert.throws(() => secretSource({ ...selected, config }, true), 'local.secrets');
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -246,15 +263,17 @@ describe('named extension configuration', () => {
 
   it.effect('resolves named dotenv paths relative to the deployment directory', () =>
     Effect.gen(function* () {
-      const dir = yield* Effect.promise(() => mkdtemp(join(tmpdir(), 'dd-nested-env-')));
+      const directory = yield* Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'dd-nested-env-')));
+      const dir = directory.path;
       yield* Effect.gen(function* () {
         yield* Effect.promise(() => writeFile(join(dir, 'dev.env'), 'TOKEN=literal-$HOME\n'));
+
         const values = yield* readSecrets({
           dir,
           config: { ...app.config, secrets: { 'env-file': { path: 'dev.env' } } },
         });
         assert.deepStrictEqual(values, { TOKEN: 'literal-$HOME' });
-      }).pipe(Effect.ensuring(Effect.promise(() => rm(dir, { recursive: true, force: true }))));
+      }).pipe(Effect.ensuring(Effect.promise(() => directory.remove())));
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

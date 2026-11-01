@@ -56,13 +56,14 @@ export function downCommand(resolved: Resolved, volumes: boolean): Command {
  */
 export const lifecycle = Effect.fn('lifecycle')(function* (resolved: Resolved, action: LifecycleAction) {
   const shell = yield* Shell;
+
   if (resolved.app.config.execution === 'ssh') {
     const remote = yield* Remote;
     const output = yield* remote.run(
       resolved.host,
       deployedScript(resolved.app, [action], true),
       undefined,
-      `<${action} deployed release>`,
+      `<${action} deployed stack>`,
     );
     if (output !== '') {
       yield* Console.log(output.trimEnd());
@@ -70,6 +71,7 @@ export const lifecycle = Effect.fn('lifecycle')(function* (resolved: Resolved, a
   } else {
     yield* shell.run(lifecycleCommand(resolved, action));
   }
+
   yield* Console.log(
     (yield* DryRun)
       ? 'Dry run complete.'
@@ -94,18 +96,22 @@ export const remove = Effect.fn('remove')(function* (resolved: Resolved, volumes
       host,
       deployedScript(app, ['down', '--remove-orphans', ...(volumes ? ['--volumes'] : [])], true),
       undefined,
-      '<delete deployed stack; keep releases, secrets and data>',
+      '<delete deployed stack; keep stack files, secrets and data>',
     );
     if (output !== '') {
       yield* Console.log(output.trimEnd());
     }
+
     yield* Console.log(
-      (yield* DryRun) ? 'Dry run complete.' : `Deleted ${app.config.name}; data, secrets and release files stay`,
+      (yield* DryRun) ? 'Dry run complete.' : `Deleted ${app.config.name}; data, secrets and stack files stay`,
     );
+
     return;
   }
+
   const ingress = ingressFor(app);
   const phases: Array<Phase<DeployError, never>> = [];
+
   if (ingress !== undefined) {
     const routing = yield* Effect.try({
       try: () => ingress.plan(app, host),
@@ -122,6 +128,7 @@ export const remove = Effect.fn('remove')(function* (resolved: Resolved, volumes
       ),
     );
   }
+
   phases.push(
     phase(
       'down',
@@ -129,6 +136,7 @@ export const remove = Effect.fn('remove')(function* (resolved: Resolved, volumes
       shell.run(downCommand(resolved, volumes)),
     ),
   );
+
   yield* runPhases(phases);
   yield* Console.log(
     (yield* DryRun)

@@ -10,6 +10,7 @@ import { ProxyConfig, HostIngress, resolveHostIngress, loadHostExtensionFiles } 
 import { readConfigFile } from './config-file.ts';
 import { Ipv4, Name, Platform, Registry, SshDestination } from './schema.ts';
 export { ProxyConfig } from '../extensions/config.ts';
+
 export { DEFAULT_PROXY_COMPOSE_FILE, proxyComposeFile, proxyService } from '../extensions/caddy/config.ts';
 
 /**
@@ -173,6 +174,7 @@ const resolveHosts = Effect.fn('resolveHosts')(function* (
 ) {
   const path = yield* Path.Path;
   const hosts: Record<string, HostConfig> = {};
+
   for (const [name, { entry, file }] of Object.entries(entries)) {
     if ('$ref' in entry) {
       const referenced = path.resolve(path.dirname(file), expandHome(entry.$ref));
@@ -186,6 +188,7 @@ const resolveHosts = Effect.fn('resolveHosts')(function* (
       hosts[name] = yield* loadHostExtensionFiles(entry, file);
     }
   }
+
   return hosts;
 });
 
@@ -208,17 +211,20 @@ export const loadDefaultHosts = Effect.fn('loadDefaultHosts')(function* (
   const files = [...new Set([path.resolve(expandHome(globalFile)), path.resolve(directory, 'hosts.yaml')])];
   let entries: Record<string, { entry: (typeof HostsFile.Type)[string]; file: string }> = {};
   let found = false;
+
   for (const file of files) {
     if (yield* fs.exists(file).pipe(Effect.mapError(platformFailure(`Looking for ${file}`)))) {
       entries = { ...entries, ...(yield* readHostsFile(file)) };
       found = true;
     }
   }
+
   if (!found) {
     return yield* new DeployError({
       message: `No hosts file at ${files.join(' or ')}. Create one, or point --hosts or ${HOSTS_ENV} at one.`,
     });
   }
+
   return yield* resolveHosts(entries);
 });
 
@@ -247,6 +253,7 @@ export function hostNamed(name: string, hosts: Hosts): Effect.Effect<HostConfig,
     const known = Object.keys(hosts).join(', ') || 'none';
     return Effect.fail(new DeployError({ message: `Unknown host "${name}" (hosts file defines: ${known})` }));
   }
+
   return Effect.succeed(host);
 }
 
@@ -285,5 +292,6 @@ export function ingressConfigOf(host: HostConfig): ProxyConfig | undefined {
   if (host.ingress !== undefined && host.proxy !== undefined) {
     throw new Error('Use ingress or legacy proxy, never both');
   }
+
   return host.ingress === undefined ? host.proxy : resolveHostIngress(host.ingress);
 }

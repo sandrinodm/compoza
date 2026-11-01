@@ -36,10 +36,12 @@ describe('bundled extensions', () => {
       assert.strictEqual(provider.id, id);
       assert.strictEqual(credentialProvider(id), provider);
     }
+
     for (const [id, extension] of Object.entries(ingressExtensions)) {
       assert.strictEqual(extension.id, id);
       assert.strictEqual(ingressExtension(id), extension);
     }
+
     assert.throws(() => credentialProvider('unsupported'), 'Unknown credential provider');
     assert.throws(() => ingressExtension('unsupported'), 'Unknown ingress extension');
     assert.throws(() =>
@@ -57,6 +59,7 @@ describe('bundled extensions', () => {
     assert.strictEqual(hostIngress(host), extension);
     assert.strictEqual(hostIngress(explicit), extension);
     assert.deepStrictEqual(extension.setup(host), extension.setup(explicit));
+
     const plan = extension.plan(app, host);
     assert.deepStrictEqual(plan, extension.plan(app, explicit));
     assert.strictEqual(plan.healthUrl, 'https://demo.example.com/ready');
@@ -69,8 +72,10 @@ describe('bundled extensions', () => {
     const { ingress: _ingress, ...config } = app.config;
     assert.isUndefined(ingressFor({ ...app, config }));
     assert.isUndefined(ingressFor({ ...app, config: { ...config, ingress: { mode: 'none' } } }));
+
     const { proxy: _proxy, ...bareHost } = host;
     assert.throws(() => hostIngress(bareHost), 'Host has no proxy entry');
+
     const extension = ingressFor(app)!;
     assert.throws(() => extension.plan(app, bareHost), 'requires a host proxy');
     assert.throws(() => extension.setup(bareHost), 'requires a host proxy');

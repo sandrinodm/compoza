@@ -1,7 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import { assert, describe, it } from '@effect/vitest';
 import { Effect } from 'effect';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -34,6 +34,7 @@ describe('secret sources', () => {
       'cedar',
     );
     assert.deepStrictEqual(secretSource(selected), { provider: 'env-file', path: 'dev.env' });
+
     const { secrets: _source, ...legacyConfig } = app.config;
     const legacy = selectDestination(
       {
@@ -71,6 +72,7 @@ describe('secret sources', () => {
       Effect.provide(NodeServices.layer),
       Effect.provideService(OnePasswordReader, async (id) => {
         assert.strictEqual(id, 'fictional-environment');
+
         return [
           { name: 'TOKEN', value: '$HOME "literal"', masked: true },
           { name: 'EMPTY', value: '', masked: false },
@@ -128,10 +130,11 @@ describe('secret sources', () => {
 
   it.effect('resolves a provider env file relative to the deploy folder and preserves literals', () =>
     Effect.acquireUseRelease(
-      Effect.promise(() => mkdtemp(join(tmpdir(), 'dd-secrets-'))),
-      (dir) =>
+      Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'dd-secrets-'))),
+      ({ path: dir }) =>
         Effect.gen(function* () {
           yield* Effect.promise(() => writeFile(join(dir, 'local.env'), 'TOKEN=\'$HOME "quote"\'\nEMPTY=\n'));
+
           assert.deepStrictEqual(
             yield* readSecrets({
               dir,
@@ -140,7 +143,7 @@ describe('secret sources', () => {
             { TOKEN: '$HOME "quote"', EMPTY: '' },
           );
         }),
-      (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+      (directory) => Effect.promise(() => directory.remove()),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -163,9 +166,11 @@ describe('secret sources', () => {
         validateSecrets({ ...app, config: { ...app.config, environment: { TOKEN: 'public' } } }, { TOKEN: 'secret' }),
       'collides',
     );
+
     for (const value of ['first\nsecond', 'first\rsecond', 'first\0second']) {
       assert.throws(() => validateSecrets(app, { TOKEN: value }), 'Unsupported');
     }
+
     assert.throws(() => validateSecrets(app, { 'SENTINEL_SECRET invalid': 'value' }), 'entry 1');
   });
 

@@ -2,7 +2,7 @@ import { NodeServices } from '@effect/platform-node';
 import { assert, it } from '@effect/vitest';
 import { Effect, Layer, Option } from 'effect';
 import { FetchHttpClient } from 'effect/http';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vite-plus/test';
@@ -38,6 +38,7 @@ it.effect('uses the destination project identity consistently for client route c
     readonly input?: string | undefined;
     readonly label?: string | undefined;
   }> = [];
+
   const probes: Array<string> = [];
   const steps: Array<Step> = [];
   const host: HostConfig & { proxy: import('./extensions/caddy/config.ts').ProxyConfig } = {
@@ -47,6 +48,7 @@ it.effect('uses the destination project identity consistently for client route c
     transport: { mode: 'ssh-load' },
     proxy: { dir: '/srv/proxy', container: 'caddy', network: 'edge' },
   };
+
   const ingress = { mode: 'caddy-sites' as const, domain: 'app.example.com', upstream: 'web:80' };
   const probe = {
     proxy_dir: 'present',
@@ -58,6 +60,7 @@ it.effect('uses the destination project identity consistently for client route c
     network: 'yes',
     site_sha256: sha256(siteFile('app-dev', ingress, host.proxy!)),
   };
+
   const noGit = () => Effect.die('Third-party stack must not consult Git');
   const services = Layer.mergeAll(
     NodeServices.layer,
@@ -79,11 +82,13 @@ it.effect('uses the destination project identity consistently for client route c
         run: (_host, script, input, label) =>
           Effect.sync(() => {
             scripts.push({ script, input, label });
+
             return '';
           }),
         probe: (_host, script) =>
           Effect.sync(() => {
             probes.push(script);
+
             return Object.entries(probe)
               .map(([key, value]) => `${key}=${value}`)
               .join('\n');
@@ -92,8 +97,8 @@ it.effect('uses the destination project identity consistently for client route c
     ),
   );
   return Effect.acquireUseRelease(
-    Effect.promise(() => mkdtemp(join(tmpdir(), 'dd-client-destination-'))),
-    (dir) =>
+    Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'dd-client-destination-'))),
+    ({ path: dir }) =>
       Effect.gen(function* () {
         yield* Effect.promise(() =>
           writeFile(
@@ -109,6 +114,7 @@ it.effect('uses the destination project identity consistently for client route c
             }),
           ),
         );
+
         const hosts = Option.some(join(dir, 'hosts.yaml'));
         yield* Effect.promise(() => writeFile(join(dir, 'hosts.yaml'), YAML.stringify({ host })));
         yield* deploy({
@@ -120,10 +126,13 @@ it.effect('uses the destination project identity consistently for client route c
           tag: Option.none(),
           destination: 'dev',
         });
+
         const resolved = yield* resolve(dir, hosts, 'dev');
         const route = evaluateChecks(resolved.app, host, ['192.0.2.1'], probe).find((check) => check.name === 'route');
         assert.isTrue(route?.ok);
+
         yield* remove(resolved, false);
+
         assert.lengthOf(scripts, 2);
         assert.include(scripts[0]!.script, "file='app-dev.caddy'");
         assert.include(scripts[0]!.input, 'Managed by compoza for app-dev');
@@ -132,6 +141,6 @@ it.effect('uses the destination project identity consistently for client route c
         assert.notInclude(scripts.map((entry) => entry.script).join('\n'), 'sites/app.caddy');
         assert.isTrue(steps.every((step) => printableStep(step).includes('--project-name app-dev')));
       }).pipe(Effect.provide(services), Effect.provideService(DryRun, true)),
-    (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+    (directory) => Effect.promise(() => directory.remove()),
   );
 });

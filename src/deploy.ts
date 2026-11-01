@@ -123,22 +123,27 @@ interface Source {
 const chooseSource = Effect.fn('chooseSource')(function* (app: App, options: DeployOptions) {
   const path = yield* Path.Path;
   const configured = app.config.context === undefined ? undefined : path.resolve(app.dir, app.config.context);
+
   if (options.tag._tag === 'Some') {
     const reused: Source = { tag: options.tag.value, context: configured ?? app.dir };
     return reused;
   }
+
   if (app.config.targets.length === 0) {
     return { tag: 'third-party', context: configured ?? app.dir };
   }
+
   const git = yield* Git;
   const root = yield* git.root(app.dir);
   if (!(yield* git.hasCommits(root))) {
     return yield* new DeployError({ message: 'The repository has no commits yet; images are tagged with the commit' });
   }
+
   const dirty = yield* git.isDirty(root);
   if (dirty && !options.allowDirty && !options.local) {
     return yield* new DeployError({ message: 'Commit your changes first, or pass --allow-dirty' });
   }
+
   const built: Source = { tag: `${yield* git.shortSha(root)}${dirty ? '-dirty' : ''}`, context: configured ?? root };
   return built;
 });
@@ -182,6 +187,7 @@ const planRun = Effect.fn('planRun')(function* (app: App, host: HostConfig, opti
   const shell = yield* Shell;
   const remote = yield* Remote;
   const dryRun = yield* DryRun;
+
   const { tag, context } = source;
   const steps = planDeployment({
     app,
@@ -198,9 +204,11 @@ const planRun = Effect.fn('planRun')(function* (app: App, host: HostConfig, opti
   const header = `Deploying ${app.config.name} ${tag} to ${where}`;
   const phases: Array<DeployPhase> = [];
   const done = (summary: DeployRun['summary']): DeployRun => ({ header, phases, summary });
+
   const ingress = options.local ? undefined : ingressFor(app);
   const directories = directoriesOf(app.config);
   const images = `${app.config.targets.length} ${app.config.targets.length === 1 ? 'image' : 'images'}`;
+
   // `planDeployment` puts the Compose command last, after every build and transport step; with `--tag` it is alone.
   const build = steps.slice(0, -1);
   const compose = steps.slice(-1);
@@ -215,6 +223,7 @@ const planRun = Effect.fn('planRun')(function* (app: App, host: HostConfig, opti
           if (checks.length > 0) {
             yield* Console.log(formatChecks(checks));
           }
+
           const failed = blocking(checks);
           if (failed.length > 0) {
             const names = failed.map((check) => check.name).join(', ');
@@ -226,6 +235,7 @@ const planRun = Effect.fn('planRun')(function* (app: App, host: HostConfig, opti
       ),
     );
   }
+
   if (!options.local && directories.length > 0) {
     const script = mkdirScript(directories);
     phases.push(
@@ -236,6 +246,7 @@ const planRun = Effect.fn('planRun')(function* (app: App, host: HostConfig, opti
       ),
     );
   }
+
   if (build.length > 0) {
     phases.push(
       phase(
@@ -245,6 +256,7 @@ const planRun = Effect.fn('planRun')(function* (app: App, host: HostConfig, opti
       ),
     );
   }
+
   phases.push(
     phase(
       'compose',
@@ -258,6 +270,7 @@ const planRun = Effect.fn('planRun')(function* (app: App, host: HostConfig, opti
       Console.log(dryRun ? 'Dry run complete.' : `Running ${app.config.name} ${tag} locally (${total} total)`),
     );
   }
+
   if (ingress === undefined) {
     return done((total) =>
       Console.log(dryRun ? 'Dry run complete.' : `Deployed ${app.config.name} ${tag} to ${where} (${total} total)`),
@@ -269,6 +282,7 @@ const planRun = Effect.fn('planRun')(function* (app: App, host: HostConfig, opti
     catch: (cause) =>
       new DeployError({ message: cause instanceof Error ? cause.message : 'Invalid ingress configuration' }),
   });
+
   let site = '';
   phases.push(
     phase(
@@ -277,17 +291,21 @@ const planRun = Effect.fn('planRun')(function* (app: App, host: HostConfig, opti
       Effect.gen(function* () {
         const { script, input, label } = routing.route;
         yield* Effect.logDebug(`route script:\n${script}`);
+
         if (input !== undefined) {
           yield* Effect.logDebug(`route configuration:\n${input}`);
         }
+
         const output = yield* remote.run(host, script, input, label);
         if (!dryRun && output.trim() !== '') {
           yield* Console.log(output.trimEnd());
         }
+
         site = input ?? '';
       }),
     ),
   );
+
   if (dryRun) {
     return done(() => Effect.andThen(Console.log(site.trimEnd()), Console.log('Dry run complete.')));
   }
@@ -296,6 +314,7 @@ const planRun = Effect.fn('planRun')(function* (app: App, host: HostConfig, opti
   if (url === undefined) {
     return done((total) => Console.log(`Deployed ${app.config.name} ${tag} to ${where} (${total} total)`));
   }
+
   let status = 0;
   phases.push(
     phase('wait', `Waiting for ${url}`, waitForUrl(url, WAIT_TIMEOUT_MILLIS), (code) => {
@@ -303,6 +322,7 @@ const planRun = Effect.fn('planRun')(function* (app: App, host: HostConfig, opti
       return `HTTP ${code}`;
     }),
   );
+
   return done((total) =>
     Console.log(`Deployed ${app.config.name} ${tag} to ${app.config.host}: ${url} (HTTP ${status}, ${total} total)`),
   );
@@ -325,13 +345,18 @@ export const deploy = Effect.fn('deploy')(function* (options: DeployOptions) {
   if (!options.local && host.transport.mode === 'remote-build' && app.config.execution !== 'ssh') {
     return yield* new DeployError({ message: 'remote-build transport requires execution: ssh' });
   }
+
   const source = yield* chooseSource(app, options);
+
   if (!options.local && app.config.execution === 'ssh') {
     return yield* deploySsh(app, host, options, source);
   }
+
   yield* Effect.logDebug(`tag ${source.tag}, context ${source.context}`);
+
   const run = yield* planRun(app, host, options, source);
   yield* Console.log(run.header);
+
   const total = yield* runPhases(run.phases);
   yield* run.summary(formatDuration(total));
 });

@@ -44,8 +44,10 @@ describe('contentTarget', () => {
   it.effect('resolves a section to its host folder', () =>
     Effect.gen(function* () {
       assert.strictEqual(yield* contentTarget(app, 'demo'), '/srv/demo/data/demo');
+
       const unknown = yield* contentTarget(app, 'research').pipe(Effect.flip);
       assert.include(unknown.message, 'sections: demo');
+
       const error = yield* contentTarget({ ...app, config: { ...app.config, content: {} } }, 'demo').pipe(Effect.flip);
       assert.include(error.message, 'sections: none');
     }),

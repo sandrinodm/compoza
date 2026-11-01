@@ -28,6 +28,7 @@ export const setupOperationInput = Effect.fn('setupOperationInput')(function* (o
   });
 
   const credentials: string[] = [];
+
   for (const [target, source] of Object.entries(operation.secretVariables ?? {})) {
     const value = values[source];
     if (!value || /[\r\n\0]/.test(value) || !/^[A-Za-z0-9+/=_-]+$/.test(value)) {

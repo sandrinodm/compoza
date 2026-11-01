@@ -56,6 +56,7 @@ export const waitForUrl = Effect.fn('waitForUrl')(function* (url: string, timeou
   const deadline = start + timeoutMillis;
   let noticed = start;
   let last: number | undefined;
+
   while ((yield* Clock.currentTimeMillis) < deadline) {
     const status = yield* probe(url);
     if (status !== undefined) {
@@ -64,13 +65,16 @@ export const waitForUrl = Effect.fn('waitForUrl')(function* (url: string, timeou
         return status;
       }
     }
+
     const now = yield* Clock.currentTimeMillis;
     if (now - noticed >= NOTICE_INTERVAL_MILLIS) {
       noticed = now;
       yield* Console.log(`   … still waiting (${formatDuration(now - start)}, last status ${last ?? 'none'})`);
     }
+
     yield* Effect.sleep(PROBE_INTERVAL_MILLIS);
   }
+
   return yield* new DeployError({
     message: `${url} did not respond successfully within ${timeoutMillis / 1000} s (last status ${last ?? 'none'})`,
   });

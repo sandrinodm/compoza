@@ -89,6 +89,7 @@ export function printable(command: Command): string {
   if (command.label !== undefined) {
     return command.label;
   }
+
   const env = Object.entries(command.env ?? {}).map(
     ([key, value]) => `${key}=${command.secret?.includes(key) || isCredentialEnvironment(key) ? '***' : value}`,
   );
