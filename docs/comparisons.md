@@ -1,8 +1,8 @@
 # Comparing deployment tools
 
-[README](../README.md) · [Configuration](configuration.md) · [Ingress](ingress.md) · [SSH deployment](ssh-deployment.md)
+[README](../README.md) · [Commands](commands.md) · [Configuration](configuration.md) · [Ingress](ingress.md) · [SSH deployment](ssh-deployment.md)
 
-compoza is a CLI for deploying existing Docker Compose stacks over SSH. Its focus is a repeatable workflow around your Compose files: build or select images, deliver them, resolve credentials, check readiness, configure ingress and operate the deployed stack. It has no central web application or deployment database to run.
+compoza is a CLI for deploying your own Docker Compose stacks over SSH. Its focus is a repeatable workflow around your Compose files: build or select images, deliver them, resolve credentials, check readiness, configure ingress and operate the deployed stack. It has no central web application or deployment database to run.
 
 That makes it useful when you want to own the Compose definitions and host setup and invoke deployments from a terminal, CI job or coding agent. You also own the surrounding operations: access management, monitoring, backups, scheduling and recovery from host failure.
 
@@ -62,10 +62,10 @@ If a short script already covers your needs, using Compose directly can be suffi
 
 ## Boundaries to understand before choosing
 
-- **Recovery reuses images.** `deploy --tag <known-tag>` uses current local configuration and the selected credential source. SSH execution keeps a flat stack folder, without saved deployment history or backups. Redeploying does not reverse migrations or restore database contents.
+- **Recovery reuses images.** `deploy --tag <known-tag>` uses current local configuration and the selected credential source. SSH execution keeps a flat stack folder, without saved deployment history or backups. Redeploying does not reverse database changes or restore database contents.
 - **Hosts are independent.** A host inventory and multiple destinations let you select targets; they do not form a cluster or supply automatic failover.
 - **Extensions are bundled.** Caddy, Cloudflare Tunnel, dotenv and 1Password live in separate source folders behind defined contracts. There is no plugin marketplace or dynamic extension installation. See [extension architecture](development.md#extensions).
 - **Ingress has a limited scope.** Caddy can be bootstrapped or integrated with an existing stack. The tunnel extension manages app routes in an existing remotely managed tunnel; it can provision connectors, while tunnels and DNS remain operator-owned. See [ingress responsibilities](ingress.md).
 - **Operations remain yours.** The CLI provides status, logs, checks and recovery commands. It has no central team dashboard, deployment queue, automatic application rollback, backup scheduler or continuous reconciliation service. Caddy hardening does not supply high availability; see [production operations](caddy-production.md).
 
-When evaluating a migration, reuse Dockerfiles, images and suitable Compose definitions, then review the target tool's networking, secret handling, volume paths and deployment behavior. `deploy.yaml`, host references, Caddy templates and stored lifecycle metadata are specific to compoza; they are not interchangeable with another tool's configuration.
+When moving a deployment to another tool, reuse Dockerfiles, images and suitable Compose definitions, then review the target tool's networking, secret handling, volume paths and deployment behavior. `deploy.yaml`, host references, Caddy templates and stored lifecycle metadata are specific to compoza; they are not interchangeable with another tool's configuration.

@@ -1,10 +1,13 @@
 # Configuration reference
 
-[README](../README.md) · [Ingress](ingress.md) · [Caddy templates](caddy-templates.md) · [Secrets](secrets.md) · [SSH deployment](ssh-deployment.md) · [Development](development.md)
+[README](../README.md) · [Commands](commands.md) · [Ingress](ingress.md) · [Caddy templates](caddy-templates.md) · [Secrets](secrets.md) · [SSH deployment](ssh-deployment.md) · [Development](development.md)
 
-compoza reads two kinds of files: global and repository-local `hosts.yaml` files describing Docker hosts, and a `deploy.yaml` for each app. The hosts, accounts, paths and domains below are fictional, and IP addresses use reserved documentation ranges. Replace them with your own configuration.
+compoza reads three kinds of files: global, linked and repository-local `hosts.yaml` files describing Docker hosts, a `deploy.yaml` for each app, and an optional settings file holding your own defaults. The hosts, accounts, paths and domains below are fictional, and IP addresses use reserved documentation ranges. Replace them with your own configuration.
 
 - [Hosts](#hosts)
+  - [External host files](#external-host-files)
+  - [Linked hosts files](#linked-hosts-files)
+- [Settings](#settings)
 - [Apps](#apps)
 - [Destinations](#destinations)
 - [Execution and transport](#execution-and-transport)
@@ -21,7 +24,15 @@ Configuration uses a single YAML 1.2 document. Duplicate keys, unknown fields an
 
 Global hosts live in `~/.config/compoza/hosts.yaml`. A `hosts.yaml` in the **current working directory** overrides global entries with the same host name and adds new ones. Each local entry replaces the entire global host configuration; fields are not merged. Either file may be absent. Run from the repository root to use its hosts file, including when targeting a nested app such as `compoza deploy infra`. There is no parent-directory search, and the app folder does not change host discovery.
 
-An explicit `--hosts <file>` selects only that file. Otherwise, `COMPOZA_HOSTS` selects only its file. Both bypass automatic local/global loading; a missing explicit file is an error. Malformed files and invalid host settings fail validation rather than falling back to another host.
+Hosts files shared from another location, such as an infrastructure repository, can be linked with `compoza hosts link` and are then read together with the global file; see [Linked hosts files](#linked-hosts-files). The complete lookup order is:
+
+1. `--hosts <file>`, else `COMPOZA_HOSTS`: only that file. Nothing else is read.
+2. Otherwise `~/.config/compoza/hosts.yaml` and every linked hosts file. These are peers: a host name may appear in only one of them.
+3. Then `./hosts.yaml` in the current working directory, whose entries replace any of the above by name.
+
+`compoza hosts list` prints the hosts a run would use and the file each one comes from.
+
+An explicit `--hosts <file>` selects only that file. Otherwise, `COMPOZA_HOSTS` selects only its file. Both bypass automatic local, global and linked loading; a missing explicit file is an error. Malformed files and invalid host settings fail validation rather than falling back to another host.
 
 ```yaml
 atlas:
@@ -86,6 +97,26 @@ ingress:
 
 References accept absolute paths, `~/` paths, and paths relative to the containing hosts file. They read local files on the CLI machine; remote infrastructure paths such as `ingress.caddy.dir` still refer to the remote host. Caddy template paths are local to the CLI machine and resolve relative to the declaring YAML file; see [template sources](caddy-templates.md#select-template-sources). Inline hosts and references can coexist in the same hosts file. A reference cannot include host fields or point to another reference. Missing or invalid referenced files fail validation. References are resolved after local overrides, so a superseded global reference is not read.
 
+### Linked hosts files
+
+`compoza hosts link <path>` adds a hosts file, or a folder holding a `hosts.yaml`, to the files every run reads alongside the global hosts file. Use it for hosts kept in a shared infrastructure repository:
+
+```sh
+compoza hosts link ~/infrastructure          # reads ~/infrastructure/hosts.yaml
+compoza hosts list                           # each host and the file defining it
+compoza hosts unlink ~/infrastructure
+```
+
+Links are stored as absolute paths in the [settings file](#settings), in the order they were added:
+
+```yaml
+hosts:
+  links:
+    - /Users/you/infrastructure
+```
+
+A linked file uses the global hosts file format, and its `$ref` paths resolve relative to the linked file. The global file and the linked files must not define the same host name; a clash fails the run with both file paths, and `hosts link` refuses a link that would cause one. A `hosts.yaml` in the current working directory still overrides any of them. A link whose file or folder disappears fails every run until it is restored or unlinked; `hosts unlink` works even when the target is gone. `--hosts` and `COMPOZA_HOSTS` ignore links. Linking the same path twice changes nothing, and links are read on the CLI machine only. See [`hosts`](commands.md#hosts) for the command reference.
+
 ### Image transports
 
 | `transport.mode` | Build and delivery                                                                                           |
@@ -97,6 +128,25 @@ References accept absolute paths, `~/` paths, and paths relative to the containi
 `remote-build` explicitly selects both `docker --host ssh://…` and `buildx --builder default --load`, so an unrelated selected client builder or Docker context cannot redirect it. BuildKit transfers only the needed build context and respects `.dockerignore`; no source-tree rsync is needed. The host needs working BuildKit/Buildx.
 
 With every transport, exclude production dotenv files and other secrets from build contexts with `.dockerignore`.
+
+## Settings
+
+Your own defaults live in `~/.config/compoza/config.yaml`, beside the global hosts file. They apply to every app you deploy from this machine and never belong in a repository. The file is optional; compoza creates it the first time a command saves a setting.
+
+```yaml
+1password:
+  account: Atlas Example # the desktop account for 1Password Environment reads
+hosts:
+  links: # hosts files, or folders holding a hosts.yaml
+    - /Users/you/infrastructure
+```
+
+| Field               | Set with                                         | Meaning                                                                                                                                                                               |
+| ------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `1password.account` | `compoza config set 1password.account <account>` | The 1Password desktop account, by name or UUID, used when neither `OP_SERVICE_ACCOUNT_TOKEN` nor `COMPOZA_1PASSWORD_ACCOUNT` is set. See [Authentication](secrets.md#authentication). |
+| `hosts.links`       | `compoza hosts link <path>`                      | Absolute paths of linked hosts files or folders. See [Linked hosts files](#linked-hosts-files).                                                                                       |
+
+Prefer the commands to editing the file by hand: they validate the result before writing, and keep your comments and the order of the other settings. Hand edits are allowed and follow the same rules as every configuration file, so an unknown field, an empty value or invalid YAML is an error. Because the hosts links are read whenever compoza looks up hosts without `--hosts` or `COMPOZA_HOSTS`, an invalid settings file stops those runs until it is fixed. Nothing in the file is secret: a 1Password account is a name or UUID, and the desktop app keeps the credentials.
 
 ## Apps
 
@@ -147,10 +197,10 @@ local:
 | `directories`           | Absolute host folders created before Compose runs.                                                                                    |
 | `content`               | Absolute host folders for content sections, created before Compose runs; see [Publishing content](#publishing-content).               |
 | `environment`           | Non-secret variables passed to Compose.                                                                                               |
-| `secrets`               | Exactly one secret source; see [Secrets](secrets.md). Legacy `envFile` remains an alias for the dotenv provider.                      |
+| `secrets`               | Exactly one secret source: `env-file`, `1password` or `none`; see [Secrets](secrets.md).                                              |
 | `local`                 | Overrides for `--local` runs; see [Local runs](#local-runs).                                                                          |
 | `assets`                | SSH execution only: declared read-only files uploaded to the stack.                                                                   |
-| `remote`                | SSH execution only: `stackDir`, `envFile`, `overlayFile`, `waitTimeoutSeconds`.                                                       |
+| `remote`                | SSH execution only: `stackDir`, `overlayFile`, `waitTimeoutSeconds`.                                                                  |
 | `destinations`          | Named alternative deployments of the same app; see [Destinations](#destinations).                                                     |
 
 SSH-specific fields are described in [SSH deployment](ssh-deployment.md).
@@ -163,17 +213,17 @@ Keep deployment configuration centrally while building from an application repos
 Repositories/
 ├── foo/
 │   └── Dockerfile
-└── localcloud/compose/foo/
+└── deployments/foo/
     ├── deploy.yaml
     ├── compose.yaml
     └── app.env
 ```
 
 ```yaml
-# Repositories/localcloud/compose/foo/deploy.yaml
+# Repositories/deployments/foo/deploy.yaml
 name: foo
 host: atlas
-workingDirectory: ../../../foo
+workingDirectory: ../../foo
 targets: [web]
 composeFiles: [compose.yaml]
 secrets:
@@ -205,14 +255,14 @@ SSH execution reads those files for each deployment and stages them under their 
 
 - Each target is named `<name>-<target>:<tag>`, prefixed with the registry for registry transport, and handed to Compose as `<TARGET>_IMAGE`. Compose files read `${WEB_IMAGE}`, `${WORKER_IMAGE}` and so on.
 - A build requires a clean checkout of the source repository with at least one commit and tags images with the commit's first twelve characters. `--allow-dirty` permits a dirty checkout and tags `<commit>-dirty`.
-- `--tag <tag>` reuses images built earlier and skips Git and builds, so it works from a deploy folder that is no longer inside a checkout. It always uses the **current local configuration**; there is no saved Compose configuration history.
+- `--tag <tag>` reuses images built earlier and skips Git and builds, so it works from a deploy folder outside any checkout. It always uses the **current local configuration**; there is no saved Compose configuration history.
 - With `targets: []` there is no Git, Dockerfile or build-context requirement, and no build or application-registry authentication check. Compose still pulls missing third-party images.
 
 ### Ingress
 
 Host `ingress` settings describe shared infrastructure; app `ingress` settings describe a route. An app selects exactly one of `caddy`, `cloudflare-tunnel`, or `none: {}`. A host can configure both Caddy and Cloudflare Tunnel; `none` is valid only on its own. Destinations replace the app’s complete ingress selection. On a host with both providers, `setup-proxy <host>` requires `--ingress caddy` or `--ingress cloudflare-tunnel`; setup never runs both implicitly. See the [combined host example](examples.md#one-host-with-caddy-and-cloudflare-tunnel).
 
-See the [Ingress guide](ingress.md) for provider selection, host and app settings, setup commands, migration, and lifecycle behavior. For custom Caddyfiles and site blocks, see [Caddy templates](caddy-templates.md).
+See the [Ingress guide](ingress.md) for provider selection, host and app settings, setup commands and lifecycle behavior. For custom Caddyfiles and site blocks, see [Caddy templates](caddy-templates.md).
 
 ### Host folders and mounts
 
@@ -271,7 +321,7 @@ Execution and image transport are independent:
 
 ## Client execution
 
-Client execution is the default and backward-compatible mode. A `deploy`:
+Client execution is the default mode. A `deploy`:
 
 1. Resolves the image tag from Git, or uses `--tag`.
 2. Runs the readiness checks and stops if DNS, the proxy, the network or the registry login is not ready.
@@ -317,6 +367,8 @@ An app on a host is deployed, stopped or deleted, and one command moves it to ea
 - `stop`, `start` and `delete` take `--dry-run`, which prints the commands and scripts without running them.
 
 With SSH execution these commands use the host's deployed stack instead; see [SSH deployment](ssh-deployment.md#lifecycle-on-ssh-execution).
+
+Every command's flags, output and exit status are in the [command reference](commands.md).
 
 ## Publishing content
 

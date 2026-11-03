@@ -14,7 +14,7 @@ Docker and Compose are the core. Credential providers (dotenv and 1Password) and
 
 For differences in deployment behavior, operational scope and trade-offs, see [Comparing Kamal, Dokploy, Coolify and Compose](docs/comparisons.md).
 
-[Quickstart](#quickstart) · [Commands](#commands) · [Agent skills](#agent-skills) · [Documentation](#documentation)
+[Install](#install) · [Quickstart](#quickstart) · [Commands](#commands) · [Agent skills](#agent-skills) · [Documentation](#documentation)
 
 ## What it does
 
@@ -22,7 +22,7 @@ For differences in deployment behavior, operational scope and trade-offs, see [C
 - **Builds and ships images** tagged with the commit, through a registry, `docker save` over SSH, or a build on the host itself.
 - **Runs Compose** from this machine against the host's Docker endpoint (the default), or on the host from a flat stack folder.
 - **Templates Caddy configuration** with bundled defaults, custom site and shared Caddyfile templates, and per-app overrides. [Template settings](docs/caddy-templates.md).
-- **Provisions Caddy** with an opt-in host `ingress.caddy.provision` block, including persistent storage, health checks, bounded logs, graceful shutdown and DNS challenge settings. Existing proxies remain supported.
+- **Provisions Caddy** with an opt-in host `ingress.caddy.provision` block, including persistent storage, health checks, bounded logs, graceful shutdown and DNS challenge settings, or integrates an operator-managed Caddy stack.
 - **Provisions Cloudflare connectors** with a digest-pinned image, private credentials from 1Password or dotenv, connection readiness and customizable Compose/route templates. Supports dashboard-managed routes without an API token. [Cloudflare provisioning](docs/cloudflare-provisioning.md).
 - **Routes traffic** through shared Caddy or an existing Cloudflare Tunnel, then waits for the URL to answer.
 - **Resolves secrets** from a dotenv file or a 1Password Environment, without putting values in configuration.
@@ -34,66 +34,63 @@ Requires Node.js 26.0 or newer on the machine running the CLI; remote Docker hos
 
 ```sh
 pnpm add -g compoza
-compoza --help
+compoza --version
 ```
 
-The `compoza` command is then available from any app repository. For running from source, see the [development guide](docs/development.md).
-
-A normal install includes the optional 1Password SDK. Dotenv secrets, ordinary checks and dry runs also work without optional dependencies.
-
-When upgrading an installation from before the Compoza rename, install the CLI as above, update scripts to call `compoza`,
-and move the global host inventory to `~/.config/compoza/hosts.yaml` (or select it explicitly with `--hosts`).
-Update operator environment variables to `COMPOZA_HOSTS` and `COMPOZA_1PASSWORD_ACCOUNT` where used.
-Deploy once into a flat stack folder before using SSH lifecycle commands with this version.
-Existing older deployment files are left untouched. Complete operations with the previous CLI before switching,
-because renamed Caddy locks do not coordinate with older processes.
+The `compoza` command is then available from any app repository. A normal install includes the optional 1Password SDK; dotenv secrets, checks and dry runs work without it. For running from source, see the [development guide](docs/development.md).
 
 ## Quickstart
 
-Deploy the [official nginx image](https://hub.docker.com/_/nginx) to a fictional host using SSH execution. With `targets: []`, no Git checkout, Dockerfile or build context is needed. The host must be able to pull the image.
+This deploys the [official nginx image](https://hub.docker.com/_/nginx) to a server over SSH, checks that it answers, then removes it again. It needs no Dockerfile, Git checkout or Docker on your machine: the server pulls the image and runs Compose itself.
 
-Replace the host, account, address and paths with your own.
+**You need:**
 
-The host needs key-based SSH access, Docker Engine with a Compose version that supports `up --wait`, Bash 3.2+, jq 1.6+, `base64` and curl. See [host prerequisites](docs/ssh-deployment.md#host-prerequisites) for the full list.
+- On your machine: compoza ([installed above](#install)) and an SSH key the server accepts. `ssh deploy@juniper.example.com docker version` should print Docker's version without asking for a password.
+- On the server: Docker Engine with a recent Compose plugin (one that supports `up --wait`), Bash 3.2+, jq 1.6+, `base64` and curl, and write access for the SSH account to the stack folder. `check` verifies most of this; see [host prerequisites](docs/ssh-deployment.md#host-prerequisites).
 
-### 1. Describe the host
+The host `juniper`, the `deploy` account and the paths are examples; use your own.
 
-Configure global hosts in `~/.config/compoza/hosts.yaml`. A `./hosts.yaml` in the current working directory overrides hosts by name. Use `--hosts` or `COMPOZA_HOSTS` to select a single file instead. Entries can also reference [external host files](docs/configuration.md#external-host-files) with `$ref: ~/infrastructure/atlas.yaml`:
+### 1. Describe the server
+
+Create `~/.config/compoza/hosts.yaml`. Every app can deploy to the hosts listed here:
 
 ```yaml
 juniper:
-  ssh: deploy@juniper.example.com
-  platform: linux/amd64
+  ssh: deploy@juniper.example.com # what you would pass to `ssh`
+  platform: linux/amd64 # the server's platform, used when compoza builds images
   transport:
-    mode: ssh-load
+    mode: ssh-load # how built images reach the server; unused here because nothing is built
 ```
+
+A `hosts.yaml` in the current folder overrides these entries by name, and `--hosts <file>` selects one file instead. Hosts kept elsewhere, such as in an infrastructure repository, can be added with `compoza hosts link <folder>`. See [Hosts](docs/configuration.md#hosts).
 
 ### 2. Describe the app
 
-Create `infra/deploy.yaml` in the app repository:
+In your app repository, create an `infra` folder with two files:
 
-```yaml
-name: hello-web
-host: juniper
-targets: []
-execution: ssh
-composeFiles:
-  - compose.yaml
-secrets:
-  none: {}
-remote:
-  stackDir: /home/deploy/stacks/hello-web
-  waitTimeoutSeconds: 120
-ingress:
-  none: {}
-health:
-  url: http://127.0.0.1:8080/
-  timeoutSeconds: 60
+```text
+my-app/
+└── infra/
+    ├── deploy.yaml
+    └── compose.yaml
 ```
 
-### 3. Add the Compose file
+`infra/deploy.yaml` says where and how the app runs:
 
-Create `infra/compose.yaml` beside it:
+```yaml
+name: hello-web # the Compose project name on the server
+host: juniper # a host from hosts.yaml
+targets: [] # images to build; none, because nginx is pulled as is
+execution: ssh # run Compose on the server from a stack folder
+composeFiles:
+  - compose.yaml
+remote:
+  stackDir: /home/deploy/stacks/hello-web # where the server keeps the stack's files
+health:
+  url: http://127.0.0.1:8080/ # probed from the server before the deploy succeeds
+```
+
+`infra/compose.yaml` is an ordinary Compose file:
 
 ```yaml
 services:
@@ -103,30 +100,91 @@ services:
       - '127.0.0.1:8080:80'
 ```
 
-### 4. Check, preview and deploy
+The port is bound to `127.0.0.1`, so the app is only reachable from the server itself until you [add a domain](#next-steps).
 
-```sh
-compoza check infra --json       # read-only readiness report
-compoza deploy infra --dry-run   # print the plan without changing anything
-compoza deploy infra             # update the flat stack and run Compose on the host
-compoza status infra
-compoza logs infra --service web --tail 50
+### 3. Check the server
+
+Run the commands from `my-app`. `check` is read-only:
+
+```console
+$ compoza check infra
+ok   docker: docker ready for SSH execution
+ok   compose: compose ready for SSH execution
+ok   jq: jq ready for SSH execution
+…
+8 checks, 0 failing
 ```
 
-The app listens on the host at `http://127.0.0.1:8080/`. The deploy checks that URL over SSH before reporting success. This example keeps the port private to the host.
+A failing check names what is missing on the server. `check` exits with status 2 while anything blocks a deploy.
 
-> [!NOTE]
-> The quickstart explicitly opts into `execution: ssh`. When `execution` is omitted, the default is **client** execution: Compose runs on this machine against `docker --host ssh://<host>`. SSH execution writes `compose.yaml`, `.env` and declared assets into a flat host stack folder. Reuse an older image with `deploy --tag <tag>`.
+### 4. Preview and deploy
 
-### Keep deployment configuration separately
+`--dry-run` runs the same checks and prints the plan without changing anything:
 
-For `Repositories/localcloud/compose/foo/deploy.yaml`, point at the app repository:
-
-```yaml
-workingDirectory: ../../../foo
+```console
+$ compoza deploy infra --dry-run
+…
+Dry run complete. No host writes, locks, builds or staging. …
 ```
 
-Git checks and builds use `Repositories/foo`. Relative Compose files, assets, dotenv files and app templates use the `deploy.yaml` folder. To read Compose definitions directly from the source repository, select their absolute workstation paths in `composeFiles`. Relative Dockerfile and build-context paths use the app directory. See [separate source and deployment folders](docs/configuration.md#separate-source-and-deployment-folders).
+Then deploy:
+
+```console
+$ compoza deploy infra
+Deploying hello-web third-party to juniper over SSH
+[1/2] Checking SSH host readiness …
+ok   docker: docker ready for SSH execution
+…
+[1/2] Checking SSH host readiness … ok (0.4 s)
+[2/2] Staging, validating and updating the host stack …
+$ ssh deploy@juniper.example.com <stage 1 declared files; lock, validate, compose up --wait, route, health>
+Validating stack Compose configuration
+Starting stack and waiting for running/healthy services
+Waiting for HTTP readiness
+Stack deployment complete
+[2/2] Staging, validating and updating the host stack … ok (2.0 s)
+Deployed hello-web third-party to juniper; stack folder updated.
+```
+
+The deploy writes `compose.yaml`, `.env` and a small metadata file into `stackDir`, runs `docker compose up --wait` on the server, and succeeds only once `health.url` answers. `third-party` is the image tag of an app that builds nothing; apps with `targets` are tagged with the commit.
+
+### 5. Look at it
+
+```console
+$ compoza status infra
+$ ssh deploy@juniper.example.com <ps deployed stack>
+NAME              IMAGE          COMMAND                  SERVICE   CREATED         STATUS         PORTS
+hello-web-web-1   nginx:alpine   "/docker-entrypoint.…"   web       2 seconds ago   Up 2 seconds   127.0.0.1:8080->80/tcp
+
+$ compoza logs infra --tail 20 --follow
+$ ssh deploy@juniper.example.com <logs deployed stack>
+web-1  | 2026/11/03 10:06:20 [notice] 1#1: start worker process 40
+web-1  | 192.168.158.1 - - [03/Nov/2026:10:06:21 +0000] "GET / HTTP/1.1" 200 896 "-" "curl/8.7.1" "-"
+```
+
+`--follow` keeps printing new lines until you press Ctrl-C, each prefixed with the container that wrote it. To see the page itself, ask the server: `ssh deploy@juniper.example.com curl -s http://127.0.0.1:8080/`.
+
+### 6. Clean up
+
+```console
+$ compoza delete infra
+$ ssh deploy@juniper.example.com <delete deployed stack; keep stack files, secrets and data>
+ Container hello-web-web-1 Stopping
+…
+Deleted hello-web; data, secrets and stack files stay
+```
+
+`delete` removes the containers and network. The stack folder stays, so a later `deploy` picks up where this one left off.
+
+### Next steps
+
+- **Serve it on a domain** through a shared [Caddy proxy or a Cloudflare Tunnel](docs/ingress.md): configure the provider on the host, run `compoza setup-proxy juniper` once, and add `ingress` with the app's domain to `deploy.yaml`.
+- **Build your own images** by listing Dockerfile `targets`; each is built, tagged with the commit and shipped to the server. See [Apps](docs/configuration.md#apps) and [Image transports](docs/configuration.md#image-transports).
+- **Add secrets** from a dotenv file or 1Password without putting values in configuration. For 1Password, save your desktop account once with `compoza config set 1password.account "<account>"`. See [Secrets](docs/secrets.md).
+- **Share hosts across machines or teammates** by keeping a `hosts.yaml` in an infrastructure repository and running `compoza hosts link <folder>`. See [Linked hosts files](docs/configuration.md#linked-hosts-files).
+- **Run Compose from your machine instead** by leaving `execution` out: the default, client execution, runs Compose locally against `docker --host ssh://<host>` and needs Docker on your machine. See [Execution and image transport](#execution-and-image-transport).
+- **Keep deployment configuration out of the app repository.** For `Repositories/deployments/foo/deploy.yaml`, set `workingDirectory: ../../foo`; Git checks and builds then use `Repositories/foo`, while Compose files, assets and templates stay beside `deploy.yaml`. See [separate source and deployment folders](docs/configuration.md#separate-source-and-deployment-folders).
+- **Recover** from a bad deploy with `compoza deploy infra --tag <earlier-tag>`.
 
 ## Execution and image transport
 
@@ -141,28 +199,28 @@ Two independent settings decide how a deploy runs:
 
 ## Commands
 
-| Task                 | Command                                                                       |
-| -------------------- | ----------------------------------------------------------------------------- |
-| Check readiness      | `compoza check <folder> --json`                                               |
-| Preview / deploy     | `compoza deploy <folder> [--dry-run]`                                         |
-| Inspect services     | `compoza status <folder>`                                                     |
-| Follow logs          | `compoza logs <folder> --service <name> --follow`                             |
-| Stop / resume        | `compoza stop <folder>` / `compoza start <folder>`                            |
-| Reuse an older image | `compoza deploy <folder> --tag <image-tag>`                                   |
-| Remove a stack       | `compoza delete <folder> [--volumes]`                                         |
-| Mirror content       | `compoza publish <folder> <section> <source>`                                 |
-| Set up host ingress  | `compoza setup-proxy <host> [--ingress caddy\|cloudflare-tunnel] [--dry-run]` |
+| Task                   | Command                                                                       |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| Check readiness        | `compoza check <folder> [--json] [--secrets]`                                 |
+| Preview / deploy       | `compoza deploy <folder> [--dry-run]`                                         |
+| Reuse an earlier image | `compoza deploy <folder> --tag <image-tag>`                                   |
+| Inspect services       | `compoza status <folder>`                                                     |
+| Read or follow logs    | `compoza logs <folder> [--service <name>] [--tail <lines>] [--follow]`        |
+| Stop / resume          | `compoza stop <folder>` / `compoza start <folder>`                            |
+| Remove a stack         | `compoza delete <folder> [--volumes]`                                         |
+| Mirror content         | `compoza publish <folder> <section> <source>`                                 |
+| Set up host ingress    | `compoza setup-proxy <host> [--ingress caddy\|cloudflare-tunnel] [--dry-run]` |
 
-Use `compoza <command> --help` for all flags. `stop`, `start`, `delete` and `publish` also accept `--dry-run`.
+`<folder>` holds `deploy.yaml` (or is the file itself) and defaults to the working directory, except for `publish`, which requires it. Every app command accepts `--destination <name>`, and `stop`, `start`, `delete`, `publish` and `setup-proxy` accept `--dry-run`. `delete` is also available as `down`.
 
-`<folder>` holds `deploy.yaml` (or is the file itself) and defaults to the working directory, except for `publish`, which requires it. Every app command accepts `--destination <name>`. `delete` is also available as `down`.
+The [command reference](docs/commands.md) covers every flag, what each command changes on the host, its output and its exit status. `compoza help <command>` (or `compoza <command> --help`) explains a command, its flags and examples from the CLI.
 
 A host can configure both Caddy and Cloudflare Tunnel. Each app selects one; use `setup-proxy <host> --ingress caddy` or `--ingress cloudflare-tunnel` to set up one provider on a shared host. See the [combined host example](docs/examples.md#one-host-with-caddy-and-cloudflare-tunnel).
 
 ## Operational notes
 
 - **A dry run is not proof.** It runs read-only probes and prints the plan, but the candidate Compose model cannot be fully validated against host files until it is staged.
-- **Failures can be partial.** A failed Compose run, route or health check can leave candidate containers or routes active. There is no automatic container rollback, and data migrations are never reversed. Inspect `status` and `logs`, then recover explicitly.
+- **Failures can be partial.** A failed Compose run, route or health check can leave candidate containers or routes active. There is no automatic container rollback, and database changes are never reversed. Inspect `status` and `logs`, then recover explicitly.
 - **`deploy --tag <tag>` uses the current local configuration.** It reuses existing images and skips Git and builds; it resolves the selected credentials again and stores no configuration history.
 - **Keep secrets out of configuration.** Never put them in `deploy.yaml`, `environment`, assets or build contexts; exclude dotenv files from build contexts with `.dockerignore`.
 - **Data stays.** `delete` keeps host folders and bind data; named volumes are removed only with `--volumes`.
@@ -194,11 +252,12 @@ cp -R .agents/skills/deploy .agents/skills/compoza /path/to/app/.agents/skills/
 | Document                                                   | Covers                                                                                                             |
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | [Comparing deployment tools](docs/comparisons.md)          | Kamal, Dokploy, Coolify and Compose: deployment models, strengths, limits and when to choose each                  |
+| [Commands](docs/commands.md)                               | Every command and flag, what it changes on the host, output and exit status                                        |
 | [Examples](docs/examples.md)                               | Complete host and app configurations, central source directories, destinations, credentials and ingress variations |
-| [Configuration](docs/configuration.md)                     | `hosts.yaml`, `deploy.yaml`, destinations, execution and transport, client deploys, lifecycle, `publish`           |
-| [Ingress](docs/ingress.md)                                 | Provider selection, Caddy host/app settings and setup, Cloudflare Tunnel, route ownership and migration            |
+| [Configuration](docs/configuration.md)                     | `hosts.yaml`, linked hosts, settings, `deploy.yaml`, destinations, execution and transport, lifecycle, `publish`   |
+| [Ingress](docs/ingress.md)                                 | Provider selection, Caddy host/app settings and setup, Cloudflare Tunnel, route ownership and lifecycle            |
 | [Caddy templates](docs/caddy-templates.md)                 | File and inline templates, placeholders, app overrides and custom proxy headers                                    |
-| [Caddy production operations](docs/caddy-production.md)    | Hardening defaults, monitoring, backups, recovery and existing-host migration                                      |
+| [Caddy production operations](docs/caddy-production.md)    | Hardening defaults, monitoring, backups, recovery and hardening an integrated stack                                |
 | [Cloudflare provisioning](docs/cloudflare-provisioning.md) | Host connector setup, native credentials, manual routes, hardening and Compose/route templates                     |
 | [Secrets](docs/secrets.md)                                 | Providers, 1Password authentication, dotenv rules, collisions, access checks, private SSH dotenv                   |
 | [SSH deployment](docs/ssh-deployment.md)                   | Host prerequisites, flat stack layout, assets, validation, privacy and image-tag recovery                          |

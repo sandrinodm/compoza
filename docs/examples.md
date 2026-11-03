@@ -1,10 +1,10 @@
 # Configuration examples
 
-[README](../README.md) · [Configuration reference](configuration.md) · [Secrets](secrets.md) · [Ingress](ingress.md) · [SSH deployment](ssh-deployment.md)
+[README](../README.md) · [Commands](commands.md) · [Configuration reference](configuration.md) · [Secrets](secrets.md) · [Ingress](ingress.md) · [SSH deployment](ssh-deployment.md)
 
 These examples combine the configuration patterns supported by Compoza: central deployment folders, separate source repositories, local development, multiple destinations and shared ingress. Hostnames, addresses and account IDs are fictional. Replace them with your own values; these are configuration examples, not records of live deployments.
 
-Complete files are labeled with their filename. **Variations are partial mappings**: replace the indicated settings in a complete example rather than saving the fragment as a standalone configuration. Examples use named extensions; see the reference for [legacy migration](ingress.md#migrating-existing-extension-settings).
+Complete files are labeled with their filename. **Variations are partial mappings**: replace the indicated settings in a complete example rather than saving the fragment as a standalone configuration. Ingress providers and secret sources are selected by extension name, as described in the [configuration reference](configuration.md).
 
 The CLI machine needs Node.js 26.0 or newer. Remote hosts need the [SSH runtime prerequisites](ssh-deployment.md#host-prerequisites), not Node.js. Image tags here follow the tutorial examples elsewhere in these docs; select reviewed tags or digests for your own deployments.
 
@@ -55,7 +55,7 @@ cedar:
 
 This replaces the **entire** global `cedar` entry; `atlas`, `borealis` and `relay` remain available. `cedar-development` must be an operator-configured SSH alias. The CLI does not search parent directories. Neither the target deploy folder nor `workingDirectory` changes host discovery.
 
-Use `--hosts ./hosts.yaml` or `COMPOZA_HOSTS` to select one inventory exclusively instead of merging global and local files. Explicit `--hosts` takes precedence. Quote string values that look like numbers or booleans, such as `PORT: "8080"`; duplicate keys and unknown settings are errors.
+To share hosts from another checkout, such as an infrastructure repository, link it with `compoza hosts link ~/infrastructure` instead of copying entries; its `hosts.yaml` is then read with the global file, and host names must not repeat between them (see [Linked hosts files](configuration.md#linked-hosts-files)). Use `--hosts ./hosts.yaml` or `COMPOZA_HOSTS` to select one inventory exclusively instead of merging global, linked and local files. Explicit `--hosts` takes precedence. Quote string values that look like numbers or booleans, such as `PORT: "8080"`; duplicate keys and unknown settings are errors.
 
 ## One host with Caddy and Cloudflare Tunnel
 
@@ -122,7 +122,7 @@ compoza --hosts config/hosts.yaml setup-proxy macmini-server --ingress caddy --d
 compoza --hosts config/hosts.yaml setup-proxy macmini-server --ingress cloudflare-tunnel --dry-run
 ```
 
-An ambiguous setup without `--ingress` fails without SSH or credential-provider access. Setup never implicitly recreates both shared services. Single-provider hosts can still omit the flag.
+An ambiguous setup without `--ingress` fails without SSH or credential-provider access. Setup never implicitly recreates both shared services. Single-provider hosts can omit the flag.
 
 For an app using Caddy, a **partial deploy mapping** selects:
 
@@ -240,7 +240,7 @@ Repositories/
 ├── foo/
 │   ├── docker/Dockerfile
 │   └── public/index.html
-└── localcloud/compose/foo/
+└── deployments/foo/
     ├── deploy.yaml
     ├── compose.yaml
     ├── compose.local.yaml
@@ -248,13 +248,13 @@ Repositories/
     └── production.env
 ```
 
-Complete `Repositories/localcloud/compose/foo/deploy.yaml`:
+Complete `Repositories/deployments/foo/deploy.yaml`:
 
 ```yaml
 name: foo
 projectName: foo-production
 host: atlas
-workingDirectory: ../../../foo
+workingDirectory: ../../foo
 dockerfile: docker/Dockerfile
 context: .
 targets: [web, worker]
@@ -300,7 +300,7 @@ destinations:
         environmentId: fictional-foo-staging-environment
 ```
 
-Complete `Repositories/localcloud/compose/foo/compose.yaml`:
+Complete `Repositories/deployments/foo/compose.yaml`:
 
 ```yaml
 services:
@@ -370,8 +370,8 @@ networks:
 ```
 
 ```sh
-compoza deploy Repositories/localcloud/compose/foo --local --dry-run
-compoza deploy Repositories/localcloud/compose/foo --destination staging --dry-run
+compoza deploy Repositories/deployments/foo --local --dry-run
+compoza deploy Repositories/deployments/foo --destination staging --dry-run
 ```
 
 `--local` builds and runs on the CLI machine, without remote checks, transport or ingress, even when `execution` is `ssh`. It replaces `composeFiles` and the secret source with the local choices and merges local `environment`. A declared production source requires explicit `local.secrets`; `none` prevents production credential fallback.
@@ -438,18 +438,18 @@ secrets:
   none: {}
 ```
 
-A separate, operator-owned dotenv file **on the SSH host**, replacing the entire `secrets` selection:
+Values that must never leave the SSH host stay in an operator-owned dotenv file there rather than in a `secrets` source. With `execution: ssh`, Compose runs on the host, so this **partial `compose.yaml` mapping** (or the same entry in the host overlay named by `remote.overlayFile`) loads that file into one service:
 
 ```yaml
-execution: ssh
-remote:
-  stackDir: /srv/foo/production
-  envFile: /home/deploy/.config/foo/production.env
+services:
+  web:
+    env_file:
+      - path: /home/deploy/.config/foo/production.env
 ```
 
-Remove `secrets` when selecting `remote.envFile`; even `secrets.none` is a competing source. Do not point `remote.envFile` at the generated `<stackDir>/.env`. Existing unowned `.env` files inside a stack folder must be moved to a separate host path before deployment. Legacy app `envFile` is documented for migration, but new client-side dotenv examples use `secrets.env-file`.
+Compose reads the file on the host as container environment; the CLI never reads its values, and it combines with whichever `secrets` source is selected. Its entries are not Compose interpolation inputs, and a service's `environment` entries take precedence over them. The path must be absolute and separate from the generated `<stackDir>/.env`; move an operator `.env` out of a stack folder before deploying into it. With client execution, Compose runs on the CLI machine and would read the path there instead.
 
-Native 1Password authentication belongs in the operator environment: `COMPOZA_1PASSWORD_ACCOUNT` for the desktop SDK integration, or `OP_SERVICE_ACCOUNT_TOKEN` for automation. No values belong in YAML. See [authentication and dotenv parsing](secrets.md). Compose interpolation inputs reach a container only when its service explicitly maps them through `environment` or another supported Compose field.
+Native 1Password authentication belongs to the operator: a desktop account saved once with `compoza config set 1password.account "<account>"` (or `COMPOZA_1PASSWORD_ACCOUNT` per shell), or `OP_SERVICE_ACCOUNT_TOKEN` for automation. No values belong in app or host YAML. See [authentication and dotenv parsing](secrets.md). Compose interpolation inputs reach a container only when its service explicitly maps them through `environment` or another supported Compose field.
 
 ## Caddy provisioning and templates
 
@@ -483,7 +483,7 @@ compoza setup-proxy atlas --dry-run
 compoza setup-proxy atlas
 ```
 
-For DNS challenges, this **partial replacement inside `ingress.caddy`** selects a custom image that must contain the Cloudflare DNS module, plus a private existing host dotenv file. The image name is illustrative:
+For DNS challenges, this **partial replacement inside `ingress.caddy`** selects a custom image that must contain the Cloudflare DNS module, plus a private dotenv file that already exists on the host. The image name is illustrative:
 
 ```yaml
 tls: dns cloudflare {env.CLOUDFLARE_API_TOKEN}
@@ -528,7 +528,7 @@ ingress:
         }
 ```
 
-A filename such as `siteTemplate: ./caddy/foo.caddy.tmpl` instead resolves beside the deploy YAML, not `workingDirectory`. Shared root templates apply during provisioning; site templates apply during app deployment. Provisioning refuses differing existing generated files; it is not an automatic Caddy upgrade mechanism.
+A filename such as `siteTemplate: ./caddy/foo.caddy.tmpl` instead resolves beside the deploy YAML, not `workingDirectory`. Shared root templates apply during provisioning; site templates apply during app deployment. Provisioning refuses to overwrite differing generated files already on the host; it is not an automatic Caddy upgrade mechanism.
 
 ## Cloudflare Tunnel with manual routes
 
@@ -559,7 +559,7 @@ ingress:
       waitTimeoutSeconds: 120
 ```
 
-The selected variable must contain the raw connector token, not an installation command. With `image` omitted, provisioning uses the bundled digest-pinned cloudflared image; `provision.image` may select another reviewed compatible image. Set up the shared connector before deploying the app:
+The selected variable must contain the raw connector token, not an installation command. With `image` omitted, provisioning uses the bundled digest-pinned cloudflared image; `provision.image` may select another reviewed cloudflared image. Set up the shared connector before deploying the app:
 
 ```sh
 compoza setup-proxy relay --dry-run
@@ -626,7 +626,7 @@ provision:
   tokenVariable: CLOUDFLARE_TUNNEL_TOKEN
 ```
 
-Or an existing private host dotenv file containing the raw token under `TUNNEL_TOKEN`:
+Or a private dotenv file already on the host, containing the raw token under `TUNNEL_TOKEN`:
 
 ```yaml
 provision:
@@ -666,29 +666,29 @@ ingress:
           httpHostHeader: origin.example.com
 ```
 
-A route-template filename resolves beside the app YAML. Templates must preserve the selected hostname and service; only `originRequest` settings may be added. Do not include credentials in templates. Existing connectors can remain operator-managed by omitting `provision`.
+A route-template filename resolves beside the app YAML. Templates must preserve the selected hostname and service; only `originRequest` settings may be added. Do not include credentials in templates. Omit `provision` to keep an operator-managed connector.
 
 ## Preview, deploy and recover
 
 For the central app, retain the same target, destination and host selection throughout:
 
 ```sh
-compoza check Repositories/localcloud/compose/foo --destination staging --json
-compoza deploy Repositories/localcloud/compose/foo --destination staging --dry-run
-compoza deploy Repositories/localcloud/compose/foo --destination staging
-compoza status Repositories/localcloud/compose/foo --destination staging
-compoza logs Repositories/localcloud/compose/foo --destination staging --tail 50
+compoza check Repositories/deployments/foo --destination staging --json
+compoza deploy Repositories/deployments/foo --destination staging --dry-run
+compoza deploy Repositories/deployments/foo --destination staging
+compoza status Repositories/deployments/foo --destination staging
+compoza logs Repositories/deployments/foo --destination staging --tail 50
 ```
 
 Ordinary checks and dry runs do not fetch credentials; `check --secrets --json` explicitly verifies source access and reports names, not values. Dry runs do not validate a full candidate on the host. Built images normally require a clean committed source checkout; `--allow-dirty` permits changes and appends `-dirty` to the commit tag.
 
 An SSH stack contains `compose.yaml`, private `.env`, declared assets and one nonsecret `.compoza.json`. There are no application release directories, previous/current pointers or configuration backups. Upload and validation failures preserve deployed files; failures after replacement can leave changed files or containers.
 
-Recover with an existing image tag and the **current** local configuration and credentials:
+Recover with a known image tag and the **current** local configuration and credentials:
 
 ```sh
-compoza deploy Repositories/localcloud/compose/foo --destination staging --tag abc123def456 --dry-run
-compoza deploy Repositories/localcloud/compose/foo --destination staging --tag abc123def456
+compoza deploy Repositories/deployments/foo --destination staging --tag abc123def456 --dry-run
+compoza deploy Repositories/deployments/foo --destination staging --tag abc123def456
 ```
 
-`--tag` skips Git and builds; it does not restore older configuration, secrets or database state. A missing `workingDirectory` is allowed for `--tag`, `targets: []`, status, logs and lifecycle operations. `stop`, `start` and `delete` operate on the deployed stack; delete retains host files and persistent bind data, and removes named volumes only when `--volumes` is explicitly selected.
+`--tag` skips Git and builds; it does not restore earlier configuration, secrets or database state. A missing `workingDirectory` is allowed for `--tag`, `targets: []`, status, logs and lifecycle operations. `stop`, `start` and `delete` operate on the deployed stack; delete retains host files and persistent bind data, and removes named volumes only when `--volumes` is explicitly selected.

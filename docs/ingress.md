@@ -1,6 +1,6 @@
 # Ingress
 
-[README](../README.md) · [Configuration](configuration.md) · [Caddy templates](caddy-templates.md) · [Secrets](secrets.md) · [SSH deployment](ssh-deployment.md) · [Development](development.md)
+[README](../README.md) · [Commands](commands.md) · [Configuration](configuration.md) · [Caddy templates](caddy-templates.md) · [Secrets](secrets.md) · [SSH deployment](ssh-deployment.md) · [Development](development.md)
 
 Ingress connects an application's public hostname to its running service. Docker and Compose handle deployment; an ingress extension supplies the route, host setup, and public readiness URL. Choose the extension in both the host and app configuration.
 
@@ -19,13 +19,12 @@ For how this differs from Kamal's traffic switching or the routing managed by Do
 - [Customize Caddy templates](caddy-templates.md)
 - [Cloudflare Tunnel](#cloudflare-tunnel)
 - [Deployment and lifecycle](#deployment-and-lifecycle)
-- [Migrate legacy settings](#migrating-existing-extension-settings)
 
 Examples use fictional hosts and reserved documentation IP addresses. For host-file locations, local precedence and external `$ref` files, see [Configuration](configuration.md#hosts).
 
 ## Select an extension
 
-Nest settings under the provider name. Each app selects exactly one provider; a host can declare both Caddy and Cloudflare Tunnel: `deploy.yaml` contains app routing settings, while `hosts.yaml` contains host infrastructure settings. There is no separate `mode` or `provider` selector in the new format.
+Nest settings under the provider name. Each app selects exactly one provider; a host can declare both Caddy and Cloudflare Tunnel: `deploy.yaml` contains app routing settings, while `hosts.yaml` contains host infrastructure settings. The extension name is the selector; there is no separate `mode` or `provider` field.
 
 For example, application routing:
 
@@ -46,7 +45,7 @@ compoza setup-proxy macmini-server --ingress caddy --dry-run
 compoza setup-proxy macmini-server --ingress cloudflare-tunnel --dry-run
 ```
 
-Remove `--dry-run` only when ready to set up that provider. Omitting `--ingress` on a host with both fails before SSH or credential-provider access. A single-provider host keeps the existing command without the flag. Apps select their matching host settings automatically; no app-command selector is needed. See [one host with both providers](examples.md#one-host-with-caddy-and-cloudflare-tunnel).
+Remove `--dry-run` only when ready to set up that provider. Omitting `--ingress` on a host with both fails before SSH or credential-provider access. On a single-provider host the flag is optional. Apps select their matching host settings automatically; no app-command selector is needed. See [one host with both providers](examples.md#one-host-with-caddy-and-cloudflare-tunnel).
 
 - `caddy` atomically replaces `sites/<name>.caddy` under a shared lock and uses Caddy reload to validate and activate it and waits for `https://<domain><healthPath>`. `upstream` is the address Caddy proxies to, such as `sample-app-web:3000`.
 - `cloudflare-tunnel` manages an HTTP(S) hostname rule in an existing remotely managed tunnel; see [Cloudflare Tunnel](#cloudflare-tunnel).
@@ -155,15 +154,15 @@ Provisioning creates:
 - A container healthcheck against `http://127.0.0.1:2019/config/` that discards the response. Port 2019 is never published.
 - When `logSnippet` is configured, a snippet writing JSON logs to `/data/{app}.log`, rotating at 100 MB, retaining ten files for up to 720 hours. App routes import that snippet automatically.
 
-The Compose project is named `<container>-ingress`. The optional `composeFile` must be a YAML filename inside the proxy directory. Docker and jq must already be installed and Docker must be running; using `envFile` requires Compose 2.30+ for raw env-file values, which preserve literal dollar signs and quotes. Validation uses a disposable container, then setup starts Caddy with `compose up --wait` (60-second timeout). Setup waits for the generated admin healthcheck to pass. The image must provide `caddy` and a BusyBox-compatible `wget`, run with permission to access the private bind directories, and support a read-only root filesystem (tested with Alpine-based images). Custom root templates must keep the HTTP admin API at `localhost:2019`; disabling or relocating it fails this healthcheck. This check does not verify public DNS, certificates or upstream application availability.
+The Compose project is named `<container>-ingress`. The optional `composeFile` must be a YAML filename inside the proxy directory. Docker and jq must already be installed and Docker must be running; using `envFile` requires Compose 2.30+ for raw env-file values, which preserve literal dollar signs and quotes. Validation uses a disposable container, then setup starts Caddy with `compose up --wait` (60-second timeout). Setup waits for the generated admin healthcheck to pass. The image must provide `caddy` and a BusyBox-style `wget`, run with permission to access the private bind directories, and support a read-only root filesystem (tested with Alpine-based images). Custom root templates must keep the HTTP admin API at `localhost:2019`; disabling or relocating it fails this healthcheck. This check does not verify public DNS, certificates or upstream application availability.
 
-Provisioning is a bootstrap operation, not a configuration replacement or upgrade command. Reruns require any existing Caddyfile and Compose file to match the generated files exactly, preserve app routes, certificates, logs and env files, and ensure the service is running. A container owned by another Compose project, service, or working directory is rejected. Existing differing files are never overwritten: omit `provision` to integrate an operator-managed proxy or choose a fresh directory and a nonconflicting container/ports. Changing provisioning settings after creation requires deliberate operator-managed reconciliation; there is no force/adopt mode.
+Provisioning is a bootstrap operation, not a configuration replacement or upgrade command. Reruns require a Caddyfile and Compose file already in the directory to match the generated files exactly, preserve app routes, certificates, logs and env files, and ensure the service is running. A container owned by another Compose project, service, or working directory is rejected. Differing files are never overwritten: omit `provision` to integrate an operator-managed proxy or choose a fresh directory and a nonconflicting container/ports. Changing provisioning settings after creation requires deliberate operator-managed reconciliation; there is no force/adopt mode.
 
-Configuration is validated before generated files are installed or the shared service is started. Failed validation leaves any existing configuration untouched. A failed start retains generated files, persistent directories and any newly created network for inspection and retry; setup does not promise to restore container state. Diagnostics from Compose and Caddy are suppressed because they may contain expanded credentials. Setup, route installation and removal share a per-directory `.compoza-caddy.lock`; overlapping operations fail with retry guidance. Read [production operations and recovery](caddy-production.md) before clearing a retained lock.
+Configuration is validated before generated files are installed or the shared service is started. Failed validation leaves the current configuration untouched. A failed start retains generated files, persistent directories and any newly created network for inspection and retry; setup does not promise to restore container state. Diagnostics from Compose and Caddy are suppressed because they may contain expanded credentials. Setup, route installation and removal share a per-directory `.compoza-caddy.lock`; overlapping operations fail with retry guidance. Read [production operations and recovery](caddy-production.md) before clearing a retained lock.
 
 ### Integrate an existing Caddy stack
 
-Omit `provision` to keep using the existing setup behavior. It makes the host's Caddy load every `sites/*.caddy` file:
+Omit `provision` to integrate an operator-managed Caddy stack. Setup makes the host's Caddy load every `sites/*.caddy` file:
 
 1. Appends `import /etc/caddy/sites/*.caddy` to the Caddyfile.
 2. Adds a `./sites` mount to the proxy's Compose file.
@@ -172,11 +171,11 @@ Omit `provision` to keep using the existing setup behavior. It makes the host's 
 
 Both files are backed up as `*.pre-sites-<timestamp>` and restored if any step fails.
 
-If the Caddyfile import, Compose mount and running container mount already exist, setup is a no-op. It does not move existing inline routes into `sites/` or replace the base Caddyfile. To migrate an inline route, coordinate removal of its old block with creation of its managed site file so the same hostname is not declared twice.
+If the Caddyfile import, Compose mount and running container mount already exist, setup is a no-op. It does not move inline routes from the Caddyfile into `sites/` or replace the base Caddyfile. To move an inline route into a managed site file, coordinate removal of its old block with creation of its managed site file so the same hostname is not declared twice.
 
-Readiness requires the container to be running. An existing Docker healthcheck must be healthy; provisioned stacks must have a healthy check. Existing stacks without a healthcheck remain supported, but their readiness only establishes process state and configuration mounts.
+Readiness requires the container to be running. A configured Docker healthcheck must be healthy; provisioned stacks must have a healthy check. Integrated stacks without a healthcheck are accepted, but their readiness only establishes process state and configuration mounts.
 
-Existing setup does not apply the fresh-stack hardening defaults. See [adopting the changes](caddy-production.md#adopting-the-changes-on-an-existing-host) for a controlled migration.
+Integration does not apply the fresh-stack hardening defaults. See [hardening an integrated stack](caddy-production.md#hardening-an-integrated-stack) to apply them deliberately.
 
 ### Customize the configuration
 
@@ -184,7 +183,7 @@ Use [Caddy templates](caddy-templates.md) to control the shared Caddyfile and ea
 
 ## Cloudflare Tunnel
 
-Use an **existing remotely managed tunnel**. Optional host `provision` settings let `setup-proxy` create a hardened connector stack, shared network and private credentials with a customizable Compose template. See [Cloudflare provisioning](cloudflare-provisioning.md) for setup, native 1Password/dotenv credentials, manual routing and per-app origin templates.
+Use a **remotely managed tunnel that you create in Cloudflare**. Optional host `provision` settings let `setup-proxy` create a hardened connector stack, shared network and private credentials with a customizable Compose template. See [Cloudflare provisioning](cloudflare-provisioning.md) for setup, native 1Password/dotenv credentials, manual routing and per-app origin templates.
 
 By default, Compoza manages each app's public hostname rule using a host API token. With `routing: "manual"`, routes stay in the dashboard and checks use the local connector instead; no management API token or state directory is required. Tunnel creation, DNS and Cloudflare Access remain operator-managed. Every connector must be able to reach the app's configured origin. A connector in Docker usually shares a network with the app, so `http://web:8080` addresses that service; `localhost` would address the connector itself.
 
@@ -264,11 +263,3 @@ compoza deploy infra
 The standard public HTTP wait accepts any status below 500. A login page or 404 can therefore count as reachable; choose an app-specific health endpoint when appropriate. Route activation followed by a health failure can leave a changed route. Deployment does not promise an atomic rollback of containers and routing.
 
 For execution modes and host health checks, see [SSH deployment](ssh-deployment.md#health-and-readiness). For adding a new ingress implementation, see [Development](development.md#ingress-extensions).
-
-## Migrating existing extension settings
-
-The Caddy identifier is now `caddy` throughout the CLI and configuration. Older flat `mode: "caddy-sites"` and `proxy.provider: "caddy-sites"` values are no longer accepted; rename those values to `caddy` or migrate to the named `ingress.caddy` format. Named `ingress.caddy` settings and `setup-proxy --ingress caddy` need no change.
-
-Existing app ingress objects with `mode: "caddy"`, `mode: "cloudflare-tunnel"` or `mode: "none"` remain accepted. Existing host `proxy` entries also remain accepted, with the old top-level `address` used for Caddy DNS checks. They resolve to the same runtime plans as the named configuration.
-
-For new or migrated hosts, move `proxy` into `ingress.caddy` (or `ingress["cloudflare-tunnel"]`), remove its `provider` field, and move the Caddy DNS `address` into `ingress.caddy.address`. Do not supply both host `proxy` and `ingress`: this is rejected rather than choosing one silently. Do not mix a legacy selector and nested extension settings inside the same block. Credential sources use the same named convention; see [Secrets](secrets.md).

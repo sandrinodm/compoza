@@ -1,12 +1,12 @@
 # Caddy production operations
 
-[README](../README.md) · [Ingress](ingress.md) · [Caddy templates](caddy-templates.md)
+[README](../README.md) · [Commands](commands.md) · [Ingress](ingress.md) · [Caddy templates](caddy-templates.md)
 
 This guide covers a hardened **single-host** Caddy deployment. A host, Docker engine or network outage still interrupts every app on that host. The extension does not provide automatic failover, capacity planning, backups or an external monitoring service.
 
 ## Defaults and their purpose
 
-Fresh stacks created with `ingress.caddy.provision` have these defaults. Existing stacks keep their operator-managed Compose and Caddyfile settings.
+Fresh stacks created with `ingress.caddy.provision` have these defaults. Integrated stacks keep their operator-managed Compose and Caddyfile settings.
 
 | Area                  | Behavior                                                                                                                                                                                                       |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -17,13 +17,13 @@ Fresh stacks created with `ingress.caddy.provision` have these defaults. Existin
 | Shutdown              | Set `grace_period 30s` and Docker `stop_grace_period: 40s`. Configure `provision.gracePeriodSeconds` when applications need a different drain budget.                                                          |
 | Storage               | Persist `/data` and `/config`; mount the root Caddyfile and sites read-only. Keep the container root filesystem read-only, with a 64 MiB temporary filesystem at `/tmp`.                                       |
 | Privileges            | Set `no-new-privileges`. The image still needs permission to read private host bind directories and write its state; this is not a rootless-container profile.                                                 |
-| Logs                  | Limit Docker JSON logs to three 10 MiB files. Optional request logs retain the existing 100 MB rotation, ten rotated files and 720-hour retention. Budget disk for every app and certificate storage.          |
+| Logs                  | Limit Docker JSON logs to three 10 MiB files. Optional request logs rotate at 100 MB, retaining ten rotated files for up to 720 hours. Budget disk for every app and certificate storage.                      |
 | Metrics               | Enable metrics on the private admin endpoint without per-host labels. Monitoring collection and alerts remain operator responsibilities.                                                                       |
 | DNS                   | Resolve A and AAAA records. `ingress.caddy.address` is an optional IP assertion; omit it behind a CDN or whenever public DNS should not equal the origin IP.                                                   |
 
 Caddy recommends reloads for production configuration changes. Reload validates and provisions before replacing the running configuration; separate `caddy validate` processes can conflict with modules that require exclusive resources. Bootstrap still validates using a disposable container before starting the shared service. See [Caddy commands](https://caddyserver.com/docs/command-line#caddy-reload) and [validation](https://caddyserver.com/docs/command-line#caddy-validate).
 
-The storage and graceful shutdown choices follow [Caddy's Docker guidance](https://caddyserver.com/docs/running#docker-compose) and [global options](https://caddyserver.com/docs/caddyfile/options#grace-period). Image compatibility still matters: provisioning expects `caddy`, BusyBox-compatible `wget`, and support for the read-only root filesystem. Custom root templates must preserve HTTP admin access at `localhost:2019` for the generated healthcheck and should use `grace_period {{gracePeriod}}`.
+The storage and graceful shutdown choices follow [Caddy's Docker guidance](https://caddyserver.com/docs/running#docker-compose) and [global options](https://caddyserver.com/docs/caddyfile/options#grace-period). The image must meet provisioning's requirements: it needs `caddy`, a BusyBox-style `wget`, and support for the read-only root filesystem. Custom root templates must preserve HTTP admin access at `localhost:2019` for the generated healthcheck and should use `grace_period {{gracePeriod}}`.
 
 ## Workload-specific templates
 
@@ -38,7 +38,7 @@ See the [reverse proxy reference](https://caddyserver.com/docs/caddyfile/directi
 
 ## Monitor, back up and maintain
 
-Pin a tested image **digest**, including the required DNS plugin. Tags can move; the extension accepts them for compatibility but cannot make them reproducible. Test updates in a disposable environment, retain the previous digest and configuration, and schedule shared-container recreation because it can interrupt all sites. Plan security updates for Caddy, DNS modules, Docker and the host OS.
+Pin a tested image **digest**, including the required DNS plugin. Tags can move; the extension accepts them but cannot make them reproducible. Test updates in a disposable environment, retain the previous digest and configuration, and schedule shared-container recreation because it can interrupt all sites. Plan security updates for Caddy, DNS modules, Docker and the host OS.
 
 Back up `data/`, `config/`, `Caddyfile`, `sites/`, the Compose file and the separately managed credential file. `/data` contains certificate private keys and ACME accounts; encrypt backups, restrict access and test restoration. Do not delete persistent storage to fix a deployment. Rotate DNS API tokens and scope them to the necessary zones and permissions.
 
@@ -50,7 +50,7 @@ Load-test representative traffic, uploads, slow clients, WebSockets and reloads 
 
 ## Locks and recovery
 
-Every new setup, route and removal operation uses `<dir>/.compoza-caddy.lock`. An overlapping operation fails rather than overwriting another app's changes. Retry once the other operation completes. Direct manual edits, older CLI versions, old frozen host scripts, and other admin API clients do not honor this lock; coordinate them separately. Redeploy to refresh the removal operation stored in lifecycle metadata.
+Every new setup, route and removal operation uses `<dir>/.compoza-caddy.lock`. An overlapping operation fails rather than overwriting another app's changes. Retry once the other operation completes. Direct manual edits and other admin API clients do not honor this lock; coordinate them separately. Redeploy to refresh the removal operation stored in lifecycle metadata.
 
 On reload failure, the extension restores the old file and tries a recovery reload to handle ambiguous outcomes such as a lost response. If recovery succeeds, the command still reports failure. If it fails, the lock and `sites/.compoza-route.*` directory remain; the CLI prints its path but not its contents. This directory is private and does not match `sites/*.caddy` imports.
 
@@ -61,13 +61,13 @@ Before clearing a retained lock:
 3. Restore the intended file if needed, then reload Caddy using its configured root Caddyfile. Verify the affected sites and admin health. A killed process may have left disk and running configuration at different revisions.
 4. Remove only the verified stale lock and its recovery directory, then retry the interrupted deployment.
 
-These protections coordinate configuration files and reloads. They do not roll back application containers, databases or migrations when later deployment steps fail.
+These protections coordinate configuration files and reloads. They do not roll back application containers or databases when later deployment steps fail.
 
-## Adopting the changes on an existing host
+## Hardening an integrated stack
 
-`setup-proxy` without `provision` only integrates per-app sites; it does not retrofit these container defaults. Provisioning also refuses to overwrite differing existing files, including files generated by an earlier CLI version. Adding `provision` to an existing host does not automatically upgrade its proxy configuration.
+`setup-proxy` without `provision` only integrates per-app sites; it does not retrofit these container defaults. Provisioning also refuses to overwrite differing files already in the proxy directory, so adding `provision` to a host with an operator-managed stack does not change its proxy configuration.
 
-Back up the current stack and review its inline routes, custom mounts, environment requirements and image modules. Merge the desired root-template settings into the existing Caddyfile; preserve every existing route and the sites import. Merge the healthcheck, stop budget, log limits and filesystem restrictions into its Compose service, checking that extra modules have all required writable paths. Verify the exact image in a disposable environment first. Reconcile the stored template/host configuration with the reviewed files so future previews remain useful.
+Back up the current stack and review its inline routes, custom mounts, environment requirements and image modules. Merge the desired root-template settings into its Caddyfile; preserve every route and the sites import. Merge the healthcheck, stop budget, log limits and filesystem restrictions into its Compose service, checking that extra modules have all required writable paths. Verify the exact image in a disposable environment first. Reconcile the stored template/host configuration with the reviewed files so future previews remain useful.
 
 Apply shared Caddyfile changes with a validating reload. Applying Compose changes requires a controlled container recreation, with a maintenance window if brief interruption is unacceptable. Verify private admin health, public certificates and each important application afterward. Keep the original files and image digest available for recovery. Updating the CLI does not modify running hosts.
 

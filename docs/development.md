@@ -1,6 +1,6 @@
 # Development
 
-[README](../README.md) · [Configuration](configuration.md) · [Ingress](ingress.md) · [Caddy templates](caddy-templates.md) · [Secrets](secrets.md) · [SSH deployment](ssh-deployment.md)
+[README](../README.md) · [Commands](commands.md) · [Configuration](configuration.md) · [Ingress](ingress.md) · [Caddy templates](caddy-templates.md) · [Secrets](secrets.md) · [SSH deployment](ssh-deployment.md)
 
 ## Requirements
 
@@ -69,7 +69,7 @@ src/extensions/
   ingress.ts          ingress contract and registry
 ```
 
-These are bundled, source-level extensions. There is no package discovery, install command or arbitrary module loading from application YAML. Adding another implementation means shipping it with the CLI; existing configuration remains compatible.
+These are bundled, source-level extensions. There is no package discovery, install command or arbitrary module loading from application YAML. Adding another implementation means shipping it with the CLI.
 
 ### Credential providers
 
@@ -93,19 +93,19 @@ An ingress extension supplies pure plans for readiness probes, host setup, route
 To add ingress:
 
 1. Add the implementation and app/host configuration schemas under `src/extensions/<ingress>/`.
-2. Include its named app/host schemas in `Ingress` and `HostIngress` in `src/extensions/config.ts`. Add its normalized input to `ResolvedIngress` / `ProxyConfig` and extend the corresponding resolution functions. Keep legacy configuration accepted during migration.
+2. Include its named app/host schemas in `Ingress` and `HostIngress` in `src/extensions/config.ts`. Add its normalized input to `ResolvedIngress` / `ProxyConfig` and extend the corresponding resolution functions.
 3. Register the implementation in `ingressExtensions`, covering setup, probes, check interpretation, activation and removal. Check failures with `fix: "deploy"` are repaired by deployment and do not block it; other failures block.
 4. Test both client execution and deployed SSH operations, including route failure, removal and recovery.
 
-Apps and hosts select Caddy through `ingress.caddy`, or Cloudflare through `ingress["cloudflare-tunnel"]`, with settings nested under the extension name. Credential sources use `secrets["1password"]` and `secrets["env-file"]`. Apps and credential sources select exactly one extension. Hosts can declare both ingress providers; each provider retains its own validation. Host loaders preserve both providers when resolving their templates and credential paths. Omitted ingress or `none: {}` bypasses ingress. Legacy flat selectors and host `proxy` entries normalize to the existing internal contracts, so planners and deployed SSH operations preserve their behavior. `setup-proxy --ingress caddy|cloudflare-tunnel` selects one host capability; omission is allowed only for a single provider. App checks and planning request their own provider explicitly.
+Apps and hosts select Caddy through `ingress.caddy`, or Cloudflare through `ingress["cloudflare-tunnel"]`, with settings nested under the extension name. Credential sources use `secrets["1password"]` and `secrets["env-file"]`. Apps and credential sources select exactly one extension. Hosts can declare both ingress providers; each provider retains its own validation. Host loaders preserve both providers when resolving their templates and credential paths. Omitted ingress or `none: {}` bypasses ingress. Named selections normalize to internal contracts that planners and deployed SSH operations share. `setup-proxy --ingress caddy|cloudflare-tunnel` selects one host capability; omission is allowed only for a single provider. App checks and planning request their own provider explicitly.
 
 ### Caddy implementation
 
-Caddy's optional host `provision` settings dispatch to `extensions/caddy/provision.ts` and `provision.sh`. Planning generates non-secret Compose/Caddyfile content; the host script validates it with credentials from an existing host env file. Bootstrap never overwrites differing files or adopts another stack's container. Repeat runs retain per-app routes and persistent storage. `setup-proxy --dry-run` renders the planned script and input without opening SSH. Provisioning remains separate from ordinary app deployment and from the legacy existing-proxy setup script.
+Caddy's optional host `provision` settings dispatch to `extensions/caddy/provision.ts` and `provision.sh`. Planning generates non-secret Compose/Caddyfile content; the host script validates it with credentials from a host env file that must already exist. Bootstrap never overwrites differing files or adopts another stack's container. Repeat runs retain per-app routes and persistent storage. `setup-proxy --dry-run` renders the planned script and input without opening SSH. Provisioning remains separate from ordinary app deployment and from the setup script that integrates an operator-managed proxy.
 
 Caddy defaults live in `extensions/caddy/templates/*.tmpl`. Host `templates.site`/`templates.config` and app `siteTemplate` accept filenames or `{ inline }` sources. Extension configuration loading resolves winning host files relative to their declaring YAML and app files after destination selection, replacing paths with inline text before pure planning. The renderer supports literal variables and truthy/inverted sections; it never evaluates JavaScript, shell code or environment variables. Rendered SSH routes contain the rendered configuration, not local template dependencies.
 
-Route mutations run the embedded `route.sh` runtime under the same proxy lock as setup. Files are staged and renamed before a validating reload; failures restore the file and attempt a recovery reload. Recovery failure retains the lock and private staging directory. Fresh stacks have healthchecks, bounded logs and explicit drain budgets.
+Route mutations run the embedded `route.sh` runtime under the same proxy lock as setup. Files are staged and moved into place before a validating reload; failures restore the file and attempt a recovery reload. Recovery failure retains the lock and private staging directory. Fresh stacks have healthchecks, bounded logs and explicit drain budgets.
 
 Operator guides: [Ingress](ingress.md), [Caddy templates](caddy-templates.md) and [Caddy production operations](caddy-production.md). The production guide also documents the opt-in real-Docker smoke test.
 

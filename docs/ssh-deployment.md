@@ -1,6 +1,6 @@
 # SSH deployment
 
-[README](../README.md) · [Configuration](configuration.md) · [Ingress](ingress.md) · [Caddy templates](caddy-templates.md) · [Secrets](secrets.md) · [Development](development.md)
+[README](../README.md) · [Commands](commands.md) · [Configuration](configuration.md) · [Ingress](ingress.md) · [Caddy templates](caddy-templates.md) · [Secrets](secrets.md) · [Development](development.md)
 
 With `execution: ssh`, compoza writes a flat stack folder and runs the host's own Compose CLI over SSH. Recover by deploying a known image tag with the current configuration. Client execution remains the default; see [Configuration](configuration.md#execution-and-transport) for how execution combines with image transport.
 
@@ -15,7 +15,7 @@ The host must provide:
 - `base64`, and curl for HTTP health checks
 - Working BuildKit/Buildx for `remote-build`
 
-The operator provisions a separate host dotenv file (when used), host overlays and Docker registry authentication. Managed secret providers supply values from the CLI machine for the private stack `.env`.
+The operator provisions host overlays, any host-only env files they reference, and Docker registry authentication. Managed secret providers supply values from the CLI machine for the private stack `.env`.
 
 **What `check` verifies.** The read-only `check` command probes Docker access, Compose wait/config support, jq availability, the selected host paths, and optional curl/Buildx, without creating folders or changing builders. It does **not** enforce the minimum Bash/jq versions or exhaustively probe system utilities; provisioning must supply them.
 
@@ -33,7 +33,6 @@ This app deploys to `atlas` (a `registry` host with a shared Caddy, from the [ho
 ```yaml
 borealis:
   ssh: deploy@borealis.example.com
-  address: 198.51.100.73
   platform: linux/amd64
   transport:
     mode: remote-build
@@ -57,9 +56,9 @@ profiles:
   - web
 environment:
   PUBLIC_TITLE: Sample app
+  DATA_PATH: /srv/data/sample-app
 remote:
   stackDir: /srv/stacks/sample-app
-  envFile: /srv/secrets/sample-app.env
   overlayFile: /srv/stacks/sample-app/compose.host.yaml
   waitTimeoutSeconds: 180
 ingress:
@@ -77,9 +76,10 @@ destinations:
     profiles:
       - web
       - worker
+    environment:
+      DATA_PATH: /home/deploy/data/sample-app
     remote:
       stackDir: /home/deploy/stacks/sample-app
-      envFile: /home/deploy/secrets/sample-app.env
       overlayFile: /home/deploy/stacks/sample-app/compose.host.yaml
       waitTimeoutSeconds: 180
     ingress:
@@ -99,14 +99,29 @@ services:
     volumes:
       - ./config/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ${DATA_PATH:?absolute host data path required}:/data
-    environment:
-      API_TOKEN: ${API_TOKEN:?host secret required}
 ```
 
-- The separate host-owned env file provides `DATA_PATH` as an **absolute host path**, and `API_TOKEN`.
-- Host overlays add ports, networks or machine-specific absolute mounts: here the `atlas` overlay joins Caddy's external network, and the `borealis` overlay publishes `127.0.0.1:8080:3000`.
+`/srv/stacks/sample-app/compose.host.yaml`, created by the operator **on atlas**:
+
+```yaml
+services:
+  web:
+    env_file:
+      - path: /srv/secrets/sample-app.env
+    networks:
+      default: {}
+      edge:
+        aliases: [sample-app-web]
+networks:
+  edge:
+    external: true
+    name: edge_network
+```
+
+- `DATA_PATH` is an **absolute host path**, set per destination in `environment`.
+- Host overlays add ports, networks, machine-specific absolute mounts and host-only env files. Here the `atlas` overlay joins Caddy's external network and loads `API_TOKEN` from `/srv/secrets/sample-app.env`; the `borealis` overlay publishes `127.0.0.1:8080:3000` and loads `/home/deploy/secrets/sample-app.env` the same way. Those env files never leave the host.
 - `compose.borealis.yaml` supplies any worker service selected by that destination's profiles.
-- `remote.envFile` and `remote.overlayFile` are absolute host paths; explicitly configured files must already exist.
+- `remote.overlayFile` and service `env_file` entries are absolute host paths; the configured overlay must already exist.
 
 ```sh
 compoza check infra --destination atlas --json
@@ -138,11 +153,11 @@ A deployed stack contains:
 
 There are no release, activation, current/previous, backup or archived-secret directories. The transient `.deploy-lock` holds upload files and disappears when the operation exits. No runtime shell scripts or jq filters are installed in the stack.
 
-`.compoza.json` records the deployed project, tag, profiles, declared files, owned file paths, host env/overlay paths, credential policy and ingress removal operation. Lifecycle commands use these settings rather than undeployed local edits. It contains no resolved credentials or previous deployment snapshots.
+`.compoza.json` records the deployed project, tag, profiles, declared files, owned file paths, the overlay path, credential policy and ingress removal operation. Lifecycle commands use these settings rather than undeployed local edits. It contains no resolved credentials or previous deployment snapshots.
 
-The CLI replaces only its own stack files. It refuses symlinked stack ancestors and outputs, invalid existing metadata, and preexisting files it does not own. An existing `.env` without lifecycle metadata is treated as operator data: move it to a separate host file and select that file with `remote.envFile`, or choose a fresh `stackDir`. Explicit host env/overlay paths must be separate from generated outputs.
+The CLI replaces only its own stack files. It refuses symlinked stack ancestors and outputs, invalid deployed metadata, and files it does not own. A `.env` in a stack folder without lifecycle metadata is treated as operator data: move it to a separate host file and reference that file with an absolute `env_file:` path in Compose or the host overlay, or choose a fresh `stackDir`. The overlay path must be separate from generated outputs.
 
-Operator overlays, separate host env files, persistent data and undeclared files are retained. Assets removed from configuration are left in place, and their ownership is remembered so they can be declared again later. Retained assets must be declared again before use as relative file references or binds. The CLI does not prune operator storage. Existing directories from older deployment layouts are not removed or migrated automatically.
+Operator overlays, host-only env files, persistent data and undeclared files are retained. Assets removed from configuration are left in place, and their ownership is remembered so they can be declared again later. Retained assets must be declared again before use as relative file references or binds. The CLI does not prune operator storage.
 
 ## Stack bundle and assets
 
@@ -160,10 +175,10 @@ Service `env_file` and `secrets.file` must use absolute host paths, with optiona
 
 Compose runs with a clean shell environment, retaining only home, path and Docker connection settings. Arbitrary SSH-session values cannot override application settings.
 
-1. An explicit `remote.envFile`, when present, supplies live host-owned values.
-2. The private generated `.env` supplies configured `environment`, selected managed secrets and the image references for this deployment. These values override the separate host env file.
+- Compose interpolation reads only the private generated `.env`. It supplies configured `environment`, selected managed secrets and the image references for this deployment.
+- Host-only values reach containers through absolute service `env_file:` paths in Compose or the host overlay. Compose reads those files on the host when it creates the containers; a service's `environment` entries take precedence over them.
 
-`secrets` and `remote.envFile` are alternative sources, as in client configuration validation. An explicit `secrets.none` writes no managed credentials. The CLI does not implicitly adopt an existing root `.env`. Managed values are encoded literally, never evaluated as shell code, and stay out of process arguments and lifecycle metadata.
+An explicit `secrets.none` writes no managed credentials. The CLI never adopts an operator `.env` in the stack root. Managed values are encoded literally, never evaluated as shell code, and stay out of process arguments and lifecycle metadata.
 
 ## Validation and privacy
 
@@ -182,11 +197,11 @@ Managed status projects only service/state/health/exit-code fields and redacts s
 5. Create configured persistent directories and run `up --detach --force-recreate --remove-orphans --no-build --wait`. Every deployment recreates services, including when reusing image tags, so file bind mounts see updated assets. This restarts containers even when their configuration is unchanged.
 6. Apply the ingress route and run configured HTTP readiness checks.
 
-Upload or validation failures leave deployed files unchanged. File replacement is in place, without backups or an atomic multi-file commit. An interruption during replacement can leave a mixed set of files; a Compose, route or health failure can leave changed containers or routes. Redeploy to recover. Database migrations are never reversed.
+Upload or validation failures leave deployed files unchanged. File replacement is in place, without backups or an atomic multi-file commit. An interruption during replacement can leave a mixed set of files; a Compose, route or health failure can leave changed containers or routes. Redeploy to recover. Database changes are never reversed.
 
 ## Dry runs
 
-`deploy --dry-run` shows the planned operations without writing host files, acquiring locks, building images or reading a credential provider. It cannot fully validate the candidate against the host env and overlay until a real deployment stages it.
+`deploy --dry-run` shows the planned operations without writing host files, acquiring locks, building images or reading a credential provider. It cannot fully validate the candidate against host env files and the overlay until a real deployment stages it.
 
 ## Recover with an image tag
 
@@ -196,15 +211,17 @@ compoza deploy infra --destination borealis --tag <known-image-tag>
 compoza status infra --destination borealis
 ```
 
-`--tag` skips Git and builds and reuses available images. It uses the current local Compose/configuration and resolves the currently selected credential source again. There is no release rollback command or saved configuration history. Check out an earlier application revision yourself when its configuration is also required, and review migrations before redeploying.
+`--tag` skips Git and builds and reuses available images. It uses the current local Compose/configuration and resolves the currently selected credential source again. There is no release rollback command or saved configuration history. Check out an earlier application revision yourself when its configuration is also required, and review database changes before redeploying.
 
 ## Lifecycle on SSH execution
 
 `status`, `logs`, `stop`, `start` and `delete` use the deployed flat files and lifecycle metadata. They do not fetch credentials from a client provider or load local Compose changes. Mutations take the same stack lock as deployment; read-only inspection creates no host files.
 
+`logs` runs `docker compose logs` against the deployed stack on the host and streams its output back over SSH, with the same `--tail`, `--follow` and `--service` flags and container prefixes as client execution; see [`logs`](commands.md#logs). `--service` is checked against the deployed stack first, so a misspelled name fails with the deployed service names even though, with a managed secret source (`env-file` or `1password`), Compose's own error output is discarded because it can repeat dotenv values. `--follow` runs the host command under a pseudo-terminal, so it stops on the host when you press Ctrl-C, close the terminal or stop compoza; without one, the host would keep running it until its next write failed.
+
 Delete removes the deployed ingress route, containers and networks. It retains stack files, dotenv, overlays and data. Named volumes are removed only with `--volumes`.
 
-For direct operator inspection on the host, use Docker Compose with `--project-name`, `--project-directory`, the deployed `compose.yaml`, `.env`, and any configured host env/overlay/profile flags. Never print resolved secret-bearing configuration into shared logs. CLI commands apply the stored flags and privacy rules automatically.
+For direct operator inspection on the host, use Docker Compose with `--project-name`, `--project-directory`, the deployed `compose.yaml`, `.env`, and any configured overlay and profile flags. Never print resolved secret-bearing configuration into shared logs. CLI commands apply the stored flags and privacy rules automatically.
 
 Normal SSH termination releases the stack lock. After power loss or SIGKILL, inspect `.deploy-lock/owner` and confirm no operation is active before removing only that stale lock. No deployment history needs cleanup.
 

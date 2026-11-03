@@ -1,6 +1,6 @@
 # Caddy templates
 
-[README](../README.md) · [Configuration](configuration.md) · [Ingress](ingress.md) · [Secrets](secrets.md) · [SSH deployment](ssh-deployment.md) · [Development](development.md)
+[README](../README.md) · [Commands](commands.md) · [Configuration](configuration.md) · [Ingress](ingress.md) · [Secrets](secrets.md) · [SSH deployment](ssh-deployment.md) · [Development](development.md)
 
 Use templates when a shared Caddyfile or an app route needs custom directives. This guide covers file locations, placeholders and overrides; see [Ingress](ingress.md#shared-caddy-proxy) for host setup and provisioning.
 
@@ -11,7 +11,7 @@ Use templates when a shared Caddyfile or an app route needs custom directives. T
 - [Override a template for one app](#override-a-template-for-one-app)
 - [Validation and lifecycle](#validation-and-lifecycle)
 
-Caddy configuration lives in templates: the [bundled site template](../src/extensions/caddy/templates/site.caddy.tmpl) and [bundled Caddyfile template](../src/extensions/caddy/templates/Caddyfile.tmpl) define the default configuration. See [Caddy production operations](caddy-production.md) for the hardening defaults and migration guidance.
+Caddy configuration lives in templates: the [bundled site template](../src/extensions/caddy/templates/site.caddy.tmpl) and [bundled Caddyfile template](../src/extensions/caddy/templates/Caddyfile.tmpl) define the default configuration. See [Caddy production operations](caddy-production.md) for the hardening defaults and how to apply them to an integrated stack.
 
 ## Select template sources
 
@@ -108,4 +108,4 @@ The app template path resolves relative to `deploy.yaml`, after destination sele
 
 ## Validation and lifecycle
 
-Templates are read once during configuration resolution and rendered before remote execution. Readiness compares the rendered site, deployment uses a validating reload under the shared Caddy lock, and SSH lifecycle metadata retains the deployed removal operation so deletion ignores unshipped local template edits. `templates.config` is used only for provisioning a fresh root Caddyfile; it must render `{{sitesImport}}` on its own line at top level. Template CRLF line endings are normalized to LF. It does not replace an existing operator-managed Caddyfile or bypass provisioning's existing-file checks. Updating a shared config template after provisioning therefore requires the same explicit reconciliation as other provisioning changes.
+Templates are read once during configuration resolution and rendered before remote execution. Readiness compares the rendered site, deployment uses a validating reload under the shared Caddy lock, and SSH lifecycle metadata retains the deployed removal operation so deletion ignores unshipped local template edits. `templates.config` is used only for provisioning a fresh root Caddyfile; it must render `{{sitesImport}}` on its own line at top level. Template CRLF line endings are normalized to LF. It does not replace an operator-managed Caddyfile or bypass provisioning's checks for files already on the host. Updating a shared config template after provisioning therefore requires the same explicit reconciliation as other provisioning changes.

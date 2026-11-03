@@ -25,6 +25,8 @@ information that cannot be established from the repository or current session.
    overrides global hosts in `~/.config/compoza/hosts.yaml` by name. Preserve the
    working directory and any explicit `--hosts` or `COMPOZA_HOSTS` selection; explicit
    selection uses one file exclusively. Host entries may reference external files with `$ref`.
+   Files linked with `compoza hosts link` are read with the global file; `compoza hosts list`
+   shows which file defines the selected host.
 
 Read the tool's README and relevant reference docs when available. This skill is also
 usable when copied into an application repository; do not assume those docs were copied.
@@ -59,14 +61,16 @@ compoza logs infra --tail 50
 ## Secret handling
 
 - `secrets` selects `env-file`, `1password`, or `none`; app, destination and local
-  overrides replace the complete source. Do not combine competing legacy aliases.
+  overrides replace the complete source; sources are never merged. Host-only values
+  belong in operator-owned files referenced by absolute Compose `env_file:` paths.
 - Production sources require explicit `local.secrets` for `--local`, even when that
   source is `none`. Never use production credentials merely to test a local build.
 - Ordinary checks and dry runs do not resolve providers. Use `check --secrets --json`
   only when source access needs verification; add `--local` to test the local source.
   Reports contain names/status only. `--local` alone performs no secret access check.
-- Authentication belongs to the operator environment: `OP_SERVICE_ACCOUNT_TOKEN` or
-  `COMPOZA_1PASSWORD_ACCOUNT`. Never place credentials in app YAML, assets,
+- Authentication belongs to the operator environment: `OP_SERVICE_ACCOUNT_TOKEN`,
+  `COMPOZA_1PASSWORD_ACCOUNT`, or the saved `1password.account` setting
+  (`compoza config get 1password.account`). Never place credentials in app YAML, assets,
   image builds, command arguments, or chat. Never read a personal vault just to test
   the CLI implementation.
 - Do not print resolved Compose configuration or secret-bearing host diagnostics. Managed
@@ -82,19 +86,20 @@ SSH deployment normalizes selected Compose files into `<stackDir>/compose.yaml`,
 writes private `.env` and declared assets, and keeps one nonsecret `.compoza.json`
 for deployed lifecycle settings and the removal operation. An operator overlay remains
 separate and live. No releases, activation records, current/previous pointers, backups
-or helper scripts are installed. Existing old folders and data are left alone.
+or helper scripts are installed. Undeclared folders and operator data are left alone.
 
-The CLI owns only its declared outputs. An existing unowned `.env` must be moved to
-a separate host path and selected with `remote.envFile`, or use a fresh stack folder.
+The CLI owns only its declared outputs. An unowned `.env` in the stack folder must be
+moved to a separate host path and referenced with an absolute `env_file:` path in
+Compose or the host overlay, or use a fresh stack folder.
 Never overwrite operator data to bypass an ownership error.
 
 Upload and validation failure preserve deployed files. Replacement is in place, and
 later failure can leave changed files, containers or routes. Recover using
 `deploy --tag <known-image-tag>` with current local configuration and the current
 credential source. There is no saved release configuration or rollback command.
-Do not promise automatic recovery or reversal of migrations. Lifecycle uses the
+Do not promise automatic recovery or reversal of database changes. Lifecycle uses the
 deployed files without fetching a provider. Do not remove a lock without establishing
-that its owner is no longer active.
+that its owner has exited.
 
 ## Handoff
 
@@ -116,4 +121,4 @@ credential paths remain relative to the declaring host YAML, including `$ref` fi
 
 Host `ingress["cloudflare-tunnel"].provision` lets `setup-proxy` create the host connector and shared network. It requires a pre-existing remotely managed tunnel and exactly one of `envFile` (private host file with raw `TUNNEL_TOKEN`) or `secrets` (native 1Password/dotenv source, selected `CLOUDFLARE_TUNNEL_TOKEN`). Setup dry runs fetch no secrets or SSH. Real setup sends only the selected token over stdin, checks its account/tunnel identity, guards file/container ownership and waits for the native connection health check. Reruns recreate the shared connector and can briefly affect its applications.
 
-`templates.compose` customizes the hardened connector stack; `templates.route` and app `routeTemplate` customize managed `originRequest` settings. Filenames resolve relative to their declaring YAML. Preserve identity, credential and isolation invariants; differing existing Compose files require explicit reconciliation. `routing: "manual"` leaves dashboard routes untouched and needs no API token or state directory. Managed routing requires the separate host `apiTokenFile` and `stateDir`. DNS, tunnel creation and Access remain operator-owned. Read `docs/cloudflare-provisioning.md` when available.
+`templates.compose` customizes the hardened connector stack; `templates.route` and app `routeTemplate` customize managed `originRequest` settings. Filenames resolve relative to their declaring YAML. Preserve identity, credential and isolation invariants; differing Compose files already on the host require explicit reconciliation. `routing: "manual"` leaves dashboard routes untouched and needs no API token or state directory. Managed routing requires the separate host `apiTokenFile` and `stateDir`. DNS, tunnel creation and Access remain operator-owned. Read `docs/cloudflare-provisioning.md` when available.

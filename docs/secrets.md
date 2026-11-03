@@ -1,6 +1,6 @@
 # Secrets
 
-[README](../README.md) · [Configuration](configuration.md) · [Ingress](ingress.md) · [Caddy templates](caddy-templates.md) · [SSH deployment](ssh-deployment.md) · [Development](development.md)
+[README](../README.md) · [Commands](commands.md) · [Configuration](configuration.md) · [Ingress](ingress.md) · [Caddy templates](caddy-templates.md) · [SSH deployment](ssh-deployment.md) · [Development](development.md)
 
 Secrets are resolved on the CLI machine from one explicitly selected source. Never put tokens, passwords or account authentication in `deploy.yaml`, `environment`, assets or Docker build contexts.
 
@@ -37,28 +37,16 @@ No secrets:
 none: {}
 ```
 
-The source object selects exactly one extension by name: `secrets["1password"]`, `secrets["env-file"]`, or `secrets.none`. Settings belong inside that extension object. Unknown extensions, missing required settings, multiple selected extensions and mixed legacy/nested selectors are rejected.
-
-Existing flat objects such as `{ provider: 1password, environmentId: … }` remain supported for migration. Both forms follow the same source replacement, local isolation, validation and dry-run rules.
+The source object selects exactly one extension by name: `secrets["1password"]`, `secrets["env-file"]`, or `secrets.none`. Settings belong inside that extension object. Unknown extensions, unknown settings, missing required settings and multiple selected extensions are rejected.
 
 Relative dotenv paths resolve against the deploy folder; `~/` expands to the operator's home folder. Both providers work with client and SSH execution.
 
 ## Where sources apply
 
-- `secrets` is supported at app level, under a destination, and under `local`.
-- A destination's `secrets` replaces the whole inherited source, including inherited legacy `envFile` and `remote.envFile` settings.
+- `secrets` is supported at app level, under a destination, and under `local`. An app that omits it resolves no secrets.
+- A destination's `secrets` replaces the whole inherited source.
 - Use `none: {}` to intentionally clear an inherited source.
 - A production source requires an explicit `local.secrets` for `--local` runs, including `none` when local Compose needs no secrets.
-
-### Legacy sources and aliases
-
-| Setting           | Meaning                                                                              |
-| ----------------- | ------------------------------------------------------------------------------------ |
-| `envFile`         | Legacy alias for the client-side `env-file` provider                                 |
-| `remote.envFile`  | SSH execution only: a host-owned dotenv file, read on the host                       |
-| `<stackDir>/.env` | SSH execution only: optional host-owned dotenv used when `remote.envFile` is omitted |
-
-Select one source, never competing aliases: declaring `secrets` together with a legacy source at the same level is an error. Client-resolved dotenv is parsed locally; legacy host dotenv stays on the host.
 
 ## 1Password
 
@@ -78,13 +66,28 @@ secrets:
       - PROMPTSUB_API_KEY
 ```
 
-`variables` accepts environment identifiers, matched exactly and case-sensitively, with no wildcards or renaming. A missing requested variable fails the secret read before builds or host writes. An empty list imports nothing and skips the SDK read; omitting the field retains the existing import-all behavior. An existing variable with an empty value is still imported; applications can require a nonempty value in Compose with `${PROMPTSUB_API_KEY:?required}`.
+`variables` accepts environment identifiers, matched exactly and case-sensitively, with no wildcards or renaming. A missing requested variable fails the secret read before builds or host writes. An empty list imports nothing and skips the SDK read; omitting the field imports every variable. A variable with an empty value is still imported; applications can require a nonempty value in Compose with `${PROMPTSUB_API_KEY:?required}`.
 
-The SDK still reads the complete Environment into CLI memory. Compoza discards excluded entries before validating deployment variables or producing commands and payloads, so excluded names and values are absent from the generated `.env`, SSH upload and secret-access report. This applies to client and SSH execution, named and legacy 1Password selections, destinations and explicit local sources. Other providers are unchanged. Ordinary nonsecret settings and image references are still written to `.env`.
+The SDK still reads the complete Environment into CLI memory. Compoza discards excluded entries before validating deployment variables or producing commands and payloads, so excluded names and values are absent from the generated `.env`, SSH upload and secret-access report. This applies to client and SSH execution, destinations and explicit local sources. Other providers are unchanged. Ordinary nonsecret settings and image references are still written to `.env`.
 
 ### Authentication
 
-**Interactive desktop:** enable the SDK integration in the 1Password app and set `COMPOZA_1PASSWORD_ACCOUNT` to the account selected in the desktop app:
+compoza authenticates to 1Password on the CLI machine with the first of these that is set:
+
+1. `OP_SERVICE_ACCOUNT_TOKEN`: a service-account token, for automation.
+2. `COMPOZA_1PASSWORD_ACCOUNT`: a desktop account for this shell or run.
+3. The `1password.account` [setting](configuration.md#settings): your saved default desktop account.
+
+With none of them set, a 1Password read fails and asks you to verify operator authentication.
+
+**Interactive desktop:** enable the SDK integration in the 1Password app and save the account selected in the desktop app as your default, once per machine:
+
+```sh
+compoza config set 1password.account "Atlas Example"
+compoza config get 1password.account   # check what is saved
+```
+
+The account is stored in `~/.config/compoza/config.yaml`; it is a name or UUID, not a credential. To use a different account for one shell or run, set `COMPOZA_1PASSWORD_ACCOUNT`, which takes precedence over the saved account:
 
 ```sh
 export COMPOZA_1PASSWORD_ACCOUNT="Atlas Example"
@@ -92,7 +95,7 @@ export COMPOZA_1PASSWORD_ACCOUNT="Atlas Example"
 
 Unlock the app and approve its request when prompted.
 
-**Automation:** supply `OP_SERVICE_ACCOUNT_TOKEN` through the operator's protected environment and grant the service account access to the selected Environment. A nonempty service-account token takes precedence over desktop account selection.
+**Automation:** supply `OP_SERVICE_ACCOUNT_TOKEN` through the operator's protected environment and grant the service account access to the selected Environment. A nonempty service-account token takes precedence over desktop account selection, and the settings file is not read for authentication when one is set.
 
 Authentication variables are stripped from Docker, Buildx, SSH and Git child processes. See the [official Environment read guide](https://www.1password.dev/environments/read-environment-variables).
 
@@ -144,13 +147,13 @@ services:
 
 With a managed source (`env-file` or `1password`), the selected values travel over SSH stdin and are combined with generated nonsecret variables and image references in the stack `.env`, mode `0600`. Compose validates the staged files before replacing the flat stack. No resolved credentials enter `compose.yaml`, `.compoza.json`, process arguments or deployment logs; private validation diagnostics are discarded.
 
-Upload or validation failure preserves the deployed `.env`. Later replacement, Compose or readiness failure may leave updated files or containers; recover by redeploying. No older credential copies or deployment backups are retained.
+Upload or validation failure preserves the deployed `.env`. Later replacement, Compose or readiness failure may leave updated files or containers; recover by redeploying. No earlier credential copies or deployment backups are retained.
 
-An explicit `remote.envFile` selects a separate live operator-owned host file. It cannot be the generated `<stackDir>/.env`; move an existing operator `.env` to a separate path before deploying into that folder. Host overlays remain live and are never overwritten. See [host layout](ssh-deployment.md#host-layout-and-ownership).
+Values that must never leave the host belong in a separate operator-owned dotenv file there, referenced by an absolute `env_file:` path in a Compose file or the host overlay (`remote.overlayFile`). Compose reads it on the host as container environment; it is not a `secrets` source and is independent of the selected one. The generated `<stackDir>/.env` belongs to compoza: move an operator `.env` out of a stack folder before deploying into it. Host overlays remain live and are never overwritten. See [host layout](ssh-deployment.md#host-layout-and-ownership).
 
 ## Recovery and lifecycle
 
 - `status`, `logs`, `stop`, `start` and `delete` read deployed host files without fetching 1Password or client dotenv.
-- `deploy --tag <known-tag>` reuses older images with current local configuration and freshly resolves the selected source. It does not restore older passwords or archived configuration.
+- `deploy --tag <known-tag>` reuses earlier images with current local configuration and freshly resolves the selected source. It does not restore earlier passwords or archived configuration.
 - Deploying `none` writes the generated `.env` without managed secret values; there is no fallback to an earlier source.
 - Delete retains the stack `.env` and other files; remove sensitive files separately only when that cleanup is explicitly intended.
