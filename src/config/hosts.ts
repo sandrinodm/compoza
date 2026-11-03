@@ -17,11 +17,15 @@ import { readConfigFile } from './config-file.ts';
 import { Ipv4, Name, Platform, Registry, SshDestination } from './schema.ts';
 export { ProxyConfig } from '../extensions/config.ts';
 
-export { DEFAULT_PROXY_COMPOSE_FILE, proxyComposeFile, proxyService } from '../extensions/caddy/config.ts';
+export {
+  DEFAULT_PROXY_COMPOSE_FILE,
+  proxyComposeFile,
+  proxyService,
+} from '../extensions/caddy/config.ts';
 
 /**
- * Images reach the host through a registry: built with `--push` here, pulled by Compose there. The host needs a stored
- * login for the registry, which the readiness check verifies.
+ * Images reach the host through a registry: built with `--push` here, pulled by Compose there. The
+ * host needs a stored login for the registry, which the readiness check verifies.
  */
 export const RegistryTransport = Schema.Struct({
   /**
@@ -36,8 +40,8 @@ export const RegistryTransport = Schema.Struct({
 });
 
 /**
- * Images reach the host over SSH: built with `--load` here, then `docker save` piped through `ssh` into `docker load`
- * there. No registry is involved, so Compose runs with `--pull never`.
+ * Images reach the host over SSH: built with `--load` here, then `docker save` piped through `ssh`
+ * into `docker load` there. No registry is involved, so Compose runs with `--pull never`.
  */
 export const SshLoadTransport = Schema.Struct({
   /**
@@ -61,7 +65,8 @@ export const Transport = Schema.Union([
 ]);
 
 /**
- * One Docker host: where to reach it, what it runs, how images get there, and its shared proxy if it has one.
+ * One Docker host: where to reach it, what it runs, how images get there, and its shared proxy if
+ * it has one.
  */
 export const HostConfig = Schema.Struct({
   /**
@@ -115,7 +120,8 @@ const HostReference = Schema.Struct({
 });
 
 /**
- * Hosts on disk can be inline configurations or references; deployment code receives resolved hosts only.
+ * Hosts on disk can be inline configurations or references; deployment code receives resolved hosts
+ * only.
  */
 const HostsFile = Schema.Record(Name, Schema.Union([HostConfig, HostReference]));
 
@@ -140,22 +146,27 @@ export type Hosts = typeof Hosts.Type;
 export const HOSTS_ENV = 'COMPOZA_HOSTS';
 
 /**
- * The global hosts file, overlaid by hosts.yaml in the current working directory unless explicitly overridden.
+ * The global hosts file, overlaid by hosts.yaml in the current working directory unless explicitly
+ * overridden.
  */
 export const DEFAULT_HOSTS_PATH = '~/.config/compoza/hosts.yaml';
 
 /**
- * Replaces a leading `~/` with the home folder, as shells would; any other path is returned unchanged.
+ * Replaces a leading `~/` with the home folder, as shells would; any other path is returned
+ * unchanged.
  */
 export function expandHome(path: string): string {
   return path.startsWith('~/') ? join(homedir(), path.slice(2)) : path;
 }
 
 /**
- * The hosts file path for a run: the `--hosts` flag, else the environment variable, else the default.
+ * The hosts file path for a run: the `--hosts` flag, else the environment variable, else the
+ * default.
  */
 export function hostsPath(override: Option.Option<string>): string {
-  return expandHome(override._tag === 'Some' ? override.value : (process.env[HOSTS_ENV] ?? DEFAULT_HOSTS_PATH));
+  return expandHome(
+    override._tag === 'Some' ? override.value : (process.env[HOSTS_ENV] ?? DEFAULT_HOSTS_PATH),
+  );
 }
 
 /**
@@ -169,11 +180,14 @@ const readHostsFile = Effect.fn('readHostsFile')(function* (file: string) {
     HostsFile,
     `No hosts file at ${resolved}. Create it, or point --hosts or ${HOSTS_ENV} at one.`,
   );
-  return Object.fromEntries(Object.entries(entries).map(([name, entry]) => [name, { entry, file: resolved }]));
+  return Object.fromEntries(
+    Object.entries(entries).map(([name, entry]) => [name, { entry, file: resolved }]),
+  );
 });
 
 /**
- * Resolves only the winning entries, so a local override does not read a superseded global reference.
+ * Resolves only the winning entries, so a local override does not read a superseded global
+ * reference.
  */
 const resolveHosts = Effect.fn('resolveHosts')(function* (
   entries: Record<string, { entry: (typeof HostsFile.Type)[string]; file: string }>,
@@ -206,7 +220,8 @@ export const loadHosts = Effect.fn('loadHosts')(function* (file: string) {
 });
 
 /**
- * Overlays current-directory hosts on global hosts by name. Either file may be absent, but not both.
+ * Overlays current-directory hosts on global hosts by name. Either file may be absent, but not
+ * both.
  */
 export const loadDefaultHosts = Effect.fn('loadDefaultHosts')(function* (
   directory = process.cwd(),
@@ -214,7 +229,9 @@ export const loadDefaultHosts = Effect.fn('loadDefaultHosts')(function* (
 ) {
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
-  const files = [...new Set([path.resolve(expandHome(globalFile)), path.resolve(directory, 'hosts.yaml')])];
+  const files = [
+    ...new Set([path.resolve(expandHome(globalFile)), path.resolve(directory, 'hosts.yaml')]),
+  ];
   let entries: Record<string, { entry: (typeof HostsFile.Type)[string]; file: string }> = {};
   let found = false;
 
@@ -235,9 +252,12 @@ export const loadDefaultHosts = Effect.fn('loadDefaultHosts')(function* (
 });
 
 /**
- * Explicit flag/environment selection is exclusive; otherwise use the local-over-global host configuration.
+ * Explicit flag/environment selection is exclusive; otherwise use the local-over-global host
+ * configuration.
  */
-export const loadHostsForRun = Effect.fn('loadHostsForRun')(function* (override: Option.Option<string>) {
+export const loadHostsForRun = Effect.fn('loadHostsForRun')(function* (
+  override: Option.Option<string>,
+) {
   return yield* override._tag === 'Some' || process.env[HOSTS_ENV] !== undefined
     ? loadHosts(hostsPath(override))
     : loadDefaultHosts();
@@ -246,7 +266,10 @@ export const loadHostsForRun = Effect.fn('loadHostsForRun')(function* (override:
 /**
  * Looks up the host an app deploys to, failing with the known host names when the key is unknown.
  */
-export function hostFor(config: DeployConfig, hosts: Hosts): Effect.Effect<HostConfig, DeployError> {
+export function hostFor(
+  config: DeployConfig,
+  hosts: Hosts,
+): Effect.Effect<HostConfig, DeployError> {
   return hostNamed(config.host, hosts);
 }
 
@@ -257,7 +280,9 @@ export function hostNamed(name: string, hosts: Hosts): Effect.Effect<HostConfig,
   const host = hosts[name];
   if (host === undefined) {
     const known = Object.keys(hosts).join(', ') || 'none';
-    return Effect.fail(new DeployError({ message: `Unknown host "${name}" (hosts file defines: ${known})` }));
+    return Effect.fail(
+      new DeployError({ message: `Unknown host "${name}" (hosts file defines: ${known})` }),
+    );
   }
 
   return Effect.succeed(host);
@@ -266,7 +291,10 @@ export function hostNamed(name: string, hosts: Hosts): Effect.Effect<HostConfig,
 /**
  * The legacy Caddy proxy lookup, rejecting missing or incompatible host ingress settings.
  */
-export function proxyOf(host: HostConfig, hostName: string): Effect.Effect<CaddyProxy, DeployError> {
+export function proxyOf(
+  host: HostConfig,
+  hostName: string,
+): Effect.Effect<CaddyProxy, DeployError> {
   const proxy = ingressConfigOf(host, 'caddy');
   return proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy')
     ? Effect.fail(
@@ -292,7 +320,8 @@ export function registryOf(host: HostConfig): string | undefined {
 }
 
 /**
- * Resolves one host capability, rejecting ambiguous selection and competing new and legacy declarations.
+ * Resolves one host capability, rejecting ambiguous selection and competing new and legacy
+ * declarations.
  */
 export function ingressConfigOf(host: HostConfig, provider?: IngressId): ProxyConfig | undefined {
   if (host.ingress !== undefined && host.proxy !== undefined) {

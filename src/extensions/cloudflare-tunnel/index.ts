@@ -13,7 +13,8 @@ import { provisionOperation } from './provision.ts';
 import { routeRule } from './templates.ts';
 
 /**
- * Selects Cloudflare host settings without accepting a different ingress implementation accidentally.
+ * Selects Cloudflare host settings without accepting a different ingress implementation
+ * accidentally.
  */
 function proxyFor(host: HostConfig): CloudflareProxy | undefined {
   const proxy = ingressConfigOf(host, 'cloudflare-tunnel');
@@ -35,10 +36,14 @@ function settings(app: App) {
 /**
  * Builds self-contained host operations from installed Bash/jq assets and non-secret configuration.
  *
- * SSH stack operations embed these sources just like the Caddy operations. Only the host reads its API token; the
- * script contains a token file path but never the token itself.
+ * SSH stack operations embed these sources just like the Caddy operations. Only the host reads its
+ * API token; the script contains a token file path but never the token itself.
  */
-function script(proxy: CloudflareProxy, action: 'setup' | 'probe' | 'route' | 'unroute', app?: App): string {
+function script(
+  proxy: CloudflareProxy,
+  action: 'setup' | 'probe' | 'route' | 'unroute',
+  app?: App,
+): string {
   if (proxy.routing === 'manual') {
     if (action === 'route' || action === 'unroute') {
       return 'set -eu\n# Published routes are operator-managed in Cloudflare.\ntrue\n';
@@ -75,7 +80,8 @@ ${action === 'probe' && proxy.container !== undefined && proxy.network !== undef
 }
 
 /**
- * Reads local connector/network readiness without API credentials or host writes, including dashboard-managed routes.
+ * Reads local connector/network readiness without API credentials or host writes, including
+ * dashboard-managed routes.
  */
 function connectorProbe(proxy: CloudflareProxy, requireReady = false): string {
   if (proxy.container === undefined || proxy.network === undefined) {
@@ -110,9 +116,11 @@ fi`
 }
 
 /**
- * Interprets read-only API and host checks without exposing configuration or requiring a public origin IP.
+ * Interprets read-only API and host checks without exposing configuration or requiring a public
+ * origin IP.
  *
- * Cloudflare's proxied DNS resolves to its edge, so it must not be compared with the Docker host's address.
+ * Cloudflare's proxied DNS resolves to its edge, so it must not be compared with the Docker host's
+ * address.
  */
 function checks(
   app: App,
@@ -195,7 +203,8 @@ function checks(
     {
       name: 'cloudflare-ownership',
       ok: probe.cf_ownership === 'yes',
-      detail: "Hostname must be unused or match this deployment's managed route; external edits require reconciliation",
+      detail:
+        "Hostname must be unused or match this deployment's managed route; external edits require reconciliation",
       fix: 'manual',
     },
     {
@@ -213,7 +222,8 @@ function checks(
 }
 
 /**
- * The Cloudflare Tunnel extension for existing remotely managed tunnels and operator-owned connectors and DNS.
+ * The Cloudflare Tunnel extension for existing remotely managed tunnels and operator-owned
+ * connectors and DNS.
  */
 export const cloudflareIngress: IngressExtension = {
   id: 'cloudflare-tunnel',
@@ -254,7 +264,10 @@ export const cloudflareIngress: IngressExtension = {
       };
     }
 
-    return { script: script(proxy, 'setup'), label: '<prepare Cloudflare Tunnel route ownership storage>' };
+    return {
+      script: script(proxy, 'setup'),
+      label: '<prepare Cloudflare Tunnel route ownership storage>',
+    };
   },
   domain: (app, host) => (proxyFor(host) === undefined ? undefined : settings(app).domain),
   probe: (app, host) => {

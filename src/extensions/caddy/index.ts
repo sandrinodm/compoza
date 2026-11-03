@@ -10,7 +10,8 @@ import { provisionOperation } from './provision.ts';
 import { checkScript, routeScript, setupScript, siteFile, unrouteScript } from './scripts.ts';
 
 /**
- * Requires host settings compatible with the selected Caddy extension before creating mutation scripts.
+ * Requires host settings compatible with the selected Caddy extension before creating mutation
+ * scripts.
  */
 function caddyProxy(host: HostConfig): ProxyConfig {
   const proxy = ingressConfigOf(host, 'caddy');
@@ -34,10 +35,11 @@ function settings(app: App) {
 }
 
 /**
- * The bundled shared-Caddy ingress extension, including setup, readiness and reversible route operations.
+ * The bundled shared-Caddy ingress extension, including setup, readiness and reversible route
+ * operations.
  *
- * Every method is pure. The core executes the returned operations and stores the deployed removal operation in SSH
- * lifecycle metadata.
+ * Every method is pure. The core executes the returned operations and stores the deployed removal
+ * operation in SSH lifecycle metadata.
  */
 export const caddyIngress: IngressExtension = {
   id: 'caddy',

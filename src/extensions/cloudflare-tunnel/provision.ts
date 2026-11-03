@@ -24,9 +24,15 @@ function requireCondition(condition: unknown, requirement: string): asserts cond
 }
 
 /**
- * Checks custom Compose output before planning host operations, preserving connector identity and runtime guarantees.
+ * Checks custom Compose output before planning host operations, preserving connector identity and
+ * runtime guarantees.
  */
-function validateCompose(compose: string, proxy: CloudflareProxy, service: string, envFile: string): void {
+function validateCompose(
+  compose: string,
+  proxy: CloudflareProxy,
+  service: string,
+  envFile: string,
+): void {
   if (Buffer.byteLength(compose) > 256 * 1024) {
     throw new Error('Cloudflare Compose template is too large');
   }
@@ -40,12 +46,18 @@ function validateCompose(compose: string, proxy: CloudflareProxy, service: strin
   }
 
   // Validate the shape before checking individual connector settings.
-  requireCondition(model && typeof model === 'object' && !Array.isArray(model), 'render a Compose mapping');
+  requireCondition(
+    model && typeof model === 'object' && !Array.isArray(model),
+    'render a Compose mapping',
+  );
   requireCondition(
     model.services && typeof model.services === 'object' && !Array.isArray(model.services),
     'define a services mapping',
   );
-  requireCondition(Object.keys(model.services).length === 1, 'define exactly one connector service');
+  requireCondition(
+    Object.keys(model.services).length === 1,
+    'define exactly one connector service',
+  );
 
   const connector = model.services[service];
   requireCondition(
@@ -83,33 +95,51 @@ function validateCompose(compose: string, proxy: CloudflareProxy, service: strin
 
   // Keep the stack identity fixed while allowing supported runtime tuning.
   requireCondition(model.name === `${proxy.container}-ingress`, 'preserve the stack project name');
-  requireCondition(connector.container_name === proxy.container, 'preserve the connector container name');
+  requireCondition(
+    connector.container_name === proxy.container,
+    'preserve the connector container name',
+  );
   requireCondition(
     connector.image === (proxy.provision?.image ?? DEFAULT_CLOUDFLARED_IMAGE),
     'use the configured connector image',
   );
-  requireCondition(connector.user === (proxy.provision?.user ?? '65532:65532'), 'use the configured connector user');
+  requireCondition(
+    connector.user === (proxy.provision?.user ?? '65532:65532'),
+    'use the configured connector user',
+  );
   requireCondition(connector.restart === 'unless-stopped', 'use the unless-stopped restart policy');
 
   // The allowed settings above exclude ports, volumes, builds and namespace or privilege overrides.
   requireCondition(connector.read_only === true, 'keep the connector filesystem read-only');
   requireCondition(connector.cap_drop?.includes('ALL'), 'drop all connector capabilities');
-  requireCondition(connector.security_opt?.includes('no-new-privileges:true'), 'prevent privilege escalation');
+  requireCondition(
+    connector.security_opt?.includes('no-new-privileges:true'),
+    'prevent privilege escalation',
+  );
 
   // Credentials come only from the selected raw env file, never command arguments or environment overrides.
   requireCondition(
-    JSON.stringify(connector.env_file) === JSON.stringify([{ path: envFile, required: true, format: 'raw' }]),
+    JSON.stringify(connector.env_file) ===
+      JSON.stringify([{ path: envFile, required: true, format: 'raw' }]),
     'preserve the credential env-file source',
   );
-  requireCondition(JSON.stringify(connector.entrypoint) === '["cloudflared"]', 'use the cloudflared entrypoint');
+  requireCondition(
+    JSON.stringify(connector.entrypoint) === '["cloudflared"]',
+    'use the cloudflared entrypoint',
+  );
 
   const command = connector.command;
   requireCondition(Array.isArray(command), 'define the connector command as an argument list');
   requireCondition(
-    command.every((argument: unknown) => typeof argument === 'string' && !/\$|\r|\n/.test(argument)),
+    command.every(
+      (argument: unknown) => typeof argument === 'string' && !/\$|\r|\n/.test(argument),
+    ),
     'use literal single-line command arguments',
   );
-  requireCondition(command[0] === 'tunnel' && command.at(-1) === 'run', 'run the cloudflared tunnel command');
+  requireCondition(
+    command[0] === 'tunnel' && command.at(-1) === 'run',
+    'run the cloudflared tunnel command',
+  );
 
   for (const flag of [
     '--token',
@@ -128,7 +158,10 @@ function validateCompose(compose: string, proxy: CloudflareProxy, service: strin
   requireCondition(command.includes('--no-autoupdate'), 'disable connector autoupdates');
 
   // Metrics stay private and the command uses the configured drain deadline.
-  requireCondition(command.filter((argument) => argument === '--metrics').length === 1, 'set metrics exactly once');
+  requireCondition(
+    command.filter((argument) => argument === '--metrics').length === 1,
+    'set metrics exactly once',
+  );
   requireCondition(
     command.every((argument: string) => !argument.startsWith('--metrics=')),
     'use a separate metrics address argument',
@@ -155,7 +188,10 @@ function validateCompose(compose: string, proxy: CloudflareProxy, service: strin
     'use the native connector readiness check',
   );
   requireCondition(!connector.healthcheck?.disable, 'keep the readiness check enabled');
-  requireCondition(['local', 'json-file'].includes(connector.logging?.driver), 'use a supported rotating log driver');
+  requireCondition(
+    ['local', 'json-file'].includes(connector.logging?.driver),
+    'use a supported rotating log driver',
+  );
   requireCondition(
     /^[1-9][0-9]*(?:[kmgt]b?)?$/i.test(String(connector.logging?.options?.['max-size'])),
     'set a positive log file size limit',
@@ -164,8 +200,14 @@ function validateCompose(compose: string, proxy: CloudflareProxy, service: strin
     /^[1-9][0-9]*$/.test(String(connector.logging?.options?.['max-file'])),
     'set a positive log file retention count',
   );
-  requireCondition(/^[1-9][0-9]*(?:[kmgt]b?)?$/i.test(String(connector.mem_limit)), 'set a positive memory limit');
-  requireCondition(Number.isInteger(connector.pids_limit) && connector.pids_limit >= 1, 'set a positive PID limit');
+  requireCondition(
+    /^[1-9][0-9]*(?:[kmgt]b?)?$/i.test(String(connector.mem_limit)),
+    'set a positive memory limit',
+  );
+  requireCondition(
+    Number.isInteger(connector.pids_limit) && connector.pids_limit >= 1,
+    'set a positive PID limit',
+  );
   requireCondition(
     connector.stop_grace_period === `${gracePeriodSeconds + 10}s`,
     'preserve shutdown headroom beyond the drain deadline',
@@ -180,10 +222,16 @@ function validateCompose(compose: string, proxy: CloudflareProxy, service: strin
     Object.keys(model.networks).every((key) => ['edge', 'egress'].includes(key)),
     'define only the edge and egress networks',
   );
-  requireCondition(JSON.stringify(model.networks.egress) === '{}', 'keep the egress network private');
+  requireCondition(
+    JSON.stringify(model.networks.egress) === '{}',
+    'keep the egress network private',
+  );
 
   const edge = model.networks.edge;
-  requireCondition(edge && typeof edge === 'object' && !Array.isArray(edge), 'define the shared edge network');
+  requireCondition(
+    edge && typeof edge === 'object' && !Array.isArray(edge),
+    'define the shared edge network',
+  );
   requireCondition(
     Object.keys(edge).every((key) => ['name', 'external'].includes(key)),
     'use only the supported edge network settings',
@@ -197,11 +245,17 @@ function validateCompose(compose: string, proxy: CloudflareProxy, service: strin
 }
 
 /**
- * Generates a guarded host bootstrap, keeping credentials out of templates, plans and SSH command arguments.
+ * Generates a guarded host bootstrap, keeping credentials out of templates, plans and SSH command
+ * arguments.
  */
 export function provisionOperation(proxy: CloudflareProxy): IngressOperation {
   const config = proxy.provision;
-  if (config === undefined || proxy.dir === undefined || proxy.container === undefined || proxy.network === undefined) {
+  if (
+    config === undefined ||
+    proxy.dir === undefined ||
+    proxy.container === undefined ||
+    proxy.network === undefined
+  ) {
     throw new Error('Cloudflare provisioning requires provision, dir, container and network');
   }
 

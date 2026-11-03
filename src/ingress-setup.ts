@@ -6,12 +6,15 @@ import { readSecrets } from './config/secrets.ts';
 import { DeployError } from './errors.ts';
 
 /**
- * Resolves setup-only credentials after dry-run handling and sends selected values exclusively over Remote stdin.
+ * Resolves setup-only credentials after dry-run handling and sends selected values exclusively over
+ * Remote stdin.
  *
- * Ingress plans remain nonsecret. Setup scripts must consume credentials privately and suppress third-party
- * diagnostics.
+ * Ingress plans remain nonsecret. Setup scripts must consume credentials privately and suppress
+ * third-party diagnostics.
  */
-export const setupOperationInput = Effect.fn('setupOperationInput')(function* (operation: IngressOperation) {
+export const setupOperationInput = Effect.fn('setupOperationInput')(function* (
+  operation: IngressOperation,
+) {
   if (operation.secrets === undefined) {
     return operation.input;
   }
@@ -32,7 +35,9 @@ export const setupOperationInput = Effect.fn('setupOperationInput')(function* (o
   for (const [target, source] of Object.entries(operation.secretVariables ?? {})) {
     const value = values[source];
     if (!value || /[\r\n\0]/.test(value) || !/^[A-Za-z0-9+/=_-]+$/.test(value)) {
-      return yield* new DeployError({ message: `Ingress credential ${source} must contain only a connector token` });
+      return yield* new DeployError({
+        message: `Ingress credential ${source} must contain only a connector token`,
+      });
     }
 
     credentials.push(`${target}=${value}`);

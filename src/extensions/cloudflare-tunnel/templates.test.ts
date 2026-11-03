@@ -14,16 +14,22 @@ const proxy: CloudflareProxy = {
 };
 
 const settings = { domain: 'app.example.com', service: 'http://app:80' };
-const app: App = { dir: '/app', config: { name: 'app', host: 'host', targets: [], composeFiles: ['compose.yaml'] } };
+const app: App = {
+  dir: '/app',
+  config: { name: 'app', host: 'host', targets: [], composeFiles: ['compose.yaml'] },
+};
 
 describe('Cloudflare route templates', () => {
   it.each([{ 'cloudflare-tunnel': settings }, { mode: 'cloudflare-tunnel' as const, ...settings }])(
     'renders named and legacy application settings: %s',
     (ingress) => {
-      assert.deepStrictEqual(routeRule(proxy, { ...app, config: { ...app.config, ingress } }, 'app'), {
-        hostname: settings.domain,
-        service: settings.service,
-      });
+      assert.deepStrictEqual(
+        routeRule(proxy, { ...app, config: { ...app.config, ingress } }, 'app'),
+        {
+          hostname: settings.domain,
+          service: settings.service,
+        },
+      );
     },
   );
 
@@ -31,23 +37,26 @@ describe('Cloudflare route templates', () => {
     assert.throws(() => routeRule(proxy, app, 'app'), 'Cloudflare route settings are missing');
   });
 
-  it.each(['null', '42', 'text', '[]', 'hostname: {{domain}}\nservice: {{service}}\noriginRequest: []'])(
-    'rejects non-mapping routes and origin settings: %s',
-    (inline) => {
-      assert.throws(
-        () =>
-          routeRule(
-            { ...proxy, templates: { route: { inline } } },
-            {
-              ...app,
-              config: { ...app.config, ingress: { 'cloudflare-tunnel': settings } },
-            },
-            'app',
-          ),
-        'must preserve hostname/service',
-      );
-    },
-  );
+  it.each([
+    'null',
+    '42',
+    'text',
+    '[]',
+    'hostname: {{domain}}\nservice: {{service}}\noriginRequest: []',
+  ])('rejects non-mapping routes and origin settings: %s', (inline) => {
+    assert.throws(
+      () =>
+        routeRule(
+          { ...proxy, templates: { route: { inline } } },
+          {
+            ...app,
+            config: { ...app.config, ingress: { 'cloudflare-tunnel': settings } },
+          },
+          'app',
+        ),
+      'must preserve hostname/service',
+    );
+  });
 
   it('rejects oversized rendered output before parsing malformed YAML', () => {
     const inline = '[' + 'é'.repeat(128 * 1024);

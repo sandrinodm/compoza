@@ -9,12 +9,14 @@ import YAML from 'yaml';
 import { provisionOperation } from './provision.ts';
 
 /**
- * Explicitly opt into a local connector image; ordinary tests never pull images or use Cloudflare credentials.
+ * Explicitly opt into a local connector image; ordinary tests never pull images or use Cloudflare
+ * credentials.
  */
 const image = process.env.COMPOZA_TEST_CLOUDFLARED_IMAGE;
 
 /**
- * Runs bounded native probes; every diagnostic belongs to an isolated container using a synthetic token.
+ * Runs bounded native probes; every diagnostic belongs to an isolated container using a synthetic
+ * token.
  */
 function run(args: string[], required = true) {
   const result = spawnSync('docker', args, { encoding: 'utf8', timeout: 30000 });
@@ -64,7 +66,15 @@ it.skipIf(image === undefined)(
     const file = join(dir, 'compose.yaml');
     writeFileSync(file, YAML.stringify(model));
 
-    const args = ['compose', '--project-name', `${name}-ingress`, '--env-file', '/dev/null', '-f', file];
+    const args = [
+      'compose',
+      '--project-name',
+      `${name}-ingress`,
+      '--env-file',
+      '/dev/null',
+      '-f',
+      file,
+    ];
 
     try {
       run([...args, 'up', '--detach', '--pull', 'never']);
@@ -80,7 +90,16 @@ it.skipIf(image === undefined)(
       const version = run(['run', '--rm', '--network', 'none', image!, '--version']).stdout;
       assert.include(version, 'cloudflared version');
 
-      const help = run(['run', '--rm', '--network', 'none', image!, 'tunnel', 'ready', '--help']).stdout;
+      const help = run([
+        'run',
+        '--rm',
+        '--network',
+        'none',
+        image!,
+        'tunnel',
+        'ready',
+        '--help',
+      ]).stdout;
       assert.include(help, '--metrics');
       assert.isTrue(info.State.Running);
 
@@ -92,7 +111,8 @@ it.skipIf(image === undefined)(
       assert.include(logs, 'grace-period:30s');
       // No external connection means ready must fail; this proves process-running alone is not readiness.
       assert.notStrictEqual(
-        run(['exec', name, 'cloudflared', 'tunnel', '--metrics', '127.0.0.1:20241', 'ready'], false).status,
+        run(['exec', name, 'cloudflared', 'tunnel', '--metrics', '127.0.0.1:20241', 'ready'], false)
+          .status,
         0,
       );
     } finally {

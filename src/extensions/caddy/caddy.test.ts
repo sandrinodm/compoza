@@ -6,9 +6,21 @@ import type { ProxyConfig } from '../../config/hosts.ts';
 import { mkdirScript } from '../../command.ts';
 import { registryProbe } from '../../probe.ts';
 import { parseCheck } from '../../probe.ts';
-import { checkScript, setupScript, sha256, siteFile, SITES_DESTINATION, SITES_IMPORT, SITES_MOUNT } from './scripts.ts';
+import {
+  checkScript,
+  setupScript,
+  sha256,
+  siteFile,
+  SITES_DESTINATION,
+  SITES_IMPORT,
+  SITES_MOUNT,
+} from './scripts.ts';
 
-const ingress: CaddyIngress = { mode: 'caddy', domain: 'demo.example.com', upstream: 'demo-web:80' };
+const ingress: CaddyIngress = {
+  mode: 'caddy',
+  domain: 'demo.example.com',
+  upstream: 'demo-web:80',
+};
 
 const proxy: ProxyConfig = {
   dir: '/srv/proxy',
@@ -19,8 +31,8 @@ const proxy: ProxyConfig = {
 };
 
 /**
- * The three set-up conditions as both scripts must emit them for `proxy`, written out so a change to one script cannot
- * silently drift from the other.
+ * The three set-up conditions as both scripts must emit them for `proxy`, written out so a change
+ * to one script cannot silently drift from the other.
  */
 const conditions = {
   caddyfileImport: `grep -qsxF '${SITES_IMPORT}' Caddyfile`,
@@ -45,20 +57,29 @@ demo.example.com {
   });
 
   it('leaves both out when the proxy entry has neither', () => {
-    const site = siteFile('demo', ingress, { dir: '/srv/proxy', container: 'caddy', network: 'edge' });
+    const site = siteFile('demo', ingress, {
+      dir: '/srv/proxy',
+      container: 'caddy',
+      network: 'edge',
+    });
     assert.notInclude(site, 'tls');
     assert.notInclude(site, 'import');
     assert.include(site, 'reverse_proxy http://demo-web:80');
   });
 
   it('hashes like shasum', () => {
-    assert.strictEqual(sha256('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+    assert.strictEqual(
+      sha256('abc'),
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    );
   });
 });
 
 describe('checkScript', () => {
   it('probes only what is asked for', () => {
-    const full = [checkScript({ proxy, name: 'demo' }), registryProbe('registry.example.com')].join('\n');
+    const full = [checkScript({ proxy, name: 'demo' }), registryProbe('registry.example.com')].join(
+      '\n',
+    );
     assert.include(full, "cd '/srv/proxy'");
     assert.include(full, `'${SITES_IMPORT}'`);
     assert.include(full, "'sites/demo.caddy'");
@@ -71,7 +92,10 @@ describe('checkScript', () => {
   });
 
   it('keeps probing the network and registry when the proxy folder is missing', () => {
-    const script = [checkScript({ proxy, name: 'demo' }), registryProbe('registry.example.com')].join('\n');
+    const script = [
+      checkScript({ proxy, name: 'demo' }),
+      registryProbe('registry.example.com'),
+    ].join('\n');
     assert.notInclude(script, 'exit');
     assert.include(script, "if cd '/srv/proxy' 2>/dev/null; then");
 
@@ -120,12 +144,15 @@ describe('checkScript', () => {
   });
 
   it('parses the output of a probe whose proxy folder is missing', () => {
-    assert.deepStrictEqual(parseCheck('proxy_dir=missing\nrunning_mount=no\nnetwork=yes\nregistry_login=yes\n'), {
-      proxy_dir: 'missing',
-      running_mount: 'no',
-      network: 'yes',
-      registry_login: 'yes',
-    });
+    assert.deepStrictEqual(
+      parseCheck('proxy_dir=missing\nrunning_mount=no\nnetwork=yes\nregistry_login=yes\n'),
+      {
+        proxy_dir: 'missing',
+        running_mount: 'no',
+        network: 'yes',
+        registry_login: 'yes',
+      },
+    );
   });
 });
 
@@ -167,14 +194,20 @@ describe('host scripts', () => {
     const script = setupScript(proxy);
     assert.notMatch(script, /awk[^]*?&& mv/);
     assert.include(script, "tmp='docker-compose.yaml'.tmp\n  if ! awk ");
-    assert.include(script, `' 'docker-compose.yaml' > "$tmp"; then\n    rm -f "$tmp"\n    false\n  fi\n`);
+    assert.include(
+      script,
+      `' 'docker-compose.yaml' > "$tmp"; then\n    rm -f "$tmp"\n    false\n  fi\n`,
+    );
     assert.include(script, `  mv "$tmp" 'docker-compose.yaml'\n`);
     assert.isBelow(script.indexOf('trap cleanup EXIT'), script.indexOf('if ! awk'));
   });
 
   it('pass the env file to the validation run only when it exists', () => {
     const script = setupScript(proxy);
-    assert.include(script, 'if [ -f .env ]; then set -- --env-file .env; fi\ndocker run --rm "$@" ');
+    assert.include(
+      script,
+      'if [ -f .env ]; then set -- --env-file .env; fi\ndocker run --rm "$@" ',
+    );
     assert.notInclude(script, '--rm --env-file');
   });
 

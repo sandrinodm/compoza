@@ -8,7 +8,13 @@ import type { HostConfig } from '../config/hosts.ts';
 import { DeployConfig } from '../config/deploy.ts';
 import { Hosts } from '../config/hosts.ts';
 import { credentialProvider, credentialProviders, isCredentialEnvironment } from './credentials.ts';
-import { hostIngress, ingressExtension, ingressExtensions, ingressFor, ingressOperationScript } from './ingress.ts';
+import {
+  hostIngress,
+  ingressExtension,
+  ingressExtensions,
+  ingressFor,
+  ingressOperationScript,
+} from './ingress.ts';
 
 const app: App = {
   dir: '/repo',
@@ -18,7 +24,12 @@ const app: App = {
     host: 'atlas',
     targets: [],
     composeFiles: ['compose.yaml'],
-    ingress: { mode: 'caddy', domain: 'demo.example.com', upstream: 'demo:80', healthPath: '/ready' },
+    ingress: {
+      mode: 'caddy',
+      domain: 'demo.example.com',
+      upstream: 'demo:80',
+      healthPath: '/ready',
+    },
   },
 };
 
@@ -45,11 +56,18 @@ describe('bundled extensions', () => {
     assert.throws(() => credentialProvider('unsupported'), 'Unknown credential provider');
     assert.throws(() => ingressExtension('unsupported'), 'Unknown ingress extension');
     assert.throws(() =>
-      Schema.decodeUnknownSync(DeployConfig)({ ...app.config, secrets: { provider: 'unsupported' } }),
+      Schema.decodeUnknownSync(DeployConfig)({
+        ...app.config,
+        secrets: { provider: 'unsupported' },
+      }),
     );
-    assert.throws(() => Schema.decodeUnknownSync(DeployConfig)({ ...app.config, ingress: { mode: 'unsupported' } }));
     assert.throws(() =>
-      Schema.decodeUnknownSync(Hosts)({ atlas: { ...host, proxy: { ...host.proxy, provider: 'unsupported' } } }),
+      Schema.decodeUnknownSync(DeployConfig)({ ...app.config, ingress: { mode: 'unsupported' } }),
+    );
+    assert.throws(() =>
+      Schema.decodeUnknownSync(Hosts)({
+        atlas: { ...host, proxy: { ...host.proxy, provider: 'unsupported' } },
+      }),
     );
   });
 
@@ -101,9 +119,13 @@ describe('frozen ingress operations', () => {
     const script = ingressOperationScript({ script: 'set -eu\ncat', input, label: '<test route>' });
     assert.strictEqual(execFileSync('/bin/bash', ['-c', script], { encoding: 'utf8' }), input);
     assert.strictEqual(
-      execFileSync('/bin/bash', ['-c', ingressOperationScript({ script: 'cat', input: '', label: '<empty>' })], {
-        encoding: 'utf8',
-      }),
+      execFileSync(
+        '/bin/bash',
+        ['-c', ingressOperationScript({ script: 'cat', input: '', label: '<empty>' })],
+        {
+          encoding: 'utf8',
+        },
+      ),
       '',
     );
   });

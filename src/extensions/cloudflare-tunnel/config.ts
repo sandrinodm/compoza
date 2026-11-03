@@ -1,12 +1,20 @@
 import { Schema } from 'effect';
 
-import { AbsolutePath, ComposeServiceName, Domain, HealthPath, Name, NetworkName } from '../../config/schema.ts';
+import {
+  AbsolutePath,
+  ComposeServiceName,
+  Domain,
+  HealthPath,
+  Name,
+  NetworkName,
+} from '../../config/schema.ts';
 import { OnePasswordSelection } from '../1password/config.ts';
 import { CaddyTemplate } from '../caddy/config.ts';
 import { EnvFileSelection } from '../env-file/config.ts';
 
 /**
- * Host validation is shared by named and legacy inputs; spreading fields alone would drop Struct refinements.
+ * Host validation is shared by named and legacy inputs; spreading fields alone would drop Struct
+ * refinements.
  */
 function validCloudflareHost(config: {
   routing?: string;
@@ -17,25 +25,33 @@ function validCloudflareHost(config: {
   container?: string;
   network?: string;
 }): boolean {
-  if (config.routing !== 'manual' && (config.apiTokenFile === undefined || config.stateDir === undefined)) {
+  if (
+    config.routing !== 'manual' &&
+    (config.apiTokenFile === undefined || config.stateDir === undefined)
+  ) {
     return false;
   }
 
   if (config.provision !== undefined || config.routing === 'manual') {
-    return config.dir !== undefined && config.container !== undefined && config.network !== undefined;
+    return (
+      config.dir !== undefined && config.container !== undefined && config.network !== undefined
+    );
   }
 
   return true;
 }
 
 /**
- * Connector provisioning is explicit; credentials come from one source and never from configuration literals.
+ * Connector provisioning is explicit; credentials come from one source and never from configuration
+ * literals.
  */
 export const CloudflareProvision = Schema.Struct({
   /**
    * Override the bundled digest-pinned cloudflared image.
    */
-  image: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._/:@-]*$/))),
+  image: Schema.optionalKey(
+    Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._/:@-]*$/)),
+  ),
 
   /**
    * An existing host dotenv file containing TUNNEL_TOKEN, read only by Docker.
@@ -50,7 +66,9 @@ export const CloudflareProvision = Schema.Struct({
   /**
    * The provider variable mapped to TUNNEL_TOKEN; defaults to CLOUDFLARE_TUNNEL_TOKEN.
    */
-  tokenVariable: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/))),
+  tokenVariable: Schema.optionalKey(
+    Schema.String.check(Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/)),
+  ),
 
   /**
    * Numeric nonroot UID:GID; defaults to 65532:65532.
@@ -60,12 +78,16 @@ export const CloudflareProvision = Schema.Struct({
   /**
    * In-flight request drain deadline; Docker allows ten additional seconds for exit.
    */
-  gracePeriodSeconds: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3600 }))),
+  gracePeriodSeconds: Schema.optionalKey(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3600 })),
+  ),
 
   /**
    * The bounded Compose connection-readiness wait, defaulting to 120 seconds.
    */
-  waitTimeoutSeconds: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3600 }))),
+  waitTimeoutSeconds: Schema.optionalKey(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3600 })),
+  ),
 }).check(
   Schema.makeFilter((p) => (p.envFile === undefined) !== (p.secrets === undefined), {
     message: 'Cloudflare provision requires exactly one of envFile or secrets',
@@ -75,8 +97,9 @@ export const CloudflareProvision = Schema.Struct({
 /**
  * The public HTTP application routed through an existing remotely managed Cloudflare Tunnel.
  *
- * The service URL is resolved from the connector's network, not from the CLI machine. Authentication in URLs is
- * deliberately unsupported so generated plans and host scripts contain no credentials.
+ * The service URL is resolved from the connector's network, not from the CLI machine.
+ * Authentication in URLs is deliberately unsupported so generated plans and host scripts contain no
+ * credentials.
  */
 export const CloudflareSettings = Schema.Struct({
   /**
@@ -107,11 +130,12 @@ export const CloudflareSettings = Schema.Struct({
 });
 
 /**
- * The existing Cloudflare Tunnel and host-local operator authentication used to manage its application routes.
+ * The existing Cloudflare Tunnel and host-local operator authentication used to manage its
+ * application routes.
  *
- * Tunnel creation, connector installation, DNS and Access policies remain operator-owned. One host and state directory
- * must own configuration writes for a shared tunnel; the API replaces the full configuration without a
- * compare-and-swap.
+ * Tunnel creation, connector installation, DNS and Access policies remain operator-owned. One host
+ * and state directory must own configuration writes for a shared tunnel; the API replaces the full
+ * configuration without a compare-and-swap.
  */
 export const CloudflareHostSettings = Schema.Struct({
   /**
@@ -122,15 +146,19 @@ export const CloudflareHostSettings = Schema.Struct({
   /**
    * The existing remotely managed tunnel UUID.
    */
-  tunnelId: Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/))),
+  tunnelId: Schema.String.pipe(
+    Schema.check(Schema.isPattern(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/)),
+  ),
 
   /**
-   * The absolute host file containing only a Cloudflare API token, never the connector's tunnel token.
+   * The absolute host file containing only a Cloudflare API token, never the connector's tunnel
+   * token.
    */
   apiTokenFile: Schema.optionalKey(AbsolutePath),
 
   /**
-   * Managed routing is the default; manual routing leaves dashboard rules untouched and needs no API token.
+   * Managed routing is the default; manual routing leaves dashboard rules untouched and needs no
+   * API token.
    */
   routing: Schema.optionalKey(Schema.Literals(['managed', 'manual'])),
 
@@ -157,7 +185,9 @@ export const CloudflareHostSettings = Schema.Struct({
   /**
    * Compose filename within dir; defaults to compose.yaml.
    */
-  composeFile: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.ya?ml$/))),
+  composeFile: Schema.optionalKey(
+    Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.ya?ml$/)),
+  ),
 
   /**
    * Opt-in host connector provisioning; absent settings keep existing connectors operator-managed.
@@ -182,7 +212,8 @@ export const CloudflareHostSettings = Schema.Struct({
   ),
 
   /**
-   * The private host directory containing per-tunnel route ownership journals and a shared mutation lock.
+   * The private host directory containing per-tunnel route ownership journals and a shared mutation
+   * lock.
    */
   stateDir: Schema.optionalKey(AbsolutePath),
 }).check(

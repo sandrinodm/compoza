@@ -12,7 +12,8 @@ import { cloudflareIngress } from './cloudflare-tunnel/index.ts';
 /**
  * A host operation planned by an ingress extension and executed by the core Remote service.
  *
- * Scripts must target Bash 3.2 and accept any payload on stdin; labels describe the operation for dry runs.
+ * Scripts must target Bash 3.2 and accept any payload on stdin; labels describe the operation for
+ * dry runs.
  */
 export interface IngressOperation {
   /**
@@ -26,12 +27,14 @@ export interface IngressOperation {
   readonly input?: string;
 
   /**
-   * Optional setup-only credential source, resolved after dry-run handling; never frozen into application stacks.
+   * Optional setup-only credential source, resolved after dry-run handling; never frozen into
+   * application stacks.
    */
   readonly secrets?: SecretsConfig;
 
   /**
-   * Selected provider variable names mapped to connector env-file names; other provider values are discarded.
+   * Selected provider variable names mapped to connector env-file names; other provider values are
+   * discarded.
    */
   readonly secretVariables?: Readonly<Record<string, string>>;
 
@@ -42,7 +45,8 @@ export interface IngressOperation {
 }
 
 /**
- * The complete routing plan retained with deployed SSH configuration or executed after client Compose.
+ * The complete routing plan retained with deployed SSH configuration or executed after client
+ * Compose.
  */
 export interface IngressPlan {
   /**
@@ -69,7 +73,8 @@ export interface IngressPlan {
 /**
  * A pure ingress integration covering checks, host setup, activation and removal.
  *
- * Extensions describe operations; Docker, SSH execution, dry runs and stack files remain core responsibilities.
+ * Extensions describe operations; Docker, SSH execution, dry runs and stack files remain core
+ * responsibilities.
  */
 export interface IngressExtension {
   /**
@@ -93,7 +98,8 @@ export interface IngressExtension {
   readonly domain: (app: App, host: HostConfig) => string | undefined;
 
   /**
-   * Plans a read-only host probe producing key=value output, or skips it when host configuration is missing.
+   * Plans a read-only host probe producing key=value output, or skips it when host configuration is
+   * missing.
    */
   readonly probe: (app: App, host: HostConfig) => string | undefined;
 
@@ -109,7 +115,8 @@ export interface IngressExtension {
 }
 
 /**
- * The bundled ingress extensions; additional implementations register here alongside their configuration schemas.
+ * The bundled ingress extensions; additional implementations register here alongside their
+ * configuration schemas.
  */
 export const ingressExtensions = {
   caddy: caddyIngress,
@@ -155,8 +162,9 @@ export function hostIngress(host: HostConfig, provider?: IngressId): IngressExte
 /**
  * Freezes an ingress operation into a standalone host script without executing it.
  *
- * Quoted printf input preserves literal configuration and cannot collide with a heredoc delimiter in an extension's
- * payload. Credentials are forbidden in ingress plans; managed secrets use the private deployment stdin channel.
+ * Quoted printf input preserves literal configuration and cannot collide with a heredoc delimiter
+ * in an extension's payload. Credentials are forbidden in ingress plans; managed secrets use the
+ * private deployment stdin channel.
  */
 export function ingressOperationScript(operation: IngressOperation): string {
   return operation.input === undefined

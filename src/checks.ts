@@ -11,8 +11,9 @@ import { Remote } from './services/Remote.ts';
 import { sshReadinessScript } from './ssh-plan.ts';
 
 /**
- * The outcome of one readiness check. `fix` names who resolves a failure: a DNS record only the person can add, the
- * one-time `setup-proxy` command, the deploy itself, or something to do by hand on the host.
+ * The outcome of one readiness check. `fix` names who resolves a failure: a DNS record only the
+ * person can add, the one-time `setup-proxy` command, the deploy itself, or something to do by hand
+ * on the host.
  */
 export interface Check {
   /**
@@ -37,8 +38,8 @@ export interface Check {
 }
 
 /**
- * The public resolvers asked for the app domain, so the answer is what the internet sees rather than what a local
- * resolver or hosts file says.
+ * The public resolvers asked for the app domain, so the answer is what the internet sees rather
+ * than what a local resolver or hosts file says.
  */
 const PUBLIC_RESOLVERS = ['1.1.1.1', '1.0.0.1'];
 
@@ -48,7 +49,8 @@ const PUBLIC_RESOLVERS = ['1.1.1.1', '1.0.0.1'];
 const DNS_TIMEOUT_MILLIS = 3_000;
 
 /**
- * Resolves both IP families through public resolvers; one missing family does not discard the other answer.
+ * Resolves both IP families through public resolvers; one missing family does not discard the other
+ * answer.
  */
 export function lookup(domain: string): Effect.Effect<ReadonlyArray<string>> {
   return Effect.tryPromise({
@@ -56,7 +58,10 @@ export function lookup(domain: string): Effect.Effect<ReadonlyArray<string>> {
       const resolver = new Resolver({ timeout: DNS_TIMEOUT_MILLIS, tries: 2 });
       resolver.setServers(PUBLIC_RESOLVERS);
 
-      const answers = await Promise.allSettled([resolver.resolve4(domain), resolver.resolve6(domain)]);
+      const answers = await Promise.allSettled([
+        resolver.resolve4(domain),
+        resolver.resolve6(domain),
+      ]);
       return answers.flatMap((answer) => (answer.status === 'fulfilled' ? answer.value : []));
     },
     catch: () => undefined,
@@ -66,8 +71,9 @@ export function lookup(domain: string): Effect.Effect<ReadonlyArray<string>> {
 /**
  * Interprets a DNS answer and a host probe as checks for the app on the host.
  *
- * The selected ingress extension interprets its own probe keys; the Docker core adds registry readiness independently.
- * Extensions report missing host configuration as blocking checks and mark deployment-repairable checks explicitly.
+ * The selected ingress extension interprets its own probe keys; the Docker core adds registry
+ * readiness independently. Extensions report missing host configuration as blocking checks and mark
+ * deployment-repairable checks explicitly.
  */
 export function evaluateChecks(
   app: App,
@@ -96,8 +102,8 @@ export function evaluateChecks(
 }
 
 /**
- * The checks that must pass before deploying. Checks repaired by deployment itself do not block, regardless of the
- * extension that produced them.
+ * The checks that must pass before deploying. Checks repaired by deployment itself do not block,
+ * regardless of the extension that produced them.
  */
 export function blocking(checks: ReadonlyArray<Check>): ReadonlyArray<Check> {
   return checks.filter((check) => !check.ok && check.fix !== 'deploy');
@@ -107,24 +113,27 @@ export function blocking(checks: ReadonlyArray<Check>): ReadonlyArray<Check> {
  * The checks as lines for the terminal, `ok` or `FAIL` first.
  */
 export function formatChecks(checks: ReadonlyArray<Check>): string {
-  return checks.map((check) => `${check.ok ? 'ok  ' : 'FAIL'} ${check.name}: ${check.detail}`).join('\n');
+  return checks
+    .map((check) => `${check.ok ? 'ok  ' : 'FAIL'} ${check.name}: ${check.detail}`)
+    .join('\n');
 }
 
 /**
- * Runs the readiness checks for an app on its host: the DNS lookup and the host probe concurrently, then
- * `evaluateChecks`. Nothing on the host is changed.
+ * Runs the readiness checks for an app on its host: the DNS lookup and the host probe concurrently,
+ * then `evaluateChecks`. Nothing on the host is changed.
  *
- * Extensions supply an optional domain and read-only probe. Registry readiness remains independent of ingress, and no
- * SSH probe runs when neither integration needs one.
+ * Extensions supply an optional domain and read-only probe. Registry readiness remains independent
+ * of ingress, and no SSH probe runs when neither integration needs one.
  */
 export const runChecks = Effect.fn('runChecks')(function* (app: App, host: HostConfig) {
   const remote = yield* Remote;
   const ingress = ingressFor(app);
   const domain = ingress?.domain(app, host);
   const registry = app.config.targets.length === 0 ? undefined : registryOf(host);
-  const scripts = [ingress?.probe(app, host), registry === undefined ? undefined : registryProbe(registry)].filter(
-    (script): script is string => script !== undefined,
-  );
+  const scripts = [
+    ingress?.probe(app, host),
+    registry === undefined ? undefined : registryProbe(registry),
+  ].filter((script): script is string => script !== undefined);
   const [addresses, output] = yield* Effect.all(
     [
       domain === undefined ? Effect.succeed([] as ReadonlyArray<string>) : lookup(domain),
@@ -138,7 +147,9 @@ export const runChecks = Effect.fn('runChecks')(function* (app: App, host: HostC
     const script = yield* Effect.try({
       try: () => sshReadinessScript(app, host),
       catch: (cause) =>
-        new DeployError({ message: cause instanceof Error ? cause.message : 'Invalid SSH configuration' }),
+        new DeployError({
+          message: cause instanceof Error ? cause.message : 'Invalid SSH configuration',
+        }),
     });
     const readiness = parseCheck(yield* remote.probe(host, script));
 

@@ -15,7 +15,8 @@ import { runtimeSource } from './ssh-runtime.ts';
 /**
  * The required SSH stack root, rejecting a filesystem root or shell-control characters.
  *
- * Only tool-owned stack files are replaced; operator data, overlays and host env files are never removed.
+ * Only tool-owned stack files are replaced; operator data, overlays and host env files are never
+ * removed.
  */
 export function stackRoot(app: App): string {
   const root = app.config.remote?.stackDir;
@@ -36,8 +37,9 @@ export function stackRoot(app: App): string {
 /**
  * Builds the non-secret dotenv payload using Compose's double-quoted literal escaping.
  *
- * Image variables are reserved and written into the generated dotenv, so a separate host dotenv or inherited shell
- * variables cannot replace them. Configured variables must be explicit non-secret strings.
+ * Image variables are reserved and written into the generated dotenv, so a separate host dotenv or
+ * inherited shell variables cannot replace them. Configured variables must be explicit non-secret
+ * strings.
  */
 export function generatedEnvironment(app: App): string {
   const reserved = new Set(app.config.targets.map(imageVariable));
@@ -70,10 +72,12 @@ export function generatedEnvironment(app: App): string {
 }
 
 /**
- * The shared mutation preamble: rejects symlinked stack ancestors and acquires a portable mkdir lock.
+ * The shared mutation preamble: rejects symlinked stack ancestors and acquires a portable mkdir
+ * lock.
  *
- * The trap only removes this invocation's lock. A killed SSH session releases it; SIGKILL or host power loss can leave
- * a stale lock, which requires operator inspection rather than unsafe automatic lock stealing.
+ * The trap only removes this invocation's lock. A killed SSH session releases it; SIGKILL or host
+ * power loss can leave a stale lock, which requires operator inspection rather than unsafe
+ * automatic lock stealing.
  */
 export function lockPreamble(root: string): string {
   return `set +x\nset -euo pipefail\n${REMOTE_PATH}\n${runtimeSource()}root=${shellQuote(root)}\ncompoza_lock\n`;
@@ -82,7 +86,8 @@ export function lockPreamble(root: string): string {
 /**
  * Builds a bounded HTTP wait on the host, accepting the same below-500 statuses as the client wait.
  *
- * Curl bodies and error messages are discarded so authenticated service responses cannot enter deployment logs.
+ * Curl bodies and error messages are discarded so authenticated service responses cannot enter
+ * deployment logs.
  */
 export function healthScript(url: string, timeoutSeconds: number): string {
   return `echo 'Waiting for HTTP readiness'
@@ -102,10 +107,11 @@ done
 /**
  * Builds a flat stack upload and validation transaction with no retained deployment history.
  *
- * Compose source files are normalized without interpolation in the temporary lock folder. The selected dotenv and live
- * operator overlay validate that output before tool-owned stack files are replaced. Services are recreated so file bind
- * mounts pick up replaced assets even when image tags and Compose settings are unchanged. Containers can still change
- * partially if Compose, routing or health fails; recovery is another deployment with a known image tag.
+ * Compose source files are normalized without interpolation in the temporary lock folder. The
+ * selected dotenv and live operator overlay validate that output before tool-owned stack files are
+ * replaced. Services are recreated so file bind mounts pick up replaced assets even when image tags
+ * and Compose settings are unchanged. Containers can still change partially if Compose, routing or
+ * health fails; recovery is another deployment with a known image tag.
  */
 export function deploymentScript(
   app: App,
@@ -121,7 +127,9 @@ export function deploymentScript(
   const root = stackRoot(app);
   const composeFiles = app.config.composeFiles.map(composeBundlePath);
   const assets = bundle.filter((file) => !composeFiles.includes(file.path));
-  if (assets.some((file) => file.path === 'compose.yaml' || file.path.startsWith('compose.yaml/'))) {
+  if (
+    assets.some((file) => file.path === 'compose.yaml' || file.path.startsWith('compose.yaml/'))
+  ) {
     throw new Error('compose.yaml is the generated stack file and cannot be declared as an asset');
   }
 
@@ -154,7 +162,10 @@ export function deploymentScript(
     secretEnvironment({
       ...secrets,
       ...Object.fromEntries(
-        app.config.targets.map((target) => [imageVariable(target), imageReference(app, host, target, tag, false)]),
+        app.config.targets.map((target) => [
+          imageVariable(target),
+          imageReference(app, host, target, tag, false),
+        ]),
       ),
     });
 
@@ -222,9 +233,11 @@ echo 'Stack deployment complete'
 }
 
 /**
- * Uses deployed lifecycle metadata and flat Compose files, ignoring unshipped local configuration changes.
+ * Uses deployed lifecycle metadata and flat Compose files, ignoring unshipped local configuration
+ * changes.
  *
- * Mutations share the deployment lock; inspection does not create host paths or read a client credential provider.
+ * Mutations share the deployment lock; inspection does not create host paths or read a client
+ * credential provider.
  */
 export function deployedScript(app: App, args: ReadonlyArray<string>, mutate: boolean): string {
   const root = stackRoot(app);
@@ -246,7 +259,8 @@ ${args[0] === 'down' ? 'jq -r .unroute "$metadata" | bash\n' : ''}compoza_compos
 /**
  * Builds read-only SSH execution prerequisites without creating stack paths or selecting builders.
  *
- * The host needs Bash, Compose with wait support, jq for private JSON validation, and curl only for HTTP probes.
+ * The host needs Bash, Compose with wait support, jq for private JSON validation, and curl only for
+ * HTTP probes.
  */
 export function sshReadinessScript(app: App, host: HostConfig): string {
   const root = stackRoot(app);

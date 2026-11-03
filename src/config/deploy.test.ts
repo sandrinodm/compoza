@@ -17,9 +17,12 @@ import {
 } from './deploy.ts';
 
 /**
- * Runs `use` with a fresh temporary folder and removes the folder afterwards, whether `use` succeeds or fails.
+ * Runs `use` with a fresh temporary folder and removes the folder afterwards, whether `use`
+ * succeeds or fails.
  */
-function withTempDir<A, E, R>(use: (dir: string) => Effect.Effect<A, E, R>): Effect.Effect<A, E, R> {
+function withTempDir<A, E, R>(
+  use: (dir: string) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> {
   return Effect.acquireUseRelease(
     Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'compoza-'))),
     (directory) => use(directory.path),
@@ -32,7 +35,12 @@ const valid = {
   host: 'atlas',
   targets: ['builder', 'web'],
   composeFiles: ['compose.yaml', 'compose.production.yaml'],
-  ingress: { mode: 'caddy', domain: 'demo.example.com', upstream: 'demo-web:80', healthPath: '/healthz' },
+  ingress: {
+    mode: 'caddy',
+    domain: 'demo.example.com',
+    upstream: 'demo-web:80',
+    healthPath: '/healthz',
+  },
   directories: ['/srv/demo/data'],
   content: { demo: '/srv/demo/data/demo' },
   environment: { DEMO_PORT: '8090' },
@@ -45,9 +53,15 @@ describe('DeployConfig', () => {
       const config = yield* Schema.decodeUnknownEffect(DeployConfig)(valid);
       assert.strictEqual(config.name, 'demo');
       assert.deepStrictEqual(directoriesOf(config), ['/srv/demo/data', '/srv/demo/data/demo']);
-      assert.deepStrictEqual(composeFilesOf(config, false), ['compose.yaml', 'compose.production.yaml']);
+      assert.deepStrictEqual(composeFilesOf(config, false), [
+        'compose.yaml',
+        'compose.production.yaml',
+      ]);
       assert.deepStrictEqual(composeFilesOf(config, true), ['compose.yaml']);
-      assert.deepStrictEqual(environmentOf(config, true), { DEMO_PORT: '8090', DEMO_SOURCES_PATH: '../sources' });
+      assert.deepStrictEqual(environmentOf(config, true), {
+        DEMO_PORT: '8090',
+        DEMO_SOURCES_PATH: '../sources',
+      });
       assert.strictEqual(ingressOf(config).mode, 'caddy');
     }),
   );
@@ -57,14 +71,16 @@ describe('DeployConfig', () => {
     ['../app source', '/app source'],
     ['/absolute/app', '/absolute/app'],
     ['~/app', join(homedir(), 'app')],
-  ] as const)('resolves workingDirectory %s without requiring the checkout', ([workingDirectory, expected]) =>
-    Effect.gen(function* () {
-      const config = yield* Schema.decodeUnknownEffect(DeployConfig)({
-        ...valid,
-        ...(workingDirectory === undefined ? {} : { workingDirectory }),
-      });
-      assert.strictEqual(workingDirectoryOf({ dir: '/deployment', config }), expected);
-    }),
+  ] as const)(
+    'resolves workingDirectory %s without requiring the checkout',
+    ([workingDirectory, expected]) =>
+      Effect.gen(function* () {
+        const config = yield* Schema.decodeUnknownEffect(DeployConfig)({
+          ...valid,
+          ...(workingDirectory === undefined ? {} : { workingDirectory }),
+        });
+        assert.strictEqual(workingDirectoryOf({ dir: '/deployment', config }), expected);
+      }),
   );
 
   it.effect('rejects destination overrides of the shared source directory', () =>
@@ -98,7 +114,10 @@ describe('DeployConfig', () => {
     ['domain', { ...valid, ingress: { ...valid.ingress, domain: 'https://demo.example.com' } }],
     ['upstream', { ...valid, ingress: { ...valid.ingress, upstream: 'demo-web' } }],
     ['healthPath', { ...valid, ingress: { ...valid.ingress, healthPath: 'healthz' } }],
-    ['healthPath with whitespace', { ...valid, ingress: { ...valid.ingress, healthPath: '/health z' } }],
+    [
+      'healthPath with whitespace',
+      { ...valid, ingress: { ...valid.ingress, healthPath: '/health z' } },
+    ],
     ['directories', { ...valid, directories: ['relative/path'] }],
     ['targets', { ...valid, targets: ['Invalid'] }],
     ['environment', { ...valid, environment: { DEMO_PORT: 8090 } }],
@@ -144,7 +163,9 @@ describe('loadApp', () => {
         const invalidJson = yield* loadApp(dir).pipe(Effect.flip);
         assert.include(invalidJson.message, 'not valid YAML');
 
-        yield* Effect.promise(() => writeFile(join(dir, 'deploy.yaml'), YAML.stringify({ name: 'x' })));
+        yield* Effect.promise(() =>
+          writeFile(join(dir, 'deploy.yaml'), YAML.stringify({ name: 'x' })),
+        );
 
         const invalidConfig = yield* loadApp(dir).pipe(Effect.flip);
         assert.include(invalidConfig.message, join(dir, 'deploy.yaml'));

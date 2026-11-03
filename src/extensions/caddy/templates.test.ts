@@ -22,12 +22,23 @@ const caddy = {
   provision: { image: 'caddy:2' },
 } as const;
 
-const host = { ssh: 'server', platform: 'linux/arm64', transport: { mode: 'ssh-load' }, ingress: { caddy } } as const;
-const site = { mode: 'caddy', domain: 'budget.example.com', upstream: 'host.docker.internal:8300' } as const;
-const budget = '{{domain}} {\n\treverse_proxy http://{{upstream}} {\n\t\theader_up X-Real-IP {remote_host}\n\t}\n}\n';
+const host = {
+  ssh: 'server',
+  platform: 'linux/arm64',
+  transport: { mode: 'ssh-load' },
+  ingress: { caddy },
+} as const;
+const site = {
+  mode: 'caddy',
+  domain: 'budget.example.com',
+  upstream: 'host.docker.internal:8300',
+} as const;
+const budget =
+  '{{domain}} {\n\treverse_proxy http://{{upstream}} {\n\t\theader_up X-Real-IP {remote_host}\n\t}\n}\n';
 
 /**
- * Provides isolated local, global and referenced host directories without touching the operator's configuration.
+ * Provides isolated local, global and referenced host directories without touching the operator's
+ * configuration.
  */
 const fixture = Effect.gen(function* () {
   const { path: dir } = yield* Effect.acquireRelease(
@@ -45,7 +56,8 @@ const fixture = Effect.gen(function* () {
 /**
  * Writes YAML for the real configuration loaders.
  */
-const yaml = (path: string, value: unknown) => Effect.promise(() => writeFile(path, YAML.stringify(value)));
+const yaml = (path: string, value: unknown) =>
+  Effect.promise(() => writeFile(path, YAML.stringify(value)));
 
 /**
  * Writes a template as literal text without any shell interpretation.
@@ -55,8 +67,10 @@ const file = (path: string, value: string) => Effect.promise(() => writeFile(pat
 describe('Caddy templates', () => {
   it('normalizes template line endings for host import detection', () => {
     const rendered = JSON.parse(
-      provisionOperation({ ...caddy, templates: { config: { inline: '# Windows template\r\n{{sitesImport}}\r\n' } } })
-        .input!,
+      provisionOperation({
+        ...caddy,
+        templates: { config: { inline: '# Windows template\r\n{{sitesImport}}\r\n' } },
+      }).input!,
     ).caddyfile;
     assert.strictEqual(rendered, '# Windows template\nimport /etc/caddy/sites/*.caddy\n');
   });
@@ -108,51 +122,65 @@ describe('Caddy templates', () => {
       '# custom rotation and settings\nimport /etc/caddy/sites/*.caddy\n',
     );
     assert.throws(
-      () => provisionOperation({ ...proxy, templates: { config: { inline: '# missing sites import' } } }),
+      () =>
+        provisionOperation({
+          ...proxy,
+          templates: { config: { inline: '# missing sites import' } },
+        }),
       'sitesImport',
     );
   });
 
-  it.effect('resolves paths relative to external host files and local overrides, ignoring superseded templates', () =>
-    Effect.gen(function* () {
-      const dir = yield* fixture;
-      yield* file(join(dir, 'shared', 'site.tmpl'), budget);
-      yield* file(join(dir, 'shared', 'root.tmpl'), '# shared custom config\n{{sitesImport}}\n');
-      yield* yaml(join(dir, 'shared', 'host.yaml'), {
-        ...host,
-        ingress: { caddy: { ...caddy, templates: { site: './site.tmpl', config: './root.tmpl' } } },
-      });
-      yield* yaml(join(dir, 'global', 'hosts.yaml'), {
-        external: { $ref: '../shared/host.yaml' },
-        local: { ...host, ingress: { caddy: { ...caddy, templates: { site: './missing.tmpl' } } } },
-      });
-      yield* file(join(dir, 'repo', 'site.tmpl'), '{{domain}} { respond "local" }\n');
-      yield* yaml(join(dir, 'repo', 'hosts.yaml'), {
-        local: { ...host, ingress: { caddy: { ...caddy, templates: { site: './site.tmpl' } } } },
-      });
+  it.effect(
+    'resolves paths relative to external host files and local overrides, ignoring superseded templates',
+    () =>
+      Effect.gen(function* () {
+        const dir = yield* fixture;
+        yield* file(join(dir, 'shared', 'site.tmpl'), budget);
+        yield* file(join(dir, 'shared', 'root.tmpl'), '# shared custom config\n{{sitesImport}}\n');
+        yield* yaml(join(dir, 'shared', 'host.yaml'), {
+          ...host,
+          ingress: {
+            caddy: { ...caddy, templates: { site: './site.tmpl', config: './root.tmpl' } },
+          },
+        });
+        yield* yaml(join(dir, 'global', 'hosts.yaml'), {
+          external: { $ref: '../shared/host.yaml' },
+          local: {
+            ...host,
+            ingress: { caddy: { ...caddy, templates: { site: './missing.tmpl' } } },
+          },
+        });
+        yield* file(join(dir, 'repo', 'site.tmpl'), '{{domain}} { respond "local" }\n');
+        yield* yaml(join(dir, 'repo', 'hosts.yaml'), {
+          local: { ...host, ingress: { caddy: { ...caddy, templates: { site: './site.tmpl' } } } },
+        });
 
-      const hosts = yield* loadDefaultHosts(join(dir, 'repo'), join(dir, 'global', 'hosts.yaml'));
-      const external = ingressConfigOf(hosts.external!)!;
-      assert.strictEqual(external.provider, 'caddy');
+        const hosts = yield* loadDefaultHosts(join(dir, 'repo'), join(dir, 'global', 'hosts.yaml'));
+        const external = ingressConfigOf(hosts.external!)!;
+        assert.strictEqual(external.provider, 'caddy');
 
-      if (external.provider !== 'caddy') {
-        throw new Error('Wrong extension');
-      }
+        if (external.provider !== 'caddy') {
+          throw new Error('Wrong extension');
+        }
 
-      assert.include(siteFile('budget', site, external), 'header_up X-Real-IP {remote_host}');
-      assert.include(JSON.parse(provisionOperation(external).input!).caddyfile, '# shared custom config');
+        assert.include(siteFile('budget', site, external), 'header_up X-Real-IP {remote_host}');
+        assert.include(
+          JSON.parse(provisionOperation(external).input!).caddyfile,
+          '# shared custom config',
+        );
 
-      const local = ingressConfigOf(hosts.local!)!;
-      if (local.provider !== 'caddy') {
-        throw new Error('Wrong extension');
-      }
+        const local = ingressConfigOf(hosts.local!)!;
+        if (local.provider !== 'caddy') {
+          throw new Error('Wrong extension');
+        }
 
-      assert.include(siteFile('budget', site, local), 'respond "local"');
+        assert.include(siteFile('budget', site, local), 'respond "local"');
 
-      yield* file(join(dir, 'shared', 'site.tmpl'), '{{domain}} { respond "changed" }');
+        yield* file(join(dir, 'shared', 'site.tmpl'), '{{domain}} { respond "changed" }');
 
-      assert.include(siteFile('budget', site, external), 'header_up');
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        assert.include(siteFile('budget', site, external), 'header_up');
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect('accepts absolute and home-relative paths in legacy host entries', () =>
@@ -192,18 +220,32 @@ describe('Caddy templates', () => {
         host: 'server',
         targets: [],
         composeFiles: ['compose.yaml'],
-        ingress: { caddy: { domain: site.domain, upstream: site.upstream, siteTemplate: './not-selected.tmpl' } },
+        ingress: {
+          caddy: {
+            domain: site.domain,
+            upstream: site.upstream,
+            siteTemplate: './not-selected.tmpl',
+          },
+        },
         workingDirectory: '../absent-app-checkout',
         destinations: {
           staging: {
             ingress: {
-              caddy: { domain: site.domain, upstream: site.upstream, siteTemplate: './templates/budget.tmpl' },
+              caddy: {
+                domain: site.domain,
+                upstream: site.upstream,
+                siteTemplate: './templates/budget.tmpl',
+              },
             },
           },
         },
       });
 
-      const resolved = yield* resolve(join(dir, 'repo'), Option.some(join(dir, 'hosts.yaml')), 'staging');
+      const resolved = yield* resolve(
+        join(dir, 'repo'),
+        Option.some(join(dir, 'hosts.yaml')),
+        'staging',
+      );
       const operation = caddyIngress.plan(resolved.app, resolved.host).route;
       const frozen = ingressOperationScript(operation);
       assert.include(frozen, 'header_up X-Real-IP {remote_host}');
@@ -213,31 +255,45 @@ describe('Caddy templates', () => {
 
       yield* rmTemplate(join(dir, 'repo', 'templates', 'budget.tmpl'));
 
-      assert.strictEqual(ingressOperationScript(caddyIngress.plan(resolved.app, resolved.host).route), frozen);
+      assert.strictEqual(
+        ingressOperationScript(caddyIngress.plan(resolved.app, resolved.host).route),
+        frozen,
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect('reports unreadable and invalid templates as config errors without exposing template contents', () =>
-    Effect.gen(function* () {
-      const dir = yield* fixture;
-      const hostsFile = join(dir, 'hosts.yaml');
+  it.effect(
+    'reports unreadable and invalid templates as config errors without exposing template contents',
+    () =>
+      Effect.gen(function* () {
+        const dir = yield* fixture;
+        const hostsFile = join(dir, 'hosts.yaml');
 
-      for (const source of ['./missing.tmpl', './repo', { inline: 'PRIVATE_TEMPLATE_SENTINEL {{typo}}' }]) {
-        yield* yaml(hostsFile, { server: { ...host, ingress: { caddy: { ...caddy, templates: { site: source } } } } });
+        for (const source of [
+          './missing.tmpl',
+          './repo',
+          { inline: 'PRIVATE_TEMPLATE_SENTINEL {{typo}}' },
+        ]) {
+          yield* yaml(hostsFile, {
+            server: { ...host, ingress: { caddy: { ...caddy, templates: { site: source } } } },
+          });
 
-        const error = yield* loadHosts(hostsFile).pipe(Effect.flip);
-        assert.strictEqual(error._tag, 'DeployError');
-        assert.include(error.message, 'template');
-        assert.notInclude(error.message, 'PRIVATE_TEMPLATE_SENTINEL');
-      }
+          const error = yield* loadHosts(hostsFile).pipe(Effect.flip);
+          assert.strictEqual(error._tag, 'DeployError');
+          assert.include(error.message, 'template');
+          assert.notInclude(error.message, 'PRIVATE_TEMPLATE_SENTINEL');
+        }
 
-      yield* file(join(dir, 'large.tmpl'), 'x'.repeat(256 * 1024 + 1));
-      yield* yaml(hostsFile, {
-        server: { ...host, ingress: { caddy: { ...caddy, templates: { site: './large.tmpl' } } } },
-      });
+        yield* file(join(dir, 'large.tmpl'), 'x'.repeat(256 * 1024 + 1));
+        yield* yaml(hostsFile, {
+          server: {
+            ...host,
+            ingress: { caddy: { ...caddy, templates: { site: './large.tmpl' } } },
+          },
+        });
 
-      assert.include((yield* loadHosts(hostsFile).pipe(Effect.flip)).message, '256 KiB');
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        assert.include((yield* loadHosts(hostsFile).pipe(Effect.flip)).message, '256 KiB');
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 

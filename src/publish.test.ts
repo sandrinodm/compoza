@@ -36,7 +36,10 @@ describe('rsyncCommand', () => {
   it('passes --dry-run only when asked', () => {
     const real = rsyncCommand(host, '/srv/demo/data/demo', '/me/demo', false);
     assert.notInclude(real.args, '--dry-run');
-    assert.deepStrictEqual(real.args.slice(-2), ['/me/demo/', 'deploy@atlas.example.com:/srv/demo/data/demo/']);
+    assert.deepStrictEqual(real.args.slice(-2), [
+      '/me/demo/',
+      'deploy@atlas.example.com:/srv/demo/data/demo/',
+    ]);
   });
 });
 
@@ -48,7 +51,10 @@ describe('contentTarget', () => {
       const unknown = yield* contentTarget(app, 'research').pipe(Effect.flip);
       assert.include(unknown.message, 'sections: demo');
 
-      const error = yield* contentTarget({ ...app, config: { ...app.config, content: {} } }, 'demo').pipe(Effect.flip);
+      const error = yield* contentTarget(
+        { ...app, config: { ...app.config, content: {} } },
+        'demo',
+      ).pipe(Effect.flip);
       assert.include(error.message, 'sections: none');
     }),
   );

@@ -24,16 +24,18 @@ function planned<A>(build: () => A): Effect.Effect<A, DeployError> {
   return Effect.try({
     try: build,
     catch: (cause) =>
-      new DeployError({ message: cause instanceof Error ? cause.message : 'Invalid SSH deployment plan' }),
+      new DeployError({
+        message: cause instanceof Error ? cause.message : 'Invalid SSH deployment plan',
+      }),
   });
 }
 
 /**
  * Deploys a bounded Compose stack and executes Compose through the host's own CLI.
  *
- * BuildKit transfers sources independently of the stack bundle; managed providers resolve on this machine, while legacy
- * host dotenv stays on the host. Readiness and planning precede builds, and dry runs do not stage stack files, acquire
- * locks or build images.
+ * BuildKit transfers sources independently of the stack bundle; managed providers resolve on this
+ * machine, while legacy host dotenv stays on the host. Readiness and planning precede builds, and
+ * dry runs do not stage stack files, acquire locks or build images.
  */
 export const deploySsh = Effect.fn('deploySsh')(function* (
   app: App,
@@ -74,7 +76,9 @@ export const deploySsh = Effect.fn('deploySsh')(function* (
         yield* Console.log(formatChecks(checks));
 
         if (blocking(checks).length > 0) {
-          return yield* new DeployError({ message: 'Host is not ready for SSH deployment; see check details' });
+          return yield* new DeployError({
+            message: 'Host is not ready for SSH deployment; see check details',
+          });
         }
       }),
     ),
@@ -98,7 +102,9 @@ export const deploySsh = Effect.fn('deploySsh')(function* (
           `<stage ${bundle.length} declared files; lock, validate, compose up --wait, route, health>`,
           true,
         )
-        .pipe(Effect.flatMap((output) => (output === '' ? Effect.void : Console.log(output.trimEnd())))),
+        .pipe(
+          Effect.flatMap((output) => (output === '' ? Effect.void : Console.log(output.trimEnd()))),
+        ),
     ),
   ]);
 
@@ -112,10 +118,15 @@ export const deploySsh = Effect.fn('deploySsh')(function* (
 /**
  * Streams deployed stack inspection through SSH, including follow-mode logs.
  *
- * The shell inherits stdout, so logs appear immediately and are not buffered until SSH exits. Inspection reads only the
- * deployed host configuration, ignoring local Compose edits and production dotenv contents.
+ * The shell inherits stdout, so logs appear immediately and are not buffered until SSH exits.
+ * Inspection reads only the deployed host configuration, ignoring local Compose edits and
+ * production dotenv contents.
  */
-export const inspectSsh = Effect.fn('inspectSsh')(function* (app: App, host: HostConfig, args: ReadonlyArray<string>) {
+export const inspectSsh = Effect.fn('inspectSsh')(function* (
+  app: App,
+  host: HostConfig,
+  args: ReadonlyArray<string>,
+) {
   const shell = yield* Shell;
   const script = yield* planned(() => deployedScript(app, args, false));
   yield* shell.run(

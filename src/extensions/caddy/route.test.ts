@@ -21,14 +21,17 @@ import { routeScript, unrouteScript, setupScript } from './scripts.ts';
 /**
  * Runs the actual host scripts with a fake Docker that can reject a reload or fail its recovery.
  */
-async function fixture(use: (f: ReturnType<typeof createFixture>) => void | Promise<void>): Promise<void> {
+async function fixture(
+  use: (f: ReturnType<typeof createFixture>) => void | Promise<void>,
+): Promise<void> {
   using temporary = mkdtempDisposableSync(join(tmpdir(), 'dd-caddy-route-'));
   const f = createFixture(temporary.path);
   await use(f);
 }
 
 /**
- * Creates an isolated shared proxy directory; Docker invocations see only synthetic site content and credentials.
+ * Creates an isolated shared proxy directory; Docker invocations see only synthetic site content
+ * and credentials.
  */
 function createFixture(dir: string) {
   mkdirSync(join(dir, 'sites'));
@@ -71,7 +74,8 @@ fs.writeFileSync(path.join(dir, 'active'), fs.existsSync(path.join(dir,'sites','
 }
 
 /**
- * Waits for a lock or child exit with a bounded deadline instead of assuming process startup timing.
+ * Waits for a lock or child exit with a bounded deadline instead of assuming process startup
+ * timing.
  */
 async function until(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 5000;
@@ -89,11 +93,15 @@ describe('Caddy route transactions', { timeout: 15000 }, () => {
   it('shares the setup lock and restores legacy files without printing Compose diagnostics', () =>
     fixture((f) => {
       const caddyfile = '# existing config\n';
-      const compose = 'services:\n  caddy:\n    volumes:\n      - ./Caddyfile:/etc/caddy/Caddyfile:ro\n';
+      const compose =
+        'services:\n  caddy:\n    volumes:\n      - ./Caddyfile:/etc/caddy/Caddyfile:ro\n';
       writeFileSync(join(f.dir, 'Caddyfile'), caddyfile);
       writeFileSync(join(f.dir, 'docker-compose.yaml'), compose);
 
-      const script = setupScript({ dir: f.dir, container: 'caddy', network: 'edge' }).replace(REMOTE_PATH, '');
+      const script = setupScript({ dir: f.dir, container: 'caddy', network: 'edge' }).replace(
+        REMOTE_PATH,
+        '',
+      );
       mkdirSync(f.lock);
 
       const locked = spawnSync('/bin/bash', ['-c', script], { env: f.env, encoding: 'utf8' });
@@ -127,19 +135,21 @@ describe('Caddy route transactions', { timeout: 15000 }, () => {
       assert.deepStrictEqual(readdirSync(join(f.dir, 'sites')), []);
     }));
 
-  it.each([false, true])('restores the previous file and active config after rejected removal=%s', (remove) =>
-    fixture((f) => {
-      writeFileSync(f.file, 'previous');
-      writeFileSync(join(f.dir, 'reject'), 'once');
+  it.each([false, true])(
+    'restores the previous file and active config after rejected removal=%s',
+    (remove) =>
+      fixture((f) => {
+        writeFileSync(f.file, 'previous');
+        writeFileSync(join(f.dir, 'reject'), 'once');
 
-      const result = f.run(remove);
-      assert.notStrictEqual(result.status, 0);
-      assert.strictEqual(readFileSync(f.file, 'utf8'), 'previous');
-      assert.strictEqual(readFileSync(join(f.dir, 'active'), 'utf8'), 'previous');
-      assert.notInclude(result.stdout + result.stderr, 'SYNTHETIC_EXPANDED_SECRET');
-      assert.isFalse(existsSync(f.lock));
-      assert.deepStrictEqual(readdirSync(join(f.dir, 'sites')), ['app.caddy']);
-    }),
+        const result = f.run(remove);
+        assert.notStrictEqual(result.status, 0);
+        assert.strictEqual(readFileSync(f.file, 'utf8'), 'previous');
+        assert.strictEqual(readFileSync(join(f.dir, 'active'), 'utf8'), 'previous');
+        assert.notInclude(result.stdout + result.stderr, 'SYNTHETIC_EXPANDED_SECRET');
+        assert.isFalse(existsSync(f.lock));
+        assert.deepStrictEqual(readdirSync(join(f.dir, 'sites')), ['app.caddy']);
+      }),
   );
 
   it('removes a rejected new route and reloads the previous configuration', () =>
@@ -163,7 +173,9 @@ describe('Caddy route transactions', { timeout: 15000 }, () => {
       assert.strictEqual(readFileSync(f.file, 'utf8'), 'previous');
       assert.isTrue(existsSync(f.lock));
 
-      const stage = readdirSync(join(f.dir, 'sites')).find((name) => name.startsWith('.compoza-route.'))!;
+      const stage = readdirSync(join(f.dir, 'sites')).find((name) =>
+        name.startsWith('.compoza-route.'),
+      )!;
       assert.strictEqual(statSync(join(f.dir, 'sites', stage)).mode & 0o777, 0o700);
       assert.strictEqual(readFileSync(join(f.dir, 'sites', stage, 'previous'), 'utf8'), 'previous');
       assert.include(f.run().stderr, 'Caddy is locked');
@@ -175,18 +187,25 @@ describe('Caddy route transactions', { timeout: 15000 }, () => {
       fixture(async (f) => {
         writeFileSync(f.file, 'previous');
 
-        const child = spawn('/bin/bash', ['-c', f.script()], { env: f.env, stdio: ['pipe', 'ignore', 'ignore'] });
+        const child = spawn('/bin/bash', ['-c', f.script()], {
+          env: f.env,
+          stdio: ['pipe', 'ignore', 'ignore'],
+        });
         const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
 
         try {
           await until(() => existsSync(f.lock));
           child.stdin.write('incomplete');
 
-          const other = routeScript({ dir: f.dir, container: 'caddy', network: 'edge' }, 'other').replace(
-            REMOTE_PATH,
-            '',
-          );
-          const blocked = spawnSync('/bin/bash', ['-c', other], { env: f.env, input: 'other', encoding: 'utf8' });
+          const other = routeScript(
+            { dir: f.dir, container: 'caddy', network: 'edge' },
+            'other',
+          ).replace(REMOTE_PATH, '');
+          const blocked = spawnSync('/bin/bash', ['-c', other], {
+            env: f.env,
+            input: 'other',
+            encoding: 'utf8',
+          });
           assert.notStrictEqual(blocked.status, 0);
           assert.include(blocked.stderr, 'Caddy is locked');
           assert.strictEqual(readFileSync(f.file, 'utf8'), 'previous');

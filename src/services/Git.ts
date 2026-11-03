@@ -6,11 +6,11 @@ import { command } from '../command.ts';
 import { Shell } from './Shell.ts';
 
 /**
- * The Git facts a deployment needs about the app's repository: where it is, whether it has a commit to tag images with,
- * and whether the checkout is clean.
+ * The Git facts a deployment needs about the app's repository: where it is, whether it has a commit
+ * to tag images with, and whether the checkout is clean.
  *
- * Images are tagged with the commit so a running container can always be traced back to source; a dirty checkout would
- * break that, which is why `deploy` refuses one unless told otherwise.
+ * Images are tagged with the commit so a running container can always be traced back to source; a
+ * dirty checkout would break that, which is why `deploy` refuses one unless told otherwise.
  */
 export class Git extends Context.Service<
   Git,
@@ -45,7 +45,9 @@ export class Git extends Context.Service<
       const shell = yield* Shell;
 
       const git = (dir: string, ...args: ReadonlyArray<string>) =>
-        shell.capture(command('git', ['-C', dir, ...args])).pipe(Effect.map((output) => output.trim()));
+        shell
+          .capture(command('git', ['-C', dir, ...args]))
+          .pipe(Effect.map((output) => output.trim()));
 
       return Git.of({
         root: (dir) => git(dir, 'rev-parse', '--show-toplevel'),
@@ -54,7 +56,8 @@ export class Git extends Context.Service<
             Effect.map(() => true),
             Effect.catchTag('DeployError', () => Effect.succeed(false)),
           ),
-        isDirty: (root) => git(root, 'status', '--porcelain').pipe(Effect.map((output) => output !== '')),
+        isDirty: (root) =>
+          git(root, 'status', '--porcelain').pipe(Effect.map((output) => output !== '')),
         shortSha: (root) => git(root, 'rev-parse', '--short=12', 'HEAD'),
       });
     }),

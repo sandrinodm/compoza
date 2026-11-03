@@ -5,7 +5,10 @@ import { command, isPipeline, printable, printableStep, shellQuote } from './com
 describe('printable', () => {
   it('masks secret variables and keeps the rest', () => {
     const line = printable(
-      command('docker', ['compose', 'up'], { env: { PG_PASSWORD: 'x', PORT: '80' }, secret: ['PG_PASSWORD'] }),
+      command('docker', ['compose', 'up'], {
+        env: { PG_PASSWORD: 'x', PORT: '80' },
+        secret: ['PG_PASSWORD'],
+      }),
     );
     assert.strictEqual(line, 'PG_PASSWORD=*** PORT=80 docker compose up');
   });

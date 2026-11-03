@@ -16,7 +16,8 @@ const host: HostConfig = {
 };
 
 /**
- * A `Remote` over a spawner that runs nothing: every spawn is recorded in `spawned` and answers `ok=yes`.
+ * A `Remote` over a spawner that runs nothing: every spawn is recorded in `spawned` and answers
+ * `ok=yes`.
  */
 function fakeRemote(spawned: Array<ChildProcess.Command>): Layer.Layer<Remote> {
   const spawner = ChildProcessSpawner.make((command) => {
@@ -38,7 +39,9 @@ function fakeRemote(spawned: Array<ChildProcess.Command>): Layer.Layer<Remote> {
       }),
     );
   });
-  return Remote.layer.pipe(Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)));
+  return Remote.layer.pipe(
+    Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+  );
 }
 
 describe('Remote', () => {
@@ -49,8 +52,13 @@ describe('Remote', () => {
       const output = yield* remote.run(host, "mkdir -p '/srv/a'");
       assert.strictEqual(output, '');
       assert.lengthOf(spawned, 0);
-      assert.deepStrictEqual(yield* TestConsole.logLines, ["$ ssh deploy@atlas.example.com mkdir -p '/srv/a'"]);
-    }).pipe(Effect.provideService(DryRun, true), Effect.provide(Layer.merge(fakeRemote(spawned), TestConsole.layer)));
+      assert.deepStrictEqual(yield* TestConsole.logLines, [
+        "$ ssh deploy@atlas.example.com mkdir -p '/srv/a'",
+      ]);
+    }).pipe(
+      Effect.provideService(DryRun, true),
+      Effect.provide(Layer.merge(fakeRemote(spawned), TestConsole.layer)),
+    );
   });
 
   it.effect('prints the label, then runs', () => {
@@ -60,7 +68,9 @@ describe('Remote', () => {
       const output = yield* remote.run(host, 'set -eu\ntrue', 'input', '<do it>');
       assert.strictEqual(output, 'ok=yes\n');
       assert.lengthOf(spawned, 1);
-      assert.deepStrictEqual(yield* TestConsole.logLines, ['$ ssh deploy@atlas.example.com <do it>']);
+      assert.deepStrictEqual(yield* TestConsole.logLines, [
+        '$ ssh deploy@atlas.example.com <do it>',
+      ]);
     }).pipe(Effect.provide(Layer.merge(fakeRemote(spawned), TestConsole.layer)));
   });
 
@@ -70,7 +80,10 @@ describe('Remote', () => {
       const remote = yield* Remote;
       const output = yield* remote.run(host, 'echo ok=yes', undefined, '<stream>', true);
       assert.strictEqual(output, '');
-      assert.deepStrictEqual(yield* TestConsole.logLines, ['$ ssh deploy@atlas.example.com <stream>', 'ok=yes']);
+      assert.deepStrictEqual(yield* TestConsole.logLines, [
+        '$ ssh deploy@atlas.example.com <stream>',
+        'ok=yes',
+      ]);
     }).pipe(Effect.provide(Layer.merge(fakeRemote(spawned), TestConsole.layer)));
   });
 
@@ -82,7 +95,10 @@ describe('Remote', () => {
       assert.strictEqual(output, 'ok=yes\n');
       assert.lengthOf(spawned, 1);
       assert.deepStrictEqual(yield* TestConsole.logLines, []);
-    }).pipe(Effect.provideService(DryRun, true), Effect.provide(Layer.merge(fakeRemote(spawned), TestConsole.layer)));
+    }).pipe(
+      Effect.provideService(DryRun, true),
+      Effect.provide(Layer.merge(fakeRemote(spawned), TestConsole.layer)),
+    );
   });
 });
 

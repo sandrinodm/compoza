@@ -12,8 +12,9 @@ import { environmentOf, secretSettingsIssue } from './deploy.ts';
 /**
  * Selects a complete source, preserving the legacy client dotenv alias.
  *
- * A local run with any production source requires its own explicit source, including `none`, to prevent accidental
- * production credential use. Host-owned legacy dotenv remains a separate SSH compatibility mode.
+ * A local run with any production source requires its own explicit source, including `none`, to
+ * prevent accidental production credential use. Host-owned legacy dotenv remains a separate SSH
+ * compatibility mode.
  */
 export function selectSecretSource(
   app: App,
@@ -28,10 +29,14 @@ export function selectSecretSource(
     const source = app.config.local?.secrets;
     if (
       source === undefined &&
-      (app.config.secrets !== undefined || app.config.envFile !== undefined || app.config.remote?.envFile !== undefined)
+      (app.config.secrets !== undefined ||
+        app.config.envFile !== undefined ||
+        app.config.remote?.envFile !== undefined)
     ) {
       return Result.fail(
-        new DeployError({ message: 'Local runs require local.secrets; select a development source or {none:{}}' }),
+        new DeployError({
+          message: 'Local runs require local.secrets; select a development source or {none:{}}',
+        }),
       );
     }
 
@@ -47,7 +52,8 @@ export function selectSecretSource(
 }
 
 /**
- * Keeps the synchronous planner contract; Effect callers convert `selectSecretSource` with `Effect.fromResult`.
+ * Keeps the synchronous planner contract; Effect callers convert `selectSecretSource` with
+ * `Effect.fromResult`.
  */
 export function secretSource(app: App, local = false): ResolvedSecretsConfig | undefined {
   const selected = selectSecretSource(app, local);
@@ -61,10 +67,15 @@ export function secretSource(app: App, local = false): ResolvedSecretsConfig | u
 /**
  * Checks variable names and values before command creation or serialization.
  *
- * Multiline, carriage-return and NUL values are explicitly unsupported. Invalid entries never echo their value or raw
- * name; valid names are safe to report. Secret/non-secret collisions are errors instead of silently winning a merge.
+ * Multiline, carriage-return and NUL values are explicitly unsupported. Invalid entries never echo
+ * their value or raw name; valid names are safe to report. Secret/non-secret collisions are errors
+ * instead of silently winning a merge.
  */
-export function validateSecrets(app: App, values: Readonly<Record<string, string>>, local = false): void {
+export function validateSecrets(
+  app: App,
+  values: Readonly<Record<string, string>>,
+  local = false,
+): void {
   const reserved = new Set(app.config.targets.map(imageVariable));
   const environment = environmentOf(app.config, local);
 
@@ -112,7 +123,8 @@ export function validateSecrets(app: App, values: Readonly<Record<string, string
 /**
  * Encodes literal Compose dotenv values without interpolation or shell evaluation.
  *
- * Unsupported newlines are rejected upstream; quotes, backslashes, empty strings and dollars retain their contents.
+ * Unsupported newlines are rejected upstream; quotes, backslashes, empty strings and dollars retain
+ * their contents.
  */
 export function secretEnvironment(values: Readonly<Record<string, string>>): string {
   return (
@@ -129,10 +141,12 @@ export function secretEnvironment(values: Readonly<Record<string, string>>): str
 }
 
 /**
- * Resolves selected provider variables on the CLI machine, suppressing failures and every value in diagnostics.
+ * Resolves selected provider variables on the CLI machine, suppressing failures and every value in
+ * diagnostics.
  *
- * Dry runs validate source selection but fetch no provider and read no secret file. The ordinary check command does not
- * call this function; explicit access checks do, including before a first SSH deployment.
+ * Dry runs validate source selection but fetch no provider and read no secret file. The ordinary
+ * check command does not call this function; explicit access checks do, including before a first
+ * SSH deployment.
  */
 export const readSecrets = Effect.fn('readSecrets')(function* (app: App, local = false) {
   const source = yield* Effect.fromResult(selectSecretSource(app, local));

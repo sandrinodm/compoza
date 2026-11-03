@@ -35,7 +35,8 @@ const host = {
 } as const;
 
 /**
- * Exercises real referenced host loading with both providers' templates and a host-relative secret source.
+ * Exercises real referenced host loading with both providers' templates and a host-relative secret
+ * source.
  */
 const loadedFixture = Effect.gen(function* () {
   const temporary = yield* Effect.acquireRelease(
@@ -59,7 +60,10 @@ const loadedFixture = Effect.gen(function* () {
       ...host,
       ingress: {
         caddy: { ...caddy, templates: { site: './site.tmpl', config: './Caddyfile.tmpl' } },
-        'cloudflare-tunnel': { ...cloudflare, templates: { compose: './compose.tmpl', route: './route.tmpl' } },
+        'cloudflare-tunnel': {
+          ...cloudflare,
+          templates: { compose: './compose.tmpl', route: './route.tmpl' },
+        },
       },
     }),
   );
@@ -76,7 +80,9 @@ const loadedFixture = Effect.gen(function* () {
   }
 
   assert.deepStrictEqual(tunnel.templates?.compose, { inline: defaultComposeTemplate });
-  assert.deepStrictEqual(tunnel.templates?.route, { inline: 'hostname: {{domain}}\nservice: {{service}}\n' });
+  assert.deepStrictEqual(tunnel.templates?.route, {
+    inline: 'hostname: {{domain}}\nservice: {{service}}\n',
+  });
   assert.deepStrictEqual(tunnel.provision?.secrets, {
     'env-file': { path: join(hostDirectory, 'missing-credentials.env') },
   });
@@ -89,7 +95,11 @@ describe('multiple host ingress providers', () => {
 
   it.each([
     { selector: ['--ingress', 'caddy', '--dry-run'], expected: 'provision Caddy', success: true },
-    { selector: ['--ingress', 'cloudflare-tunnel', '--dry-run'], expected: 'provision Cloudflare', success: true },
+    {
+      selector: ['--ingress', 'cloudflare-tunnel', '--dry-run'],
+      expected: 'provision Cloudflare',
+      success: true,
+    },
     { selector: [], expected: 'select --ingress', success: false },
     { selector: ['--ingress', 'nginx'], expected: 'nginx', success: false },
   ])('selects setup safely with $selector', ({ selector, expected, success }) => {
@@ -114,7 +124,10 @@ describe('multiple host ingress providers', () => {
     assert.include(result.stdout + result.stderr, expected);
     assert.isFalse(existsSync(marker));
     if (success) {
-      assert.notInclude(result.stdout, expected === 'provision Caddy' ? 'provision Cloudflare' : 'provision Caddy');
+      assert.notInclude(
+        result.stdout,
+        expected === 'provision Caddy' ? 'provision Cloudflare' : 'provision Caddy',
+      );
     }
   });
 });

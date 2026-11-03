@@ -12,12 +12,18 @@ import { loadTemplate, renderTemplate } from '../caddy/templates.ts';
 /**
  * The shipped connector Compose template; all dynamic scalars are JSON-quoted before substitution.
  */
-export const defaultComposeTemplate = readFileSync(new URL('./templates/compose.yaml.tmpl', import.meta.url), 'utf8');
+export const defaultComposeTemplate = readFileSync(
+  new URL('./templates/compose.yaml.tmpl', import.meta.url),
+  'utf8',
+);
 
 /**
  * Resolves host-relative templates and credential file sources before pure operation planning.
  */
-export const loadCloudflareHostFiles = Effect.fn('loadCloudflareHostFiles')(function* (host: HostConfig, file: string) {
+export const loadCloudflareHostFiles = Effect.fn('loadCloudflareHostFiles')(function* (
+  host: HostConfig,
+  file: string,
+) {
   const named = host.ingress !== undefined && 'cloudflare-tunnel' in host.ingress;
   const selected = named
     ? host.ingress['cloudflare-tunnel']
@@ -117,7 +123,8 @@ export const loadCloudflareAppFiles = Effect.fn('loadCloudflareAppFiles')(functi
 });
 
 /**
- * Renders one YAML route while preserving ownership identity and rejecting credential-bearing top-level fields.
+ * Renders one YAML route while preserving ownership identity and rejecting credential-bearing
+ * top-level fields.
  */
 export function routeRule(proxy: CloudflareProxy, app: App, name: string) {
   const selected = cloudflareAppSettings(app.config.ingress);
@@ -128,7 +135,11 @@ export function routeRule(proxy: CloudflareProxy, app: App, name: string) {
   const text = renderTemplate(
     selected.routeTemplate ?? proxy.templates?.route,
     'hostname: {{domain}}\nservice: {{service}}\n',
-    { name: JSON.stringify(name), domain: JSON.stringify(selected.domain), service: JSON.stringify(selected.service) },
+    {
+      name: JSON.stringify(name),
+      domain: JSON.stringify(selected.domain),
+      service: JSON.stringify(selected.service),
+    },
     'Cloudflare route template',
   );
   if (Buffer.byteLength(text) > 256 * 1024) {
@@ -150,7 +161,9 @@ export function routeRule(proxy: CloudflareProxy, app: App, name: string) {
     Object.keys(rule).some((key) => !['hostname', 'service', 'originRequest'].includes(key)) ||
     (rule.originRequest !== undefined && !isRecord(rule.originRequest))
   ) {
-    throw new Error('Cloudflare route template must preserve hostname/service and may add only originRequest settings');
+    throw new Error(
+      'Cloudflare route template must preserve hostname/service and may add only originRequest settings',
+    );
   }
 
   return rule;

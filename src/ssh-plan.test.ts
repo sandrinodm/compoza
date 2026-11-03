@@ -27,9 +27,18 @@ import { REMOTE_PATH, shellQuote } from './command.ts';
 import { readSecrets } from './config/secrets.ts';
 import { OnePasswordReader } from './extensions/1password/index.ts';
 import { cloudflareIngress } from './extensions/cloudflare-tunnel/index.ts';
-import { deployedScript, deploymentScript, generatedEnvironment, sshReadinessScript } from './ssh-plan.ts';
+import {
+  deployedScript,
+  deploymentScript,
+  generatedEnvironment,
+  sshReadinessScript,
+} from './ssh-plan.ts';
 
-const host: HostConfig = { ssh: 'fixture', platform: 'linux/arm64', transport: { mode: 'ssh-load' } };
+const host: HostConfig = {
+  ssh: 'fixture',
+  platform: 'linux/arm64',
+  transport: { mode: 'ssh-load' },
+};
 
 const source: BundleFile = {
   path: 'compose.yaml',
@@ -57,7 +66,10 @@ function fixture(
   const root = join(dir, "stack'$(literal)");
   const bin = join(dir, 'bin');
   mkdirSync(bin);
-  writeFileSync(join(dir, 'model.json'), JSON.stringify({ services: { web: { image: 'fixture' } } }));
+  writeFileSync(
+    join(dir, 'model.json'),
+    JSON.stringify({ services: { web: { image: 'fixture' } } }),
+  );
   writeFileSync(
     join(bin, 'docker'),
     `#!/bin/bash
@@ -160,7 +172,12 @@ describe('flat SSH stack transactions', { timeout: 15_000 }, () => {
       const asset = { path: 'settings.txt', encoded: Buffer.from([0, 1, 255]).toString('base64') };
       succeeded(deploy('one', { TOKEN: 'private-token', EMPTY: '' }, [source, asset]));
 
-      assert.deepStrictEqual(readdirSync(root).sort(), ['.compoza.json', '.env', 'compose.yaml', 'settings.txt']);
+      assert.deepStrictEqual(readdirSync(root).sort(), [
+        '.compoza.json',
+        '.env',
+        'compose.yaml',
+        'settings.txt',
+      ]);
       assert.deepStrictEqual(readFileSync(join(root, 'settings.txt')), Buffer.from([0, 1, 255]));
       assert.strictEqual(statSync(join(root, '.env')).mode & 0o777, 0o600);
       assert.strictEqual(statSync(join(root, '.compoza.json')).mode & 0o777, 0o600);
@@ -214,13 +231,18 @@ describe('flat SSH stack transactions', { timeout: 15_000 }, () => {
       writeFileSync(
         join(dir, 'model.json'),
         JSON.stringify({
-          services: { web: { volumes: [{ type: 'bind', source: './settings.txt', read_only: true }] } },
+          services: {
+            web: { volumes: [{ type: 'bind', source: './settings.txt', read_only: true }] },
+          },
         }),
       );
       assert.notStrictEqual(deploy('invalid').status, 0);
       assert.strictEqual(readFileSync(metadataFile, 'utf8'), retained);
 
-      writeFileSync(join(dir, 'model.json'), JSON.stringify({ services: { web: { image: 'fixture' } } }));
+      writeFileSync(
+        join(dir, 'model.json'),
+        JSON.stringify({ services: { web: { image: 'fixture' } } }),
+      );
       writeFileSync(join(root, 'operator.txt'), 'operator');
       assert.notStrictEqual(
         deploy('invalid', undefined, [
@@ -232,9 +254,17 @@ describe('flat SSH stack transactions', { timeout: 15_000 }, () => {
       assert.strictEqual(readFileSync(join(root, 'operator.txt'), 'utf8'), 'operator');
       assert.strictEqual(readFileSync(metadataFile, 'utf8'), retained);
 
-      succeeded(deploy('three', undefined, [source, { ...asset, encoded: Buffer.from('updated').toString('base64') }]));
+      succeeded(
+        deploy('three', undefined, [
+          source,
+          { ...asset, encoded: Buffer.from('updated').toString('base64') },
+        ]),
+      );
       assert.strictEqual(readFileSync(join(root, 'settings.txt'), 'utf8'), 'updated');
-      assert.deepStrictEqual(JSON.parse(readFileSync(metadataFile, 'utf8')).files, ['compose.yaml', 'settings.txt']);
+      assert.deepStrictEqual(JSON.parse(readFileSync(metadataFile, 'utf8')).files, [
+        'compose.yaml',
+        'settings.txt',
+      ]);
     }));
 
   it('rejects malformed retained ownership before replacing deployed files', () =>
@@ -244,7 +274,16 @@ describe('flat SSH stack transactions', { timeout: 15_000 }, () => {
       const original = JSON.parse(readFileSync(metadataFile, 'utf8'));
       const environment = readFileSync(join(root, '.env'), 'utf8');
 
-      for (const ownedFiles of [null, {}, [], ['../outside'], ['/outside'], ['.env'], ['a//b'], [42]]) {
+      for (const ownedFiles of [
+        null,
+        {},
+        [],
+        ['../outside'],
+        ['/outside'],
+        ['.env'],
+        ['a//b'],
+        [42],
+      ]) {
         const malformed = JSON.stringify({ ...original, ownedFiles });
         writeFileSync(metadataFile, malformed);
         const result = deploy('replacement');
@@ -351,7 +390,13 @@ describe('flat SSH stack transactions', { timeout: 15_000 }, () => {
       writeFileSync(
         join(dir, 'status.json'),
         JSON.stringify([
-          { Service: 'a.b-worker', State: 'running', Health: 'healthy', ExitCode: 0, Command: 'private' },
+          {
+            Service: 'a.b-worker',
+            State: 'running',
+            Health: 'healthy',
+            ExitCode: 0,
+            Command: 'private',
+          },
         ]),
       );
 
@@ -364,7 +409,10 @@ describe('flat SSH stack transactions', { timeout: 15_000 }, () => {
         health: 'healthy',
         exitCode: 0,
       });
-      assert.notInclude(String(run(deployedScript(app, ['stop'], true)).stdout), 'PRIVATE_DIAGNOSTIC');
+      assert.notInclude(
+        String(run(deployedScript(app, ['stop'], true)).stdout),
+        'PRIVATE_DIAGNOSTIC',
+      );
       assert.isFalse(existsSync(join(root, '.deploy-lock')));
 
       chmodSync(join(root, '.env'), 0o644);
@@ -398,11 +446,14 @@ describe('flat SSH stack transactions', { timeout: 15_000 }, () => {
   it('checks resolved model paths, declared read-only assets and optional host env files', () =>
     fixture(({ dir, root, deploy }) => {
       const asset = { path: 'settings.txt', encoded: Buffer.from('safe').toString('base64') };
-      const model = (value: unknown) => writeFileSync(join(dir, 'model.json'), JSON.stringify(value));
+      const model = (value: unknown) =>
+        writeFileSync(join(dir, 'model.json'), JSON.stringify(value));
       model({
         services: {
           web: {
-            volumes: [{ type: 'bind', source: './settings.txt', target: '/settings', read_only: true }],
+            volumes: [
+              { type: 'bind', source: './settings.txt', target: '/settings', read_only: true },
+            ],
             env_file: [{ path: join(dir, 'optional.env'), required: false }],
           },
         },
@@ -410,10 +461,18 @@ describe('flat SSH stack transactions', { timeout: 15_000 }, () => {
       succeeded(deploy('good', undefined, [source, asset]));
 
       for (const value of [
-        { services: { web: { volumes: [{ type: 'bind', source: './settings.txt', target: '/settings' }] } } },
         {
           services: {
-            web: { volumes: [{ type: 'bind', source: join(root, '.env'), target: '/secrets', read_only: true }] },
+            web: { volumes: [{ type: 'bind', source: './settings.txt', target: '/settings' }] },
+          },
+        },
+        {
+          services: {
+            web: {
+              volumes: [
+                { type: 'bind', source: join(root, '.env'), target: '/secrets', read_only: true },
+              ],
+            },
           },
         },
         { configs: { config: { file: 'undeclared.conf' } } },
@@ -423,7 +482,11 @@ describe('flat SSH stack transactions', { timeout: 15_000 }, () => {
       ]) {
         model(value);
 
-        assert.notStrictEqual(deploy('bad', undefined, [source, asset]).status, 0, JSON.stringify(value));
+        assert.notStrictEqual(
+          deploy('bad', undefined, [source, asset]).status,
+          0,
+          JSON.stringify(value),
+        );
       }
 
       for (const text of ['', 'not-json']) {
@@ -495,11 +558,22 @@ describe('flat SSH stack transactions', { timeout: 15_000 }, () => {
     const environment = { DOLLAR: '$HOME ${OTHER}', QUOTE: 'a"b', BACK: 'ends\\', EMPTY: '' };
     const app: App = {
       dir: '/app',
-      config: { name: 'app', host: 'host', targets: [], composeFiles: ['compose.yaml'], environment },
+      config: {
+        name: 'app',
+        host: 'host',
+        targets: [],
+        composeFiles: ['compose.yaml'],
+        environment,
+      },
     };
 
     for (const [index, value] of Object.values(environment).entries()) {
-      const encoded = generatedEnvironment(app).trim().split('\n')[index]!.split('=').slice(1).join('=');
+      const encoded = generatedEnvironment(app)
+        .trim()
+        .split('\n')
+        [index]!.split('=')
+        .slice(1)
+        .join('=');
       assert.strictEqual(JSON.parse(encoded).replaceAll('$$', '$'), value);
     }
 

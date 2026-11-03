@@ -40,26 +40,30 @@ EQUALS=a=b
 });
 
 describe('readSecrets', () => {
-  it.effect('resolves a relative envFile against the deploy folder, not the working directory', () =>
-    Effect.acquireUseRelease(
-      Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'compoza-'))),
-      ({ path: dir }) =>
-        Effect.gen(function* () {
-          yield* Effect.promise(() => writeFile(join(dir, 'secrets.env'), 'PG_PASSWORD=s3cret\n'));
+  it.effect(
+    'resolves a relative envFile against the deploy folder, not the working directory',
+    () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'compoza-'))),
+        ({ path: dir }) =>
+          Effect.gen(function* () {
+            yield* Effect.promise(() =>
+              writeFile(join(dir, 'secrets.env'), 'PG_PASSWORD=s3cret\n'),
+            );
 
-          const config = yield* Schema.decodeUnknownEffect(DeployConfig)({
-            name: 'demo',
-            host: 'atlas',
-            targets: ['web'],
-            composeFiles: ['compose.yaml'],
-            envFile: 'secrets.env',
-          });
+            const config = yield* Schema.decodeUnknownEffect(DeployConfig)({
+              name: 'demo',
+              host: 'atlas',
+              targets: ['web'],
+              composeFiles: ['compose.yaml'],
+              envFile: 'secrets.env',
+            });
 
-          assert.notStrictEqual(process.cwd(), dir);
-          assert.deepStrictEqual(yield* readSecrets({ dir, config }), { PG_PASSWORD: 's3cret' });
-        }),
-      (directory) => Effect.promise(() => directory.remove()),
-    ).pipe(Effect.provide(NodeServices.layer)),
+            assert.notStrictEqual(process.cwd(), dir);
+            assert.deepStrictEqual(yield* readSecrets({ dir, config }), { PG_PASSWORD: 's3cret' });
+          }),
+        (directory) => Effect.promise(() => directory.remove()),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect('reads nothing when the app has no envFile', () =>

@@ -2,7 +2,14 @@ import { assert, describe, it } from '@effect/vitest';
 import { Cause, Effect, Exit, Fiber, Logger } from 'effect';
 import { TestClock, TestConsole } from 'effect/testing';
 
-import { formatDuration, formatLogLine, humanLogger, phase, phaseLine, runPhases } from './progress.ts';
+import {
+  formatDuration,
+  formatLogLine,
+  humanLogger,
+  phase,
+  phaseLine,
+  runPhases,
+} from './progress.ts';
 
 describe('formatDuration', () => {
   it('prints tenths under a minute and minutes from a minute on', () => {
@@ -29,10 +36,15 @@ describe('runPhases', () => {
       let status = 0;
       const total = yield* runPhases([
         phase('checks', 'Checking readiness on atlas', TestClock.adjust(1_800)),
-        phase('wait', 'Waiting for https://demo.example.com/', Effect.as(TestClock.adjust(12_500), 200), (code) => {
-          status = code;
-          return `HTTP ${code}`;
-        }),
+        phase(
+          'wait',
+          'Waiting for https://demo.example.com/',
+          Effect.as(TestClock.adjust(12_500), 200),
+          (code) => {
+            status = code;
+            return `HTTP ${code}`;
+          },
+        ),
       ]);
 
       assert.strictEqual(status, 200);
@@ -46,18 +58,24 @@ describe('runPhases', () => {
     }).pipe(Effect.provide(TestConsole.layer)),
   );
 
-  it.effect('prints the failure, skips the remaining phases and propagates the error unchanged', () =>
-    Effect.gen(function* () {
-      const exit = yield* runPhases([
-        phase('build', 'Building and shipping 2 images', Effect.andThen(TestClock.adjust(2_300), Effect.fail('boom'))),
-        phase('compose', 'Starting the stack with Compose', Effect.void),
-      ]).pipe(Effect.exit);
-      assert.deepStrictEqual(exit, Exit.fail('boom'));
-      assert.deepStrictEqual(yield* TestConsole.logLines, [
-        '[1/2] Building and shipping 2 images …',
-        '[1/2] Building and shipping 2 images … failed (2.3 s)',
-      ]);
-    }).pipe(Effect.provide(TestConsole.layer)),
+  it.effect(
+    'prints the failure, skips the remaining phases and propagates the error unchanged',
+    () =>
+      Effect.gen(function* () {
+        const exit = yield* runPhases([
+          phase(
+            'build',
+            'Building and shipping 2 images',
+            Effect.andThen(TestClock.adjust(2_300), Effect.fail('boom')),
+          ),
+          phase('compose', 'Starting the stack with Compose', Effect.void),
+        ]).pipe(Effect.exit);
+        assert.deepStrictEqual(exit, Exit.fail('boom'));
+        assert.deepStrictEqual(yield* TestConsole.logLines, [
+          '[1/2] Building and shipping 2 images …',
+          '[1/2] Building and shipping 2 images … failed (2.3 s)',
+        ]);
+      }).pipe(Effect.provide(TestConsole.layer)),
   );
 
   it.effect('prints an interrupted phase as such', () =>

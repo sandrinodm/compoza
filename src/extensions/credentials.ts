@@ -9,8 +9,9 @@ import { envFileProvider } from './env-file/index.ts';
 /**
  * A client-side source of Compose credentials.
  *
- * Providers return values only; the deployment core owns source selection, dry runs, validation and secret transport.
- * Failures must contain safe diagnostics, never SDK exceptions, source contents or authentication material.
+ * Providers return values only; the deployment core owns source selection, dry runs, validation and
+ * secret transport. Failures must contain safe diagnostics, never SDK exceptions, source contents
+ * or authentication material.
  */
 export interface CredentialProvider {
   /**
@@ -24,7 +25,8 @@ export interface CredentialProvider {
   readonly authEnvironmentPrefixes: ReadonlyArray<string>;
 
   /**
-   * Reads the selected source on the CLI machine, resolving relative paths against the deployment directory.
+   * Reads the selected source on the CLI machine, resolving relative paths against the deployment
+   * directory.
    */
   readonly read: (
     source: ResolvedSecretsConfig,
@@ -40,10 +42,13 @@ export interface CredentialProvider {
 export const credentialProviders = {
   'env-file': envFileProvider,
   '1password': onePasswordProvider,
-} as const satisfies Readonly<Record<Exclude<ResolvedSecretsConfig['provider'], 'none'>, CredentialProvider>>;
+} as const satisfies Readonly<
+  Record<Exclude<ResolvedSecretsConfig['provider'], 'none'>, CredentialProvider>
+>;
 
 /**
- * Resolves a credential provider, rejecting unsupported selectors instead of falling back to another source.
+ * Resolves a credential provider, rejecting unsupported selectors instead of falling back to
+ * another source.
  */
 export function credentialProvider(id: string): CredentialProvider {
   const provider = Object.values(credentialProviders).find((entry) => entry.id === id);
@@ -55,9 +60,11 @@ export function credentialProvider(id: string): CredentialProvider {
 }
 
 /**
- * Identifies operator authentication belonging to any bundled provider, including inactive providers.
+ * Identifies operator authentication belonging to any bundled provider, including inactive
+ * providers.
  *
- * Authentication must not leak into builds, Compose, SSH or Git just because a different source is selected.
+ * Authentication must not leak into builds, Compose, SSH or Git just because a different source is
+ * selected.
  */
 export function isCredentialEnvironment(name: string): boolean {
   return Object.values(credentialProviders).some((provider) =>

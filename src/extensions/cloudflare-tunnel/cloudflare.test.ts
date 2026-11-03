@@ -59,7 +59,10 @@ function fixture(
     join(dir, 'api.json'),
     JSON.stringify({
       version: 1,
-      config: { originRequest: { connectTimeout: 10 }, ingress: [unrelated, { service: 'http_status:404' }] },
+      config: {
+        originRequest: { connectTimeout: 10 },
+        ingress: [unrelated, { service: 'http_status:404' }],
+      },
     }),
   );
   writeFileSync(
@@ -123,10 +126,14 @@ if (!url.endsWith('/configurations')) {
   };
 
   const run = (script: string) =>
-    spawnSync('/bin/bash', ['-c', script.replaceAll(REMOTE_PATH, `export PATH=${shellQuote(bin)}:$PATH`)], {
-      encoding: 'utf8',
-      timeout: 10000,
-    });
+    spawnSync(
+      '/bin/bash',
+      ['-c', script.replaceAll(REMOTE_PATH, `export PATH=${shellQuote(bin)}:$PATH`)],
+      {
+        encoding: 'utf8',
+        timeout: 10000,
+      },
+    );
 
   use({
     dir,
@@ -201,12 +208,17 @@ describe('Cloudflare Tunnel extension', { timeout: 15_000 }, () => {
         'http://web\n',
       ]) {
         assert.throws(() =>
-          Schema.decodeUnknownSync(DeployConfig)({ ...app.config, ingress: { ...app.config.ingress, service } }),
+          Schema.decodeUnknownSync(DeployConfig)({
+            ...app.config,
+            ingress: { ...app.config.ingress, service },
+          }),
         );
       }
 
       assert.throws(() =>
-        Schema.decodeUnknownSync(Hosts)({ fixture: { ...host, proxy: { ...host.proxy, accountId: '../other' } } }),
+        Schema.decodeUnknownSync(Hosts)({
+          fixture: { ...host, proxy: { ...host.proxy, accountId: '../other' } },
+        }),
       );
     }));
 
@@ -245,7 +257,9 @@ describe('Cloudflare Tunnel extension', { timeout: 15_000 }, () => {
       const deployment = deploymentScript(app, host, 'one', []);
       assert.notInclude(deployment.script + deployment.input, sentinel);
 
-      const records = deployment.input.split('\n').map((line) => Buffer.from(line, 'base64').toString('utf8'));
+      const records = deployment.input
+        .split('\n')
+        .map((line) => Buffer.from(line, 'base64').toString('utf8'));
       const metadata = JSON.parse(records[0]!);
       assert.strictEqual(metadata.unroute, plan.unroute.script);
       assert.include(deployment.script, shellQuote(plan.route.script));
@@ -267,7 +281,11 @@ describe('Cloudflare Tunnel extension', { timeout: 15_000 }, () => {
         ...app,
         config: {
           ...app.config,
-          ingress: { mode: 'cloudflare-tunnel', domain: 'new.example.com', service: 'https://new:443' },
+          ingress: {
+            mode: 'cloudflare-tunnel',
+            domain: 'new.example.com',
+            service: 'https://new:443',
+          },
         },
       };
       succeeded(run(cloudflareIngress.plan(next, host).route.script));
@@ -290,7 +308,10 @@ describe('Cloudflare Tunnel extension', { timeout: 15_000 }, () => {
       succeeded(run(cloudflareIngress.setup(host).script));
 
       const before = state();
-      before.config.ingress.unshift({ hostname: 'app.example.com', service: 'http://someone-else:80' });
+      before.config.ingress.unshift({
+        hostname: 'app.example.com',
+        service: 'http://someone-else:80',
+      });
       setState(before);
       failed(run(cloudflareIngress.plan(app, host).route.script));
 
@@ -377,7 +398,10 @@ describe('Cloudflare Tunnel extension', { timeout: 15_000 }, () => {
 
       const caddyApp: App = {
         ...app,
-        config: { ...app.config, ingress: { mode: 'caddy', domain: 'app.example.com', upstream: 'web:80' } },
+        config: {
+          ...app.config,
+          ingress: { mode: 'caddy', domain: 'app.example.com', upstream: 'web:80' },
+        },
       };
       const caddy = ingressFor(caddyApp)!;
       assert.isUndefined(caddy.probe(caddyApp, host));

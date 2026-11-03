@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempDisposableSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempDisposableSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -21,11 +27,15 @@ assert.ok(tarball, 'Usage: pnpm test:package /absolute/path/to/compoza.tgz');
 using temporary = mkdtempDisposableSync(join(tmpdir(), 'compoza-package-'));
 const consumer = temporary.path;
 
-execFileSync('npm', ['install', '--no-audit', '--no-fund', '--prefix', consumer, resolve(tarball)], {
-  cwd: consumer,
-  stdio: 'inherit',
-  timeout: 180_000,
-});
+execFileSync(
+  'npm',
+  ['install', '--no-audit', '--no-fund', '--prefix', consumer, resolve(tarball)],
+  {
+    cwd: consumer,
+    stdio: 'inherit',
+    timeout: 180_000,
+  },
+);
 
 const installed = join(consumer, 'node_modules/compoza');
 const manifest = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'));
@@ -34,7 +44,10 @@ assert.equal(manifest.version, sourceManifest.version);
 
 for (const section of ['dependencies', 'optionalDependencies']) {
   for (const version of Object.values(manifest[section] ?? {})) {
-    assert.ok(!version.startsWith('catalog:'), 'pnpm must resolve catalog dependencies before publishing');
+    assert.ok(
+      !version.startsWith('catalog:'),
+      'pnpm must resolve catalog dependencies before publishing',
+    );
   }
 }
 
@@ -48,14 +61,21 @@ for (const name of readdirSync(join(root, 'src'), { recursive: true })) {
   }
 }
 
-assert.ok(!readdirSync(join(installed, 'dist'), { recursive: true }).some((name) => /\.(ts|tsx)$/.test(name)));
+assert.ok(
+  !readdirSync(join(installed, 'dist'), { recursive: true }).some((name) =>
+    /\.(ts|tsx)$/.test(name),
+  ),
+);
 
 const executable = join(consumer, 'node_modules/.bin/compoza');
 const options = { cwd: consumer, encoding: 'utf8', timeout: 30_000 };
 const help = execFileSync(executable, ['--help'], options);
 assert.match(help, /setup-proxy/);
 assert.doesNotMatch(help, /rollback/);
-assert.equal(execFileSync(executable, ['--version'], options).trim(), `compoza v${manifest.version}`);
+assert.equal(
+  execFileSync(executable, ['--version'], options).trim(),
+  `compoza v${manifest.version}`,
+);
 
 const hosts = join(consumer, 'hosts.yaml');
 writeFileSync(

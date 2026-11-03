@@ -9,8 +9,8 @@ import { Remote } from './services/Remote.ts';
 import { Shell } from './services/Shell.ts';
 
 /**
- * Looks up the host folder of one of the app's content sections, failing with the known section names when `section` is
- * not one of them.
+ * Looks up the host folder of one of the app's content sections, failing with the known section
+ * names when `section` is not one of them.
  */
 export function contentTarget(app: App, section: string): Effect.Effect<string, DeployError> {
   const sections = contentOf(app.config);
@@ -18,7 +18,9 @@ export function contentTarget(app: App, section: string): Effect.Effect<string, 
   if (target === undefined) {
     const known = Object.keys(sections).join(', ') || 'none';
     return Effect.fail(
-      new DeployError({ message: `${app.config.name} has no content section "${section}" (sections: ${known})` }),
+      new DeployError({
+        message: `${app.config.name} has no content section "${section}" (sections: ${known})`,
+      }),
     );
   }
 
@@ -26,16 +28,23 @@ export function contentTarget(app: App, section: string): Effect.Effect<string, 
 }
 
 /**
- * Builds the rsync command that mirrors the absolute folder `source` into `target`, a host folder resolved by
- * `contentTarget`.
+ * Builds the rsync command that mirrors the absolute folder `source` into `target`, a host folder
+ * resolved by `contentTarget`.
  *
- * Dotfiles (such as `.env` and `.git`) and `node_modules` never leave this machine; `--delete` makes the host folder an
- * exact copy, which is what a content section is. Under `dryRun` rsync lists the changes instead, with `*deleting`
- * marking removals. The trailing slash on `source` makes rsync copy the folder's contents rather than the folder
- * itself; `source` comes from `path.resolve`, which drops trailing slashes. rsync's ssh runs with `BatchMode=yes` like
- * every other SSH use in the tool, so a missing key fails at once instead of stopping at a password prompt.
+ * Dotfiles (such as `.env` and `.git`) and `node_modules` never leave this machine; `--delete`
+ * makes the host folder an exact copy, which is what a content section is. Under `dryRun` rsync
+ * lists the changes instead, with `*deleting` marking removals. The trailing slash on `source`
+ * makes rsync copy the folder's contents rather than the folder itself; `source` comes from
+ * `path.resolve`, which drops trailing slashes. rsync's ssh runs with `BatchMode=yes` like every
+ * other SSH use in the tool, so a missing key fails at once instead of stopping at a password
+ * prompt.
  */
-export function rsyncCommand(host: HostConfig, target: string, source: string, dryRun: boolean): Command {
+export function rsyncCommand(
+  host: HostConfig,
+  target: string,
+  source: string,
+  dryRun: boolean,
+): Command {
   return command('rsync', [
     '--archive',
     '--delete',
@@ -51,11 +60,12 @@ export function rsyncCommand(host: HostConfig, target: string, source: string, d
 }
 
 /**
- * Mirrors a local folder into one of the app's content sections on its host, creating the host folder first.
+ * Mirrors a local folder into one of the app's content sections on its host, creating the host
+ * folder first.
  *
- * Creating the folder honours `DryRun` like any other change, so the caller sets it alongside `dryRun`. The rsync
- * itself runs with `alwaysRun`, because rsync's own `--dry-run` is the preview: it lists what would change, which a
- * printed command line cannot.
+ * Creating the folder honours `DryRun` like any other change, so the caller sets it alongside
+ * `dryRun`. The rsync itself runs with `alwaysRun`, because rsync's own `--dry-run` is the preview:
+ * it lists what would change, which a printed command line cannot.
  */
 export const publish = Effect.fn('publish')(function* (
   app: App,
@@ -70,7 +80,9 @@ export const publish = Effect.fn('publish')(function* (
   const path = yield* Path.Path;
 
   const source = path.resolve(folder);
-  const exists = yield* fs.exists(source).pipe(Effect.mapError(platformFailure(`Looking for ${source}`)));
+  const exists = yield* fs
+    .exists(source)
+    .pipe(Effect.mapError(platformFailure(`Looking for ${source}`)));
   if (!exists) {
     return yield* new DeployError({ message: `No such folder: ${source}` });
   }

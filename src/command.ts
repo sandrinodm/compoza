@@ -1,9 +1,10 @@
 import { isCredentialEnvironment } from './extensions/credentials.ts';
 /**
- * One process to run on this machine: a program, its arguments, and the variables added to the environment.
+ * One process to run on this machine: a program, its arguments, and the variables added to the
+ * environment.
  *
- * This is a plain description, not an effect, so a deployment can be planned, printed by `--dry-run` and tested without
- * Docker. The `Shell` service turns it into a child process.
+ * This is a plain description, not an effect, so a deployment can be planned, printed by
+ * `--dry-run` and tested without Docker. The `Shell` service turns it into a child process.
  */
 export interface Command {
   /**
@@ -34,7 +35,8 @@ export interface Command {
   /**
    * The secret-bearing subprocess output suppression flag.
    *
-   * Third-party diagnostics can repeat interpolation values, so Compose deployment output is discarded.
+   * Third-party diagnostics can repeat interpolation values, so Compose deployment output is
+   * discarded.
    */
   readonly sensitive?: boolean;
 
@@ -47,7 +49,8 @@ export interface Command {
 }
 
 /**
- * Commands connected stdout to stdin, like `a | b | c` in a shell; the last stage's output is the pipeline's.
+ * Commands connected stdout to stdin, like `a | b | c` in a shell; the last stage's output is the
+ * pipeline's.
  */
 export interface Pipeline {
   /**
@@ -82,8 +85,8 @@ export function command(
 /**
  * The command as a person would type it, with secret values replaced by `***`.
  *
- * Arguments are printed as given, without shell quoting, so the line is easy to read rather than safe to paste;
- * `--dry-run` output is for reviewing a plan, not for replaying it.
+ * Arguments are printed as given, without shell quoting, so the line is easy to read rather than
+ * safe to paste; `--dry-run` output is for reviewing a plan, not for replaying it.
  */
 export function printable(command: Command): string {
   if (command.label !== undefined) {
@@ -91,7 +94,8 @@ export function printable(command: Command): string {
   }
 
   const env = Object.entries(command.env ?? {}).map(
-    ([key, value]) => `${key}=${command.secret?.includes(key) || isCredentialEnvironment(key) ? '***' : value}`,
+    ([key, value]) =>
+      `${key}=${command.secret?.includes(key) || isCredentialEnvironment(key) ? '***' : value}`,
   );
   return [...env, command.program, ...command.args].join(' ');
 }
@@ -104,19 +108,20 @@ export function printableStep(step: Step): string {
 }
 
 /**
- * Quotes a value for a POSIX shell with single quotes, the only quoting that needs no escaping other than of the quote
- * itself. Used for the scripts sent to a host, which run under `bash -c`.
+ * Quotes a value for a POSIX shell with single quotes, the only quoting that needs no escaping
+ * other than of the quote itself. Used for the scripts sent to a host, which run under `bash -c`.
  */
 export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 /**
- * The line that prepends the usual Docker install folders to `PATH`, put at the top of every script sent to a host.
+ * The line that prepends the usual Docker install folders to `PATH`, put at the top of every script
+ * sent to a host.
  *
- * Non-interactive SSH sessions on macOS hosts do not load the profile that adds Homebrew and OrbStack, so `docker`
- * would otherwise be missing. The folders go before the inherited `PATH`, and a folder that does not exist on the host
- * is simply skipped by the shell.
+ * Non-interactive SSH sessions on macOS hosts do not load the profile that adds Homebrew and
+ * OrbStack, so `docker` would otherwise be missing. The folders go before the inherited `PATH`, and
+ * a folder that does not exist on the host is simply skipped by the shell.
  */
 export const REMOTE_PATH = 'export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH';
 

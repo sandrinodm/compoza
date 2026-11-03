@@ -15,7 +15,9 @@ import {
 /**
  * An optional DNS assertion accepts either IP family; Caddy itself does not need the host IP.
  */
-const DnsAddress = Schema.String.check(Schema.makeFilter((value) => !value.includes('%') && isIP(value) !== 0));
+const DnsAddress = Schema.String.check(
+  Schema.makeFilter((value) => !value.includes('%') && isIP(value) !== 0),
+);
 
 /**
  * A local template filename or inline template text; file sources are loaded before planning.
@@ -36,8 +38,9 @@ export const CaddyTemplate = Schema.Union([
 export type CaddyTemplate = typeof CaddyTemplate.Type;
 
 /**
- * Routing through the host's shared Caddy: deploy writes a site file for `domain` that proxies to `upstream` on the
- * proxy's network, and waits for `https://<domain><healthPath>` to answer (`healthPath` defaults to `/`).
+ * Routing through the host's shared Caddy: deploy writes a site file for `domain` that proxies to
+ * `upstream` on the proxy's network, and waits for `https://<domain><healthPath>` to answer
+ * (`healthPath` defaults to `/`).
  */
 export const CaddySettings = Schema.Struct({
   /**
@@ -56,13 +59,15 @@ export const CaddySettings = Schema.Struct({
   healthPath: Schema.optionalKey(HealthPath),
 
   /**
-   * An app-specific site template overriding the host default, relative to deploy.yaml when it is a filename.
+   * An app-specific site template overriding the host default, relative to deploy.yaml when it is a
+   * filename.
    */
   siteTemplate: Schema.optionalKey(CaddyTemplate),
 });
 
 /**
- * The legacy flat Caddy app selection, retained for existing deploy files and normalized runtime plans.
+ * The legacy flat Caddy app selection, retained for existing deploy files and normalized runtime
+ * plans.
  */
 export const CaddyIngress = Schema.Struct({
   /**
@@ -88,7 +93,8 @@ export const CaddySelection = Schema.Struct({
 export type CaddyIngress = typeof CaddyIngress.Type;
 
 /**
- * Opt-in creation of a shared Caddy stack; credentials remain in an operator-provided file on the host.
+ * Opt-in creation of a shared Caddy stack; credentials remain in an operator-provided file on the
+ * host.
  */
 export const CaddyProvision = Schema.Struct({
   /**
@@ -102,7 +108,8 @@ export const CaddyProvision = Schema.Struct({
   envFile: Schema.optionalKey(AbsolutePath),
 
   /**
-   * The global acme_dns arguments, e.g. cloudflare {env.CLOUDFLARE_API_TOKEN}; never put credentials here.
+   * The global acme_dns arguments, e.g. cloudflare {env.CLOUDFLARE_API_TOKEN}; never put
+   * credentials here.
    */
   acmeDns: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\S[^\r\n]*$/))),
 
@@ -112,17 +119,20 @@ export const CaddyProvision = Schema.Struct({
   networkAliases: Schema.optionalKey(Schema.Array(Domain)),
 
   /**
-   * The default template's drain limit in seconds (1–3600, default 30); Docker allows ten extra seconds to exit.
+   * The default template's drain limit in seconds (1–3600, default 30); Docker allows ten extra
+   * seconds to exit.
    */
-  gracePeriodSeconds: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3600 }))),
+  gracePeriodSeconds: Schema.optionalKey(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3600 })),
+  ),
 });
 
 /**
  * The shared Caddy that routes public domains on a host, for apps whose ingress is `caddy`.
  *
- * `setup-proxy` makes this Caddy load every `sites/*.caddy` file next to its Caddyfile; deploy then writes one file per
- * app. The optional `tls` and `logSnippet` settings go into every site file, so the host decides how certificates are
- * issued and requests are logged, not the app.
+ * `setup-proxy` makes this Caddy load every `sites/*.caddy` file next to its Caddyfile; deploy then
+ * writes one file per app. The optional `tls` and `logSnippet` settings go into every site file, so
+ * the host decides how certificates are issued and requests are logged, not the app.
  */
 export const CaddyHostSettings = Schema.Struct({
   /**
@@ -131,16 +141,17 @@ export const CaddyHostSettings = Schema.Struct({
   dir: AbsolutePath,
 
   /**
-   * Name of the running Caddy container, used for `docker exec` (`caddy reload`) and `docker inspect`.
+   * Name of the running Caddy container, used for `docker exec` (`caddy reload`) and `docker
+   * inspect`.
    */
   container: Name,
 
   /**
-   * The Compose service name of the Caddy container in the proxy's Compose file, which `setup-proxy` recreates with
-   * `docker compose up -d`; defaults to the value of `container`.
+   * The Compose service name of the Caddy container in the proxy's Compose file, which
+   * `setup-proxy` recreates with `docker compose up -d`; defaults to the value of `container`.
    *
-   * Compose names containers `<project>-<service>-1` unless the service sets `container_name`, so the two differ on any
-   * proxy that does not pin its container name.
+   * Compose names containers `<project>-<service>-1` unless the service sets `container_name`, so
+   * the two differ on any proxy that does not pin its container name.
    */
   service: Schema.optionalKey(ComposeServiceName),
 
@@ -155,19 +166,22 @@ export const CaddyHostSettings = Schema.Struct({
   composeFile: Schema.optionalKey(Schema.String),
 
   /**
-   * The body of the `tls` block written into every site file, for example `dns cloudflare {env.CLOUDFLARE_API_TOKEN}`.
-   * Left out, Caddy issues certificates its default way (HTTP or TLS-ALPN challenges).
+   * The body of the `tls` block written into every site file, for example `dns cloudflare
+   * {env.CLOUDFLARE_API_TOKEN}`. Left out, Caddy issues certificates its default way (HTTP or
+   * TLS-ALPN challenges).
    */
   tls: Schema.optionalKey(Schema.String),
 
   /**
-   * A snippet defined in the shared Caddyfile that every site file imports with the app name as its argument, for
-   * example a `request_log` snippet writing `/data/<app>.log`. Left out, site files import nothing.
+   * A snippet defined in the shared Caddyfile that every site file imports with the app name as its
+   * argument, for example a `request_log` snippet writing `/data/<app>.log`. Left out, site files
+   * import nothing.
    */
   logSnippet: Schema.optionalKey(SnippetName),
 
   /**
-   * Creates a fresh proxy stack instead of adapting existing files; reruns require unchanged generated files.
+   * Creates a fresh proxy stack instead of adapting existing files; reruns require unchanged
+   * generated files.
    */
   provision: Schema.optionalKey(CaddyProvision),
 
@@ -239,8 +253,8 @@ export function proxyComposeFile(proxy: ProxyConfig): string {
 }
 
 /**
- * The Compose service name of the proxy's Caddy, falling back to its container name when the entry leaves `service`
- * out.
+ * The Compose service name of the proxy's Caddy, falling back to its container name when the entry
+ * leaves `service` out.
  */
 export function proxyService(proxy: ProxyConfig): string {
   return proxy.service ?? proxy.container;

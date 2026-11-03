@@ -22,7 +22,11 @@ export const envFileProvider: CredentialProvider = {
     const file = path.resolve(directory, expandHome(source.path));
     const text = yield* fs
       .readFileString(file)
-      .pipe(Effect.mapError(() => new DeployError({ message: 'Cannot read configured secret env file' })));
+      .pipe(
+        Effect.mapError(
+          () => new DeployError({ message: 'Cannot read configured secret env file' }),
+        ),
+      );
     return yield* parseEnvFile(text);
   }),
 };

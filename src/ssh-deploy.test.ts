@@ -63,7 +63,10 @@ describe('SSH deployment selection and transports', () => {
   it.each(['registry', 'ssh-load', 'remote-build'] as const)(
     'keeps %s image transport independent of host Compose execution',
     (mode) => {
-      const selectedHost: HostConfig = { ...host, transport: mode === 'registry' ? host.transport : { mode } };
+      const selectedHost: HostConfig = {
+        ...host,
+        transport: mode === 'registry' ? host.transport : { mode },
+      };
       const steps = planDeployment({
         app,
         host: selectedHost,
@@ -90,7 +93,11 @@ describe('SSH deployment selection and transports', () => {
             '--builder',
             'default',
           ]);
-          assert.deepStrictEqual(build.env, { DOCKER_CONTEXT: '', BUILDX_BUILDER: '', BUILDX_HOST: '' });
+          assert.deepStrictEqual(build.env, {
+            DOCKER_CONTEXT: '',
+            BUILDX_BUILDER: '',
+            BUILDX_HOST: '',
+          });
         }
       }
 
@@ -109,81 +116,92 @@ describe('SSH deployment selection and transports', () => {
     },
   );
 
-  it.effect('dry-runs a third-party stack outside Git without building, staging, locks or local secret reads', () => {
-    const writes: Array<string> = [];
-    const probes: Array<string> = [];
-    const noGit = () => Effect.die('Git must not be consulted for third-party-only stacks');
-    const services = Layer.mergeAll(
-      NodeServices.layer,
-      FetchHttpClient.layer,
-      Layer.succeed(Git, Git.of({ root: noGit, hasCommits: noGit, isDirty: noGit, shortSha: noGit })),
-      Layer.succeed(
-        Shell,
-        Shell.of({
-          run: () =>
-            Effect.sync(() => {
-              writes.push('build');
-            }),
-          capture: () => Effect.die('No local probes required'),
-        }),
-      ),
-      Layer.succeed(
-        Remote,
-        Remote.of({
-          run: (_host, _script, _input, label) =>
-            Effect.gen(function* () {
-              assert.isTrue(yield* DryRun);
-              assert.include(label, 'stage');
-
-              return '';
-            }),
-          probe: (_host, script) =>
-            Effect.sync(() => {
-              probes.push(script);
-
-              return 'docker=yes\ncompose=yes\njq=yes\nstack_path=yes\nhost_env=yes\nhost_overlay=yes\ncurl=yes\nbuildkit=yes\n';
-            }),
-        }),
-      ),
-    );
-    return Effect.acquireUseRelease(
-      Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'dd-dry-'))),
-      ({ path: dir }) =>
-        Effect.gen(function* () {
-          yield* Effect.promise(() => writeFile(join(dir, 'compose.yaml'), 'services: {web: {image: nginx}}'));
-          yield* Effect.promise(() =>
-            writeFile(
-              join(dir, 'deploy.yaml'),
-              YAML.stringify({
-                name: 'third-party',
-                workingDirectory: '/missing/app-checkout',
-                host: 'host',
-                targets: [],
-                execution: 'ssh',
-                remote: { stackDir: '/srv/third-party', envFile: '/host/secrets/never-local.env' },
-                composeFiles: ['compose.yaml'],
+  it.effect(
+    'dry-runs a third-party stack outside Git without building, staging, locks or local secret reads',
+    () => {
+      const writes: Array<string> = [];
+      const probes: Array<string> = [];
+      const noGit = () => Effect.die('Git must not be consulted for third-party-only stacks');
+      const services = Layer.mergeAll(
+        NodeServices.layer,
+        FetchHttpClient.layer,
+        Layer.succeed(
+          Git,
+          Git.of({ root: noGit, hasCommits: noGit, isDirty: noGit, shortSha: noGit }),
+        ),
+        Layer.succeed(
+          Shell,
+          Shell.of({
+            run: () =>
+              Effect.sync(() => {
+                writes.push('build');
               }),
-            ),
-          );
-          yield* Effect.promise(() =>
-            writeFile(
-              join(dir, 'hosts.yaml'),
-              YAML.stringify({ host: { ...host, transport: { mode: 'remote-build' } } }),
-            ),
-          );
-          yield* deploy({
-            target: dir,
-            hosts: Option.some(join(dir, 'hosts.yaml')),
-            dryRun: true,
-            local: false,
-            allowDirty: false,
-            tag: Option.none(),
-          });
+            capture: () => Effect.die('No local probes required'),
+          }),
+        ),
+        Layer.succeed(
+          Remote,
+          Remote.of({
+            run: (_host, _script, _input, label) =>
+              Effect.gen(function* () {
+                assert.isTrue(yield* DryRun);
+                assert.include(label, 'stage');
 
-          assert.lengthOf(writes, 0);
-          assert.lengthOf(probes, 1);
-        }).pipe(Effect.provide(services), Effect.provideService(DryRun, true)),
-      (directory) => Effect.promise(() => directory.remove()),
-    );
-  });
+                return '';
+              }),
+            probe: (_host, script) =>
+              Effect.sync(() => {
+                probes.push(script);
+
+                return 'docker=yes\ncompose=yes\njq=yes\nstack_path=yes\nhost_env=yes\nhost_overlay=yes\ncurl=yes\nbuildkit=yes\n';
+              }),
+          }),
+        ),
+      );
+      return Effect.acquireUseRelease(
+        Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'dd-dry-'))),
+        ({ path: dir }) =>
+          Effect.gen(function* () {
+            yield* Effect.promise(() =>
+              writeFile(join(dir, 'compose.yaml'), 'services: {web: {image: nginx}}'),
+            );
+            yield* Effect.promise(() =>
+              writeFile(
+                join(dir, 'deploy.yaml'),
+                YAML.stringify({
+                  name: 'third-party',
+                  workingDirectory: '/missing/app-checkout',
+                  host: 'host',
+                  targets: [],
+                  execution: 'ssh',
+                  remote: {
+                    stackDir: '/srv/third-party',
+                    envFile: '/host/secrets/never-local.env',
+                  },
+                  composeFiles: ['compose.yaml'],
+                }),
+              ),
+            );
+            yield* Effect.promise(() =>
+              writeFile(
+                join(dir, 'hosts.yaml'),
+                YAML.stringify({ host: { ...host, transport: { mode: 'remote-build' } } }),
+              ),
+            );
+            yield* deploy({
+              target: dir,
+              hosts: Option.some(join(dir, 'hosts.yaml')),
+              dryRun: true,
+              local: false,
+              allowDirty: false,
+              tag: Option.none(),
+            });
+
+            assert.lengthOf(writes, 0);
+            assert.lengthOf(probes, 1);
+          }).pipe(Effect.provide(services), Effect.provideService(DryRun, true)),
+        (directory) => Effect.promise(() => directory.remove()),
+      );
+    },
+  );
 });

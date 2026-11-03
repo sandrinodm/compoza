@@ -40,7 +40,10 @@ describe('secret sources', () => {
     const selected = selectDestination(
       {
         ...app,
-        config: { ...app.config, destinations: { cedar: { secrets: { provider: 'env-file', path: 'dev.env' } } } },
+        config: {
+          ...app.config,
+          destinations: { cedar: { secrets: { provider: 'env-file', path: 'dev.env' } } },
+        },
       },
       'cedar',
     );
@@ -63,14 +66,24 @@ describe('secret sources', () => {
   });
 
   it('rejects ambiguous aliases and requires explicit local source selection', () => {
-    assert.throws(() => validateSecretSettings({ ...app.config, envFile: 'legacy.env' }), 'Ambiguous');
     assert.throws(
-      () => validateSecretSettings({ ...app.config, remote: { stackDir: '/srv/app', envFile: '/srv/app/.env' } }),
+      () => validateSecretSettings({ ...app.config, envFile: 'legacy.env' }),
+      'Ambiguous',
+    );
+    assert.throws(
+      () =>
+        validateSecretSettings({
+          ...app.config,
+          remote: { stackDir: '/srv/app', envFile: '/srv/app/.env' },
+        }),
       'Ambiguous',
     );
     assert.throws(() => secretSource(app, true), 'local.secrets');
     assert.deepStrictEqual(
-      secretSource({ ...app, config: { ...app.config, local: { secrets: { provider: 'none' } } } }, true),
+      secretSource(
+        { ...app, config: { ...app.config, local: { secrets: { provider: 'none' } } } },
+        true,
+      ),
       { provider: 'none' },
     );
   });
@@ -172,7 +185,9 @@ describe('secret sources', () => {
         ['TOKEN', 'SENTINEL_SECRET\nsecond', 'Unsupported'],
       ]) {
         const error = yield* readSecrets(allowlisted([name!])).pipe(
-          Effect.provideService(OnePasswordReader, async () => [{ name: name!, value: value!, masked: true }]),
+          Effect.provideService(OnePasswordReader, async () => [
+            { name: name!, value: value!, masked: true },
+          ]),
           Effect.flip,
         );
         assert.include(error.message, message!);
@@ -229,23 +244,27 @@ describe('secret sources', () => {
     ),
   );
 
-  it.effect('resolves a provider env file relative to the deploy folder and preserves literals', () =>
-    Effect.acquireUseRelease(
-      Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'dd-secrets-'))),
-      ({ path: dir }) =>
-        Effect.gen(function* () {
-          yield* Effect.promise(() => writeFile(join(dir, 'local.env'), 'TOKEN=\'$HOME "quote"\'\nEMPTY=\n'));
+  it.effect(
+    'resolves a provider env file relative to the deploy folder and preserves literals',
+    () =>
+      Effect.acquireUseRelease(
+        Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'dd-secrets-'))),
+        ({ path: dir }) =>
+          Effect.gen(function* () {
+            yield* Effect.promise(() =>
+              writeFile(join(dir, 'local.env'), 'TOKEN=\'$HOME "quote"\'\nEMPTY=\n'),
+            );
 
-          assert.deepStrictEqual(
-            yield* readSecrets({
-              dir,
-              config: { ...app.config, secrets: { provider: 'env-file', path: 'local.env' } },
-            }),
-            { TOKEN: '$HOME "quote"', EMPTY: '' },
-          );
-        }),
-      (directory) => Effect.promise(() => directory.remove()),
-    ).pipe(Effect.provide(NodeServices.layer)),
+            assert.deepStrictEqual(
+              yield* readSecrets({
+                dir,
+                config: { ...app.config, secrets: { provider: 'env-file', path: 'local.env' } },
+              }),
+              { TOKEN: '$HOME "quote"', EMPTY: '' },
+            );
+          }),
+        (directory) => Effect.promise(() => directory.remove()),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.each([
@@ -264,7 +283,10 @@ describe('secret sources', () => {
   it('rejects collisions and unsupported values without secret-bearing error text', () => {
     assert.throws(
       () =>
-        validateSecrets({ ...app, config: { ...app.config, environment: { TOKEN: 'public' } } }, { TOKEN: 'secret' }),
+        validateSecrets(
+          { ...app, config: { ...app.config, environment: { TOKEN: 'public' } } },
+          { TOKEN: 'secret' },
+        ),
       'collides',
     );
 
@@ -277,7 +299,11 @@ describe('secret sources', () => {
 
   it.effect('rejects malformed, duplicate and multiline dotenv without echoing raw lines', () =>
     Effect.gen(function* () {
-      for (const text of ['SENTINEL_SECRET', 'TOKEN=one\nTOKEN=SENTINEL_SECRET', 'TOKEN="SENTINEL_SECRET\nsecond']) {
+      for (const text of [
+        'SENTINEL_SECRET',
+        'TOKEN=one\nTOKEN=SENTINEL_SECRET',
+        'TOKEN="SENTINEL_SECRET\nsecond',
+      ]) {
         const error = yield* parseEnvFile(text).pipe(Effect.flip);
         assert.notInclude(error.message, 'SENTINEL_SECRET');
         assert.include(error.message, 'line');

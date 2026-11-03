@@ -15,9 +15,10 @@ export const SITES_IMPORT = 'import /etc/caddy/sites/*.caddy';
 /**
  * The container folder Caddy reads the per-app site files from.
  *
- * Detection looks for this destination rather than for `SITES_MOUNT` verbatim, so a Compose file that mounts `sites/`
- * another way (without `:ro`, or in the long `type: bind` syntax) still counts as set up instead of getting a second
- * mount at the same destination, which `docker compose config` rejects.
+ * Detection looks for this destination rather than for `SITES_MOUNT` verbatim, so a Compose file
+ * that mounts `sites/` another way (without `:ro`, or in the long `type: bind` syntax) still counts
+ * as set up instead of getting a second mount at the same destination, which `docker compose
+ * config` rejects.
  */
 export const SITES_DESTINATION = '/etc/caddy/sites';
 
@@ -27,15 +28,16 @@ export const SITES_DESTINATION = '/etc/caddy/sites';
 export const SITES_MOUNT = `./sites:${SITES_DESTINATION}:ro`;
 
 /**
- * The existing Caddyfile mount the sites mount is inserted after, which every proxy set up this way has.
+ * The existing Caddyfile mount the sites mount is inserted after, which every proxy set up this way
+ * has.
  */
 const CADDYFILE_MOUNT = './Caddyfile:/etc/caddy/Caddyfile:ro';
 
 /**
  * The site block for one app, written to `<proxy dir>/sites/<name>.caddy`.
  *
- * The `tls` block and the log import come from the host's proxy entry, so every app on a host gets certificates and
- * request logs the same way without repeating it in each `deploy.yaml`.
+ * The `tls` block and the log import come from the host's proxy entry, so every app on a host gets
+ * certificates and request logs the same way without repeating it in each `deploy.yaml`.
  */
 export function siteFile(name: string, ingress: CaddyIngress, proxy: ProxyConfig): string {
   return renderTemplate(
@@ -53,16 +55,17 @@ export function siteFile(name: string, ingress: CaddyIngress, proxy: ProxyConfig
 }
 
 /**
- * The SHA-256 of a text as a hex string, compared against `shasum -a 256` (or `sha256sum`) output on the host to tell
- * whether its site file is current.
+ * The SHA-256 of a text as a hex string, compared against `shasum -a 256` (or `sha256sum`) output
+ * on the host to tell whether its site file is current.
  */
 export function sha256(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
 
 /**
- * The three shell conditions that together mean a proxy is set up for site files, each succeeding when its part is in
- * place. The first two read files relative to the proxy folder, so they run after a `cd` into it.
+ * The three shell conditions that together mean a proxy is set up for site files, each succeeding
+ * when its part is in place. The first two read files relative to the proxy folder, so they run
+ * after a `cd` into it.
  */
 interface SetupConditions {
   /**
@@ -82,12 +85,13 @@ interface SetupConditions {
 }
 
 /**
- * Builds the conditions `checkScript` reports and `setupScript` tests before changing anything, so the probe and the
- * setup can never disagree on what "set up" means.
+ * Builds the conditions `checkScript` reports and `setupScript` tests before changing anything, so
+ * the probe and the setup can never disagree on what "set up" means.
  *
- * Errors are silenced (`grep -s`, `2>/dev/null`): a missing file or container is simply not set up, and only the exit
- * status is read. The Compose condition is a fixed-string match on the destination anywhere in the file, which also
- * matches a commented-out mount; that errs towards not inserting a duplicate.
+ * Errors are silenced (`grep -s`, `2>/dev/null`): a missing file or container is simply not set up,
+ * and only the exit status is read. The Compose condition is a fixed-string match on the
+ * destination anywhere in the file, which also matches a commented-out mount; that errs towards not
+ * inserting a duplicate.
  */
 function setupConditions(proxy: ProxyConfig): SetupConditions {
   const destination = shellQuote(SITES_DESTINATION);
@@ -114,13 +118,13 @@ export interface ProbeOptions {
 }
 
 /**
- * A read-only probe of a host, printing `key=value` lines: whether the proxy folder exists and is set up for site
- * files, whether its network exists, and the hash of the app's site file.
+ * A read-only probe of a host, printing `key=value` lines: whether the proxy folder exists and is
+ * set up for site files, whether its network exists, and the hash of the app's site file.
  *
- * A missing proxy folder prints `proxy_dir=missing` and skips only the keys read from that folder (`caddyfile_import`,
- * `compose_mount`, `site_sha256`); the container and network probes still run, so every check reports what was
- * measured. The hash falls back from `shasum` to coreutils `sha256sum`, because minimal Linux hosts ship only the
- * latter and macOS only the former.
+ * A missing proxy folder prints `proxy_dir=missing` and skips only the keys read from that folder
+ * (`caddyfile_import`, `compose_mount`, `site_sha256`); the container and network probes still run,
+ * so every check reports what was measured. The hash falls back from `shasum` to coreutils
+ * `sha256sum`, because minimal Linux hosts ship only the latter and macOS only the former.
  */
 export function checkScript(options: ProbeOptions): string {
   const lines = ['set -u', REMOTE_PATH];
@@ -150,18 +154,20 @@ export function checkScript(options: ProbeOptions): string {
 }
 
 /**
- * The one-time change to a shared proxy: mount a `sites/` folder and import every `*.caddy` file in it.
+ * The one-time change to a shared proxy: mount a `sites/` folder and import every `*.caddy` file in
+ * it.
  *
- * Both files are backed up with a timestamp, the new configuration is validated with a throwaway Caddy before the
- * running one is touched, and the backups are restored if any step fails, including the Compose edit when the Caddyfile
- * mount it anchors on is absent. The sites mount is inserted only when nothing in the Compose file mounts at
- * `SITES_DESTINATION` yet, so a proxy that mounts `sites/` its own way keeps that mount. Recreating the Compose service
- * (`proxyService`) interrupts every site on the host for a moment, which is why this is its own command rather than
+ * Both files are backed up with a timestamp, the new configuration is validated with a throwaway
+ * Caddy before the running one is touched, and the backups are restored if any step fails,
+ * including the Compose edit when the Caddyfile mount it anchors on is absent. The sites mount is
+ * inserted only when nothing in the Compose file mounts at `SITES_DESTINATION` yet, so a proxy that
+ * mounts `sites/` its own way keeps that mount. Recreating the Compose service (`proxyService`)
+ * interrupts every site on the host for a moment, which is why this is its own command rather than
  * part of deploy. It is a no-op on a host that is already set up.
  *
- * The throwaway Caddy mounts only the Caddyfile and `sites/`, with the proxy's `.env` as its environment when that file
- * exists. A Caddyfile that imports other files mounted into the running container cannot be validated this way and
- * fails here, leaving the proxy restored and untouched.
+ * The throwaway Caddy mounts only the Caddyfile and `sites/`, with the proxy's `.env` as its
+ * environment when that file exists. A Caddyfile that imports other files mounted into the running
+ * container cannot be validated this way and fails here, leaving the proxy restored and untouched.
  */
 export function setupScript(proxy: ProxyConfig): string {
   const compose = shellQuote(proxyComposeFile(proxy));
@@ -240,24 +246,28 @@ echo "proxy setup complete; backups: Caddyfile.pre-sites-$stamp ${proxyComposeFi
 }
 
 /**
- * Installs a complete site file under the shared proxy lock and asks the running Caddy to load it atomically.
+ * Installs a complete site file under the shared proxy lock and asks the running Caddy to load it
+ * atomically.
  *
- * A failed or interrupted reload restores the prior file and attempts to reconcile the running configuration.
- * Diagnostics stay private because Caddy can include expanded environment credentials in errors.
+ * A failed or interrupted reload restores the prior file and attempts to reconcile the running
+ * configuration. Diagnostics stay private because Caddy can include expanded environment
+ * credentials in errors.
  */
 export function routeScript(proxy: ProxyConfig, name: string): string {
   return mutationScript(proxy, name, 'route');
 }
 
 /**
- * Removes a route using the same lock and failure recovery as installation; a missing route is a no-op.
+ * Removes a route using the same lock and failure recovery as installation; a missing route is a
+ * no-op.
  */
 export function unrouteScript(proxy: ProxyConfig, name: string): string {
   return mutationScript(proxy, name, 'unroute');
 }
 
 /**
- * Embeds the portable route runtime so host operations remain independent of the local CLI installation.
+ * Embeds the portable route runtime so host operations remain independent of the local CLI
+ * installation.
  */
 function mutationScript(proxy: ProxyConfig, name: string, action: 'route' | 'unroute'): string {
   return `set +x

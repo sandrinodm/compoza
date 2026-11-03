@@ -33,7 +33,9 @@ describe('setupOperationInput', () => {
         assert.deepStrictEqual(JSON.parse(input!), {
           compose: 'safe',
           credentials:
-            secretVariables && 'FIRST' in secretVariables ? 'FIRST=first-token\nSECOND=second-token\n' : '\n',
+            secretVariables && 'FIRST' in secretVariables
+              ? 'FIRST=first-token\nSECOND=second-token\n'
+              : '\n',
         });
         assert.notInclude(input!, 'discarded-token');
       }).pipe(Effect.provide(NodeServices.layer)),
@@ -53,10 +55,15 @@ describe('setupOperationInput', () => {
         secrets: { '1password': { environmentId: 'fixture' } },
         secretVariables: { TUNNEL_TOKEN: 'PROVIDER_TOKEN' },
       }).pipe(
-        Effect.provideService(OnePasswordReader, async () => [{ name: 'PROVIDER_TOKEN', value, masked: true }]),
+        Effect.provideService(OnePasswordReader, async () => [
+          { name: 'PROVIDER_TOKEN', value, masked: true },
+        ]),
         Effect.flip,
       );
-      assert.match(error.message, /must contain only a connector token|Unsupported multiline or NUL secret value/);
+      assert.match(
+        error.message,
+        /must contain only a connector token|Unsupported multiline or NUL secret value/,
+      );
 
       if (value !== '') {
         assert.notInclude(error.message, value);

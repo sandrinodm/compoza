@@ -10,10 +10,12 @@ import { SITES_IMPORT } from './scripts.ts';
 import { defaultConfigTemplate, renderTemplate } from './templates.ts';
 
 /**
- * Generates a complete shared Caddy stack and a guarded bootstrap operation without contacting the host.
+ * Generates a complete shared Caddy stack and a guarded bootstrap operation without contacting the
+ * host.
  *
- * Existing differing files are never overwritten. Credentials are referenced by host path, and validation output stays
- * private because Caddy and Compose can echo expanded credential values in diagnostics.
+ * Existing differing files are never overwritten. Credentials are referenced by host path, and
+ * validation output stays private because Caddy and Compose can echo expanded credential values in
+ * diagnostics.
  */
 export function provisionOperation(proxy: ProxyConfig): IngressOperation {
   const config = proxy.provision;
@@ -23,7 +25,9 @@ export function provisionOperation(proxy: ProxyConfig): IngressOperation {
 
   const composeFile = proxyComposeFile(proxy);
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.ya?ml$/.test(composeFile)) {
-    throw new Error('Caddy provisioning requires composeFile to be a YAML filename inside the proxy directory');
+    throw new Error(
+      'Caddy provisioning requires composeFile to be a YAML filename inside the proxy directory',
+    );
   }
 
   if (proxy.dir.includes('$') || config.envFile?.includes('$')) {
@@ -53,7 +57,16 @@ export function provisionOperation(proxy: ProxyConfig): IngressOperation {
         stop_grace_period: `${(config.gracePeriodSeconds ?? 30) + 10}s`,
         logging: { driver: 'json-file', options: { 'max-size': '10m', 'max-file': '3' } },
         healthcheck: {
-          test: ['CMD', 'wget', '-q', '-T', '3', '-O', '/dev/null', 'http://127.0.0.1:2019/config/'],
+          test: [
+            'CMD',
+            'wget',
+            '-q',
+            '-T',
+            '3',
+            '-O',
+            '/dev/null',
+            'http://127.0.0.1:2019/config/',
+          ],
           interval: '10s',
           timeout: '5s',
           retries: 3,
@@ -87,7 +100,9 @@ export function provisionOperation(proxy: ProxyConfig): IngressOperation {
     'Caddy config template',
   );
   if (!caddyfile.split(/\r?\n/).includes(SITES_IMPORT)) {
-    throw new Error('Caddy config template must include {{sitesImport}} on its own line to load app routes');
+    throw new Error(
+      'Caddy config template must include {{sitesImport}} on its own line to load app routes',
+    );
   }
 
   return {

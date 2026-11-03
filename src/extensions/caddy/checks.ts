@@ -19,7 +19,8 @@ export function caddyChecks(
   const checks: Array<Check> = [];
   const ingress = ingressOf(app.config);
   const selected = ingressConfigOf(host, 'caddy');
-  const proxy = selected?.provider === undefined || selected.provider === 'caddy' ? selected : undefined;
+  const proxy =
+    selected?.provider === undefined || selected.provider === 'caddy' ? selected : undefined;
   const address = proxy?.address ?? host.address;
 
   if (ingress.mode === 'caddy' && proxy === undefined) {
@@ -38,7 +39,8 @@ export function caddyChecks(
       probe.compose_mount === 'yes' &&
       probe.running_mount === 'yes' &&
       probe.container_running === 'yes' &&
-      (probe.container_health === 'healthy' || (proxy.provision === undefined && probe.container_health === 'none'));
+      (probe.container_health === 'healthy' ||
+        (proxy.provision === undefined && probe.container_health === 'none'));
 
     const dnsOk =
       address === undefined
@@ -67,7 +69,8 @@ export function caddyChecks(
               : proxyReady
                 ? 'Caddy is running and loads per-app files from sites/'
                 : `Caddy is not ready (import ${probed(probe.caddyfile_import)}, compose mount ${probed(probe.compose_mount)}, running mount ${probed(probe.running_mount)}, running ${probed(probe.container_running)}, health ${probed(probe.container_health)})`,
-        fix: proxy.provision !== undefined || probe.proxy_dir === 'present' ? 'setup-proxy' : 'manual',
+        fix:
+          proxy.provision !== undefined || probe.proxy_dir === 'present' ? 'setup-proxy' : 'manual',
       },
       {
         name: 'network',

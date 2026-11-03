@@ -4,7 +4,12 @@ import type { App } from '../config/deploy.ts';
 import type { HostConfig } from '../config/hosts.ts';
 
 import { OnePasswordConfig, OnePasswordSelection } from './1password/config.ts';
-import { CaddyIngress, CaddySelection, CaddyHostSelection, ProxyConfig as CaddyProxy } from './caddy/config.ts';
+import {
+  CaddyIngress,
+  CaddySelection,
+  CaddyHostSelection,
+  ProxyConfig as CaddyProxy,
+} from './caddy/config.ts';
 import { loadAppTemplates, loadHostTemplates } from './caddy/templates.ts';
 import {
   CloudflareIngress,
@@ -37,17 +42,24 @@ export const NoIngress = Schema.Struct({
 });
 
 /**
- * The internal ingress representation used by deployment planners after resolving extension settings.
+ * The internal ingress representation used by deployment planners after resolving extension
+ * settings.
  */
 export const ResolvedIngress = Schema.Union([CaddyIngress, CloudflareIngress, NoIngress]);
 
 /**
- * The application ingress input, selecting exactly one extension and validating its own required settings.
+ * The application ingress input, selecting exactly one extension and validating its own required
+ * settings.
  *
- * Flat legacy selections remain accepted during migration. Strict YAML decoding rejects ambiguous or misspelled
- * selectors.
+ * Flat legacy selections remain accepted during migration. Strict YAML decoding rejects ambiguous
+ * or misspelled selectors.
  */
-export const Ingress = Schema.Union([CaddySelection, CloudflareSelection, NoExtension, ResolvedIngress]);
+export const Ingress = Schema.Union([
+  CaddySelection,
+  CloudflareSelection,
+  NoExtension,
+  ResolvedIngress,
+]);
 
 /**
  * Host ingress capabilities: either provider, both providers, or an explicit opt-out.
@@ -81,7 +93,12 @@ export const ResolvedSecretsConfig = Schema.Union([
 /**
  * The named credential source input, with flat legacy sources retained for migration.
  */
-export const SecretsConfig = Schema.Union([EnvFileSelection, OnePasswordSelection, NoExtension, ResolvedSecretsConfig]);
+export const SecretsConfig = Schema.Union([
+  EnvFileSelection,
+  OnePasswordSelection,
+  NoExtension,
+  ResolvedSecretsConfig,
+]);
 
 /**
  * The decoded application ingress input.
@@ -112,7 +129,9 @@ export type SecretsConfig = typeof SecretsConfig.Type;
  * Loads extension-owned host files relative to the winning host definition before pure planning.
  */
 export function loadHostExtensionFiles(host: HostConfig, file: string) {
-  return loadHostTemplates(host, file).pipe(Effect.flatMap((selected) => loadCloudflareHostFiles(selected, file)));
+  return loadHostTemplates(host, file).pipe(
+    Effect.flatMap((selected) => loadCloudflareHostFiles(selected, file)),
+  );
 }
 
 /**
@@ -128,7 +147,8 @@ export function loadAppExtensionFiles(app: App) {
 export type ResolvedSecretsConfig = typeof ResolvedSecretsConfig.Type;
 
 /**
- * Resolves named app settings to the provider's existing planning contract without changing execution behavior.
+ * Resolves named app settings to the provider's existing planning contract without changing
+ * execution behavior.
  */
 export function resolveIngress(config: Ingress): ResolvedIngress {
   if ('mode' in config) {
@@ -154,16 +174,24 @@ export type IngressId = Exclude<ResolvedIngress['mode'], 'none'>;
 /**
  * Selects a host capability, requiring an explicit provider when the host supports both.
  */
-export function resolveHostIngress(config: HostIngress, provider?: IngressId): ProxyConfig | undefined {
+export function resolveHostIngress(
+  config: HostIngress,
+  provider?: IngressId,
+): ProxyConfig | undefined {
   if (provider === undefined && 'caddy' in config && 'cloudflare-tunnel' in config) {
-    throw new Error('Host has multiple ingress providers; select --ingress caddy or --ingress cloudflare-tunnel');
+    throw new Error(
+      'Host has multiple ingress providers; select --ingress caddy or --ingress cloudflare-tunnel',
+    );
   }
 
   if ('caddy' in config && (provider === undefined || provider === 'caddy')) {
     return { provider: 'caddy', ...config.caddy };
   }
 
-  if ('cloudflare-tunnel' in config && (provider === undefined || provider === 'cloudflare-tunnel')) {
+  if (
+    'cloudflare-tunnel' in config &&
+    (provider === undefined || provider === 'cloudflare-tunnel')
+  ) {
     return { provider: 'cloudflare-tunnel', ...config['cloudflare-tunnel'] };
   }
 
@@ -171,7 +199,8 @@ export function resolveHostIngress(config: HostIngress, provider?: IngressId): P
 }
 
 /**
- * Resolves named source settings without accessing a credential provider or reading any secret file.
+ * Resolves named source settings without accessing a credential provider or reading any secret
+ * file.
  */
 export function resolveSecrets(config: SecretsConfig): ResolvedSecretsConfig {
   if ('provider' in config) {

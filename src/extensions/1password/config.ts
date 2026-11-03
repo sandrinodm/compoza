@@ -1,7 +1,8 @@
 import { Schema } from 'effect';
 
 /**
- * The structured 1Password Environment selection; operator authentication never belongs in app configuration.
+ * The structured 1Password Environment selection; operator authentication never belongs in app
+ * configuration.
  */
 export const OnePasswordSettings = Schema.Struct({
   /**
@@ -12,7 +13,9 @@ export const OnePasswordSettings = Schema.Struct({
   /**
    * Exact variable names to import. Omission imports all; an empty list imports none.
    */
-  variables: Schema.optionalKey(Schema.Array(Schema.String.check(Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/)))),
+  variables: Schema.optionalKey(
+    Schema.Array(Schema.String.check(Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/))),
+  ),
 });
 
 /**

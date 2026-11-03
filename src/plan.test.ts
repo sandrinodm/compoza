@@ -4,7 +4,13 @@ import type { App } from './config/deploy.ts';
 import type { HostConfig } from './config/hosts.ts';
 
 import { isPipeline, printableStep, REMOTE_PATH, shellQuote } from './command.ts';
-import { composePrefix, dockerfileOf, imageReference, imageVariable, planDeployment } from './plan.ts';
+import {
+  composePrefix,
+  dockerfileOf,
+  imageReference,
+  imageVariable,
+  planDeployment,
+} from './plan.ts';
 
 const app: App = {
   dir: '/repo/infra',
@@ -29,7 +35,10 @@ const sshHost: HostConfig = { ...registryHost, transport: { mode: 'ssh-load' } }
 
 describe('naming', () => {
   it('prefixes the registry only when the host pulls from one', () => {
-    assert.strictEqual(imageReference(app, registryHost, 'web', 'abc', false), 'registry.example.com/demo-web:abc');
+    assert.strictEqual(
+      imageReference(app, registryHost, 'web', 'abc', false),
+      'registry.example.com/demo-web:abc',
+    );
     assert.strictEqual(imageReference(app, registryHost, 'web', 'abc', true), 'demo-web:abc');
     assert.strictEqual(imageReference(app, sshHost, 'web', 'abc', false), 'demo-web:abc');
     assert.strictEqual(imageVariable('scraper-api'), 'SCRAPER_API_IMAGE');
@@ -99,7 +108,9 @@ describe('planDeployment', () => {
     ]);
 
     const compose = steps.at(-1);
-    assert.isTrue(compose !== undefined && !isPipeline(compose) && compose.env?.PG_PASSWORD === 'x');
+    assert.isTrue(
+      compose !== undefined && !isPipeline(compose) && compose.env?.PG_PASSWORD === 'x',
+    );
   });
 
   it('loads and ships over ssh for an ssh-load host and pulls missing images', () => {

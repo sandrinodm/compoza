@@ -35,7 +35,11 @@ const ready = {
   container_health: 'none',
   network: 'yes',
   site_sha256: sha256(
-    siteFile('demo', { mode: 'caddy', domain: 'demo.example.com', upstream: 'demo-web:80' }, host.proxy!),
+    siteFile(
+      'demo',
+      { mode: 'caddy', domain: 'demo.example.com', upstream: 'demo-web:80' },
+      host.proxy!,
+    ),
   ),
   registry_login: 'yes',
 };
@@ -64,7 +68,12 @@ describe('evaluateChecks', () => {
 
     const provisioned = { ...host, proxy: { ...host.proxy, provision: { image: 'caddy:2' } } };
     assert.isFalse(evaluateChecks(app, provisioned, [host.address!], ready)[1]!.ok);
-    assert.isTrue(evaluateChecks(app, provisioned, [host.address!], { ...ready, container_health: 'healthy' })[1]!.ok);
+    assert.isTrue(
+      evaluateChecks(app, provisioned, [host.address!], {
+        ...ready,
+        container_health: 'healthy',
+      })[1]!.ok,
+    );
   });
 
   it('passes everything on a ready host', () => {
@@ -104,7 +113,10 @@ describe('evaluateChecks', () => {
       blocking(checks).map((check) => check.name),
       ['dns', 'proxy', 'network', 'registry'],
     );
-    assert.include(formatChecks(checks), 'FAIL dns: demo.example.com has no A or AAAA answer; expected 192.0.2.42');
+    assert.include(
+      formatChecks(checks),
+      'FAIL dns: demo.example.com has no A or AAAA answer; expected 192.0.2.42',
+    );
   });
 
   it('reports a wrong address and a missing proxy folder as manual', () => {
@@ -131,7 +143,9 @@ describe('evaluateChecks', () => {
   });
 
   it('still measures the network and registry when the proxy folder is missing', () => {
-    const probe = parseCheck('proxy_dir=missing\nrunning_mount=no\nnetwork=yes\nregistry_login=yes\n');
+    const probe = parseCheck(
+      'proxy_dir=missing\nrunning_mount=no\nnetwork=yes\nregistry_login=yes\n',
+    );
     const checks = evaluateChecks(app, host, ['192.0.2.42'], probe);
     assert.deepStrictEqual(
       checks.map((check) => [check.name, check.ok, check.detail]),

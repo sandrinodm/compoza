@@ -11,7 +11,8 @@ import { parseConfig, readConfigFile } from './config-file.ts';
 const Point = Schema.Struct({ x: Schema.Number, y: Schema.Number });
 
 /**
- * Keeps each loader fixture alive for the test's Effect scope, including failure and interruption cleanup.
+ * Keeps each loader fixture alive for the test's Effect scope, including failure and interruption
+ * cleanup.
  */
 const temporaryDirectory = Effect.acquireRelease(
   Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'compoza-'))),
@@ -33,7 +34,9 @@ describe('readConfigFile', () => {
     Effect.gen(function* () {
       const dir = yield* temporaryDirectory;
       const file = join(dir, 'point.yaml');
-      yield* Effect.promise(() => writeFile(file, YAML.stringify({ x: 1, y: 2, domain: 'old.example.com' })));
+      yield* Effect.promise(() =>
+        writeFile(file, YAML.stringify({ x: 1, y: 2, domain: 'old.example.com' })),
+      );
 
       const error = yield* readConfigFile(file, Point, 'missing').pipe(Effect.flip);
       assert.strictEqual(error._tag, 'DeployError');
@@ -45,7 +48,9 @@ describe('readConfigFile', () => {
   it.effect('fails with the given message when the file is missing', () =>
     Effect.gen(function* () {
       const dir = yield* temporaryDirectory;
-      const error = yield* readConfigFile(join(dir, 'point.yaml'), Point, 'No point here.').pipe(Effect.flip);
+      const error = yield* readConfigFile(join(dir, 'point.yaml'), Point, 'No point here.').pipe(
+        Effect.flip,
+      );
       assert.strictEqual(error._tag, 'DeployError');
       assert.strictEqual(error.message, 'No point here.');
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

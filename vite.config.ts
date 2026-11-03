@@ -1,7 +1,8 @@
 import { defineConfig } from 'vite-plus';
 
 /**
- * Paths neither the formatter nor the linter touches: dependencies, build output and agent worktrees.
+ * Paths neither the formatter nor the linter touches: dependencies, build output and agent
+ * worktrees.
  */
 const ignoredPatterns = [
   '**/.claude/**',
@@ -15,8 +16,9 @@ const ignoredPatterns = [
 /**
  * How long one test may run before Vitest fails it, in milliseconds.
  *
- * Unit tests retain a five-second limit. Real Bash/jq integration groups override it to fifteen seconds because they
- * start multiple processes; optional Compose parser tests require only the CLI, never a live deployment.
+ * Unit tests retain a five-second limit. Real Bash/jq integration groups override it to fifteen
+ * seconds because they start multiple processes; optional Compose parser tests require only the
+ * CLI, never a live deployment.
  */
 const TEST_TIMEOUT_MILLIS = 5_000;
 
@@ -46,7 +48,7 @@ export default defineConfig({
       commentLineStrategy: 'multiline',
     },
     objectWrap: 'preserve',
-    printWidth: 120,
+    printWidth: 100,
     semi: true,
     singleQuote: true,
     sortImports: {
@@ -95,7 +97,11 @@ export default defineConfig({
       },
     ],
   },
-  test: { include: ['src/**/*.test.ts'], testTimeout: TEST_TIMEOUT_MILLIS, hookTimeout: TEST_TIMEOUT_MILLIS },
+  test: {
+    include: ['src/**/*.test.ts'],
+    testTimeout: TEST_TIMEOUT_MILLIS,
+    hookTimeout: TEST_TIMEOUT_MILLIS,
+  },
   run: {
     cache: { scripts: false, tasks: true },
   },

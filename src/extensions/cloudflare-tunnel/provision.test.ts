@@ -32,7 +32,9 @@ import { defaultComposeTemplate, routeRule } from './templates.ts';
 const accountId = 'a'.repeat(32);
 const tunnelId = '12345678-1234-1234-1234-123456789abc';
 const secret = 'SYNTHETIC_CONNECTOR_SECRET';
-const token = Buffer.from(JSON.stringify({ a: accountId, t: tunnelId, s: secret })).toString('base64');
+const token = Buffer.from(JSON.stringify({ a: accountId, t: tunnelId, s: secret })).toString(
+  'base64',
+);
 
 /**
  * Compose parser checks need only the installed CLI, never a running Docker daemon.
@@ -190,7 +192,10 @@ function failed(result: ReturnType<typeof spawnSync>): void {
 describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
   it('can retry managed credential setup after Compose validation fails', () =>
     fixture((f) => {
-      const proxy = { ...f.proxy, provision: { secrets: { '1password': { environmentId: 'test' } } } };
+      const proxy = {
+        ...f.proxy,
+        provision: { secrets: { '1password': { environmentId: 'test' } } },
+      };
       writeFileSync(join(f.dir, 'fail-config'), 'yes');
       failed(f.run(proxy, `TUNNEL_TOKEN=${token}\n`));
       rmSync(join(f.dir, 'fail-config'));
@@ -234,7 +239,10 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
 
   it('stages only selected credentials privately and rotates them without changing configuration', () =>
     fixture((f) => {
-      const proxy = { ...f.proxy, provision: { secrets: { '1password': { environmentId: 'test' } } } };
+      const proxy = {
+        ...f.proxy,
+        provision: { secrets: { '1password': { environmentId: 'test' } } },
+      };
       succeeded(f.run(proxy, `TUNNEL_TOKEN=${token}\n`));
 
       const env = join(f.proxy.dir!, '.credentials.env');
@@ -296,10 +304,18 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
 
   it('renders custom templates but preserves credential, identity and isolation invariants', () =>
     fixture((f) => {
-      const custom = defaultComposeTemplate.replace('128m', '256m').replace(', run]', ', --protocol, http2, run]');
+      const custom = defaultComposeTemplate
+        .replace('128m', '256m')
+        .replace(', run]', ', --protocol, http2, run]');
 
-      const operation = provisionOperation({ ...f.proxy, templates: { compose: { inline: custom } } });
-      assert.strictEqual(YAML.parse(JSON.parse(operation.input!).compose).services.connector.mem_limit, '256m');
+      const operation = provisionOperation({
+        ...f.proxy,
+        templates: { compose: { inline: custom } },
+      });
+      assert.strictEqual(
+        YAML.parse(JSON.parse(operation.input!).compose).services.connector.mem_limit,
+        '256m',
+      );
 
       for (const text of [
         custom.replace('read_only: true', 'read_only: false'),
@@ -310,23 +326,31 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
         custom.replace('{{container}}', '"foreign"'),
         custom.replace('{{image}}', '{{typo}}'),
       ]) {
-        assert.throws(() => provisionOperation({ ...f.proxy, templates: { compose: { inline: text } } }));
+        assert.throws(() =>
+          provisionOperation({ ...f.proxy, templates: { compose: { inline: text } } }),
+        );
       }
     }));
 
-  it.skipIf(!hasCompose)('is accepted by the real Compose parser with a read-only connector and private env file', () =>
-    fixture((f) => {
-      const operation = provisionOperation(f.proxy);
-      mkdirSync(f.proxy.dir!);
+  it.skipIf(!hasCompose)(
+    'is accepted by the real Compose parser with a read-only connector and private env file',
+    () =>
+      fixture((f) => {
+        const operation = provisionOperation(f.proxy);
+        mkdirSync(f.proxy.dir!);
 
-      const file = join(f.proxy.dir!, 'compose.yaml');
-      writeFileSync(file, JSON.parse(operation.input!).compose);
+        const file = join(f.proxy.dir!, 'compose.yaml');
+        writeFileSync(file, JSON.parse(operation.input!).compose);
 
-      const result = spawnSync('docker', ['compose', '--env-file', '/dev/null', '-f', file, 'config', '--quiet'], {
-        encoding: 'utf8',
-      });
-      assert.strictEqual(result.status, 0, result.stderr);
-    }),
+        const result = spawnSync(
+          'docker',
+          ['compose', '--env-file', '/dev/null', '-f', file, 'config', '--quiet'],
+          {
+            encoding: 'utf8',
+          },
+        );
+        assert.strictEqual(result.status, 0, result.stderr);
+      }),
   );
 
   it('validates new settings while preserving existing managed host configuration', () =>
@@ -338,7 +362,9 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
         transport: { mode: 'ssh-load' },
         ingress: { 'cloudflare-tunnel': settings },
       };
-      assert.isDefined(Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({ fixture: host }));
+      assert.isDefined(
+        Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({ fixture: host }),
+      );
 
       for (const provision of [
         {},
@@ -394,7 +420,9 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
           host: 'fixture',
           targets: [],
           composeFiles: ['compose.yaml'] as [string],
-          ingress: { 'cloudflare-tunnel': { domain: 'app.example.com', service: 'https://app:443' } },
+          ingress: {
+            'cloudflare-tunnel': { domain: 'app.example.com', service: 'https://app:443' },
+          },
         },
       };
 
@@ -403,12 +431,17 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
           'hostname: {{domain}}\nservice: {{service}}\noriginRequest:\n  connectTimeout: 20\n  httpHostHeader: origin.example.com\n',
       };
       const rule = routeRule({ ...f.proxy, templates: { route: template } }, app, 'app');
-      assert.deepStrictEqual(rule.originRequest, { connectTimeout: 20, httpHostHeader: 'origin.example.com' });
+      assert.deepStrictEqual(rule.originRequest, {
+        connectTimeout: 20,
+        httpHostHeader: 'origin.example.com',
+      });
       assert.throws(() =>
         routeRule(
           {
             ...f.proxy,
-            templates: { route: { inline: template.inline.replace('{{domain}}', '"other.example.com"') } },
+            templates: {
+              route: { inline: template.inline.replace('{{domain}}', '"other.example.com"') },
+            },
           },
           app,
           'app',
@@ -479,7 +512,9 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
       assert.isTrue('cloudflare-tunnel' in selected);
 
       if ('cloudflare-tunnel' in selected) {
-        assert.deepStrictEqual(selected['cloudflare-tunnel'].templates?.compose, { inline: defaultComposeTemplate });
+        assert.deepStrictEqual(selected['cloudflare-tunnel'].templates?.compose, {
+          inline: defaultComposeTemplate,
+        });
         assert.deepStrictEqual(selected['cloudflare-tunnel'].provision?.secrets, {
           'env-file': { path: join(dir, 'credentials.env') },
         });
@@ -497,7 +532,10 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
             ssh: 'never-contact.invalid',
             platform: 'linux/arm64',
             transport: { mode: 'ssh-load' },
-            proxy: { ...f.proxy, provision: { secrets: { '1password': { environmentId: 'must-not-fetch' } } } },
+            proxy: {
+              ...f.proxy,
+              provision: { secrets: { '1password': { environmentId: 'must-not-fetch' } } },
+            },
           },
         }),
       );
@@ -508,7 +546,11 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
         [resolve('bin/compoza.ts'), '--hosts', hosts, 'setup-proxy', 'fixture', '--dry-run'],
         {
           encoding: 'utf8',
-          env: { ...process.env, PATH: `${join(f.dir, 'bin')}:${process.env.PATH}`, COMPOZA_1PASSWORD_ACCOUNT: '' },
+          env: {
+            ...process.env,
+            PATH: `${join(f.dir, 'bin')}:${process.env.PATH}`,
+            COMPOZA_1PASSWORD_ACCOUNT: '',
+          },
         },
       );
       assert.strictEqual(result.status, 0, result.stderr);

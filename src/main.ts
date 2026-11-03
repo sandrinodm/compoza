@@ -11,13 +11,14 @@ import { Remote } from './services/Remote.ts';
 import { Shell } from './services/Shell.ts';
 
 /**
- * The tool's services: the local shell, Git over it, and SSH to the hosts. The platform services they need, and the
- * HTTP client the post-deploy wait uses, are provided underneath.
+ * The tool's services: the local shell, Git over it, and SSH to the hosts. The platform services
+ * they need, and the HTTP client the post-deploy wait uses, are provided underneath.
  *
- * `humanLogger` replaces Effect's default logger, whose lines carry a timestamp and a fiber id, with `[level] message`
- * on standard error. The minimum level stays `Info` unless the global `--log-level` flag lowers it: `Command.run`
- * provides `References.MinimumLogLevel` to the handler when the flag is given (`effect/cli` `Command.js`, "Apply
- * built-in setting behavior"), so `--log-level debug` shows the plan, the host scripts and the wait probes.
+ * `humanLogger` replaces Effect's default logger, whose lines carry a timestamp and a fiber id,
+ * with `[level] message` on standard error. The minimum level stays `Info` unless the global
+ * `--log-level` flag lowers it: `Command.run` provides `References.MinimumLogLevel` to the handler
+ * when the flag is given (`effect/cli` `Command.js`, "Apply built-in setting behavior"), so
+ * `--log-level debug` shows the plan, the host scripts and the wait probes.
  */
 const Services = Layer.mergeAll(
   Git.layer.pipe(Layer.provideMerge(Shell.layer)),
@@ -28,8 +29,8 @@ const Services = Layer.mergeAll(
 /**
  * Runs the CLI with this process's arguments.
  *
- * A `DeployError` is a message for the person, so it is printed on its own with exit code 1 instead of as an Effect
- * cause with a fiber trace; anything else is a bug and keeps the full report.
+ * A `DeployError` is a message for the person, so it is printed on its own with exit code 1 instead
+ * of as an Effect cause with a fiber trace; anything else is a bug and keeps the full report.
  */
 Command.run({ version: packageJson.version })(cli).pipe(
   Effect.catchTag('DeployError', (error) =>

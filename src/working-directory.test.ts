@@ -20,7 +20,8 @@ import { Remote } from './services/Remote.ts';
 import { DryRun, Shell } from './services/Shell.ts';
 
 /**
- * Keeps deployment configuration outside the app repository, with a source subdirectory inside its Git root.
+ * Keeps deployment configuration outside the app repository, with a source subdirectory inside its
+ * Git root.
  */
 const fixture = Effect.gen(function* () {
   const { path: root } = yield* Effect.acquireRelease(
@@ -37,7 +38,9 @@ const fixture = Effect.gen(function* () {
     await mkdir(source, { recursive: true });
     await writeFile(
       hosts,
-      YAML.stringify({ host: { ssh: 'fixture', platform: 'linux/arm64', transport: { mode: 'ssh-load' } } }),
+      YAML.stringify({
+        host: { ssh: 'fixture', platform: 'linux/arm64', transport: { mode: 'ssh-load' } },
+      }),
     );
     await writeFile(join(directory, 'compose.yaml'), 'services: {web: {image: nginx}}');
     await writeFile(join(directory, 'asset.txt'), 'deployment asset');
@@ -101,7 +104,19 @@ const fixture = Effect.gen(function* () {
     tag: Option.none<string>(),
     destination: 'development',
   };
-  return { directory, repository, source, file, hosts, steps, gitCommands, gitState, services, writeConfig, options };
+  return {
+    directory,
+    repository,
+    source,
+    file,
+    hosts,
+    steps,
+    gitCommands,
+    gitState,
+    services,
+    writeConfig,
+    options,
+  };
 });
 
 describe('separate working directory', () => {
@@ -110,7 +125,10 @@ describe('separate working directory', () => {
     (context) =>
       Effect.gen(function* () {
         const f = yield* fixture;
-        yield* f.writeConfig({ ...(context === undefined ? {} : { context }), dockerfile: 'docker/Dockerfile' });
+        yield* f.writeConfig({
+          ...(context === undefined ? {} : { context }),
+          dockerfile: 'docker/Dockerfile',
+        });
         yield* deploy(f.options).pipe(Effect.provide(f.services));
 
         assert.deepStrictEqual(
@@ -121,13 +139,21 @@ describe('separate working directory', () => {
         const [build, compose] = f.steps;
         assert.isDefined(build);
         assert.isDefined(compose);
-        if (build === undefined || compose === undefined || !('program' in build) || !('program' in compose)) {
+        if (
+          build === undefined ||
+          compose === undefined ||
+          !('program' in build) ||
+          !('program' in compose)
+        ) {
           return assert.fail('Expected a build and a Compose command');
         }
 
         assert.strictEqual(build.cwd, f.source);
         assert.include(build.args, join(f.source, 'docker/Dockerfile'));
-        assert.strictEqual(build.args.at(-1), context === undefined ? f.repository : join(f.source, context));
+        assert.strictEqual(
+          build.args.at(-1),
+          context === undefined ? f.repository : join(f.source, context),
+        );
         assert.include(build.args, 'foo-web:123456789abc');
         assert.strictEqual(compose.cwd, f.directory);
         assert.include(compose.args, f.directory);
@@ -141,13 +167,20 @@ describe('separate working directory', () => {
       const f = yield* fixture;
       f.gitState.dirty = true;
       yield* f.writeConfig();
-      const error = yield* deploy({ ...f.options, local: false }).pipe(Effect.provide(f.services), Effect.flip);
+      const error = yield* deploy({ ...f.options, local: false }).pipe(
+        Effect.provide(f.services),
+        Effect.flip,
+      );
       assert.include(error.message, 'Commit your changes first');
       assert.lengthOf(f.steps, 0);
 
       yield* deploy(f.options).pipe(Effect.provide(f.services));
       const build = f.steps[0];
-      assert.isTrue(build !== undefined && 'program' in build && build.args.includes('foo-web:123456789abc-dirty'));
+      assert.isTrue(
+        build !== undefined &&
+          'program' in build &&
+          build.args.includes('foo-web:123456789abc-dirty'),
+      );
       assert.isTrue(
         f.gitCommands
           .filter((command) => command.args.includes('status'))
@@ -159,7 +192,10 @@ describe('separate working directory', () => {
   it.effect('keeps secrets and bundled files beside the selected configuration file', () =>
     Effect.gen(function* () {
       const f = yield* fixture;
-      yield* f.writeConfig({ assets: ['asset.txt'], secrets: { 'env-file': { path: './secret.env' } } });
+      yield* f.writeConfig({
+        assets: ['asset.txt'],
+        secrets: { 'env-file': { path: './secret.env' } },
+      });
       const { app } = yield* resolve(f.file, Option.some(f.hosts), 'development');
       assert.strictEqual(app.file, f.file);
       assert.strictEqual(app.dir, f.directory);
@@ -198,10 +234,13 @@ describe('separate working directory', () => {
           workingDirectory: '/missing/app-checkout',
           ...(mode === 'third-party' ? { targets: [] } : {}),
         });
-        yield* deploy({ ...f.options, tag: mode === 'tag' ? Option.some('known') : Option.none() }).pipe(
+        yield* deploy({
+          ...f.options,
+          tag: mode === 'tag' ? Option.some('known') : Option.none(),
+        }).pipe(Effect.provide(f.services));
+        const resolved = yield* resolve(f.file, Option.some(f.hosts), 'development').pipe(
           Effect.provide(f.services),
         );
-        const resolved = yield* resolve(f.file, Option.some(f.hosts), 'development').pipe(Effect.provide(f.services));
         yield* lifecycle(resolved, 'stop').pipe(Effect.provide(f.services));
         assert.lengthOf(f.gitCommands, 0);
         assert.lengthOf(f.steps, 2);

@@ -11,12 +11,18 @@ import { DeployError } from '../../errors.ts';
 /**
  * The bundled site template preserves existing app route output.
  */
-export const defaultSiteTemplate = readFileSync(new URL('./templates/site.caddy.tmpl', import.meta.url), 'utf8');
+export const defaultSiteTemplate = readFileSync(
+  new URL('./templates/site.caddy.tmpl', import.meta.url),
+  'utf8',
+);
 
 /**
  * The shared Caddyfile template used for fresh-stack provisioning by default.
  */
-export const defaultConfigTemplate = readFileSync(new URL('./templates/Caddyfile.tmpl', import.meta.url), 'utf8');
+export const defaultConfigTemplate = readFileSync(
+  new URL('./templates/Caddyfile.tmpl', import.meta.url),
+  'utf8',
+);
 
 /**
  * The maximum template size in bytes, preventing accidental reads of large unrelated files.
@@ -24,10 +30,12 @@ export const defaultConfigTemplate = readFileSync(new URL('./templates/Caddyfile
 const MAX_TEMPLATE_BYTES = 256 * 1024;
 
 /**
- * Renders literal text, variables, truthy sections and inverted sections without evaluating code or environment.
+ * Renders literal text, variables, truthy sections and inverted sections without evaluating code or
+ * environment.
  *
- * Sections can nest. Every token is checked even in a skipped section, so configuration mistakes fail early.
- * Substituted values are never parsed again, preserving Caddy placeholders and literal dollar signs.
+ * Sections can nest. Every token is checked even in a skipped section, so configuration mistakes
+ * fail early. Substituted values are never parsed again, preserving Caddy placeholders and literal
+ * dollar signs.
  */
 export function renderTemplate(
   source: CaddyTemplate | undefined,
@@ -96,7 +104,8 @@ export function renderTemplate(
 }
 
 /**
- * Loads template sources relative to their declaring YAML file; only inline text enters pure planning.
+ * Loads template sources relative to their declaring YAML file; only inline text enters pure
+ * planning.
  */
 export const loadTemplate = Effect.fn('loadTemplate')(function* (
   source: CaddyTemplate,
@@ -131,7 +140,8 @@ export const loadTemplate = Effect.fn('loadTemplate')(function* (
 });
 
 /**
- * The supported placeholders for each template kind, also used to reject typos before any host operation.
+ * The supported placeholders for each template kind, also used to reject typos before any host
+ * operation.
  */
 const templateVariables = {
   site: { name: '', domain: '', upstream: '', tls: '', logSnippet: '' },
@@ -139,7 +149,8 @@ const templateVariables = {
 };
 
 /**
- * Validates file and inline template syntax while errors can still be reported as configuration failures.
+ * Validates file and inline template syntax while errors can still be reported as configuration
+ * failures.
  */
 const loadCheckedTemplate = Effect.fn('loadCheckedCaddyTemplate')(function* (
   source: CaddyTemplate,
@@ -148,8 +159,17 @@ const loadCheckedTemplate = Effect.fn('loadCheckedCaddyTemplate')(function* (
 ) {
   const loaded = yield* loadTemplate(source, file);
   yield* Effect.try({
-    try: () => renderTemplate(loaded, '', templateVariables[kind], `Caddy ${kind} template declared in ${file}`),
-    catch: (cause) => new DeployError({ message: cause instanceof Error ? cause.message : 'Invalid Caddy template' }),
+    try: () =>
+      renderTemplate(
+        loaded,
+        '',
+        templateVariables[kind],
+        `Caddy ${kind} template declared in ${file}`,
+      ),
+    catch: (cause) =>
+      new DeployError({
+        message: cause instanceof Error ? cause.message : 'Invalid Caddy template',
+      }),
   });
 
   return loaded;
@@ -158,8 +178,12 @@ const loadCheckedTemplate = Effect.fn('loadCheckedCaddyTemplate')(function* (
 /**
  * Resolves only a winning host entry, preserving named and legacy ingress selection.
  */
-export const loadHostTemplates = Effect.fn('loadCaddyHostTemplates')(function* (host: HostConfig, file: string) {
-  const proxy = host.ingress !== undefined && 'caddy' in host.ingress ? host.ingress.caddy : host.proxy;
+export const loadHostTemplates = Effect.fn('loadCaddyHostTemplates')(function* (
+  host: HostConfig,
+  file: string,
+) {
+  const proxy =
+    host.ingress !== undefined && 'caddy' in host.ingress ? host.ingress.caddy : host.proxy;
   if (proxy === undefined || ('provider' in proxy && proxy.provider === 'cloudflare-tunnel')) {
     return host;
   }
@@ -193,12 +217,20 @@ export const loadAppTemplates = Effect.fn('loadCaddyAppTemplates')(function* (ap
   }
 
   const settings =
-    'caddy' in ingress ? ingress.caddy : 'mode' in ingress && ingress.mode === 'caddy' ? ingress : undefined;
+    'caddy' in ingress
+      ? ingress.caddy
+      : 'mode' in ingress && ingress.mode === 'caddy'
+        ? ingress
+        : undefined;
   if (settings?.siteTemplate === undefined) {
     return app;
   }
 
-  const siteTemplate = yield* loadCheckedTemplate(settings.siteTemplate, app.file ?? `${app.dir}/deploy.yaml`, 'site');
+  const siteTemplate = yield* loadCheckedTemplate(
+    settings.siteTemplate,
+    app.file ?? `${app.dir}/deploy.yaml`,
+    'site',
+  );
   return {
     ...app,
     config: {

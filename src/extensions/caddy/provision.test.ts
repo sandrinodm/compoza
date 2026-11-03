@@ -29,7 +29,8 @@ import { provisionOperation } from './provision.ts';
 const hasCompose = spawnSync('docker', ['compose', 'version'], { stdio: 'ignore' }).status === 0;
 
 /**
- * Runs the real Bash 3.2-compatible bootstrap with synthetic credentials and a fake Docker executable.
+ * Runs the real Bash 3.2-compatible bootstrap with synthetic credentials and a fake Docker
+ * executable.
  */
 function fixture(
   use: (f: {
@@ -126,43 +127,61 @@ process.exit(94);
 describe('Caddy provisioning', { timeout: 15000 }, () => {
   it('installs a rendered custom config and refuses subsequent template changes', () =>
     fixture((f) => {
-      const selected = { ...f.proxy, templates: { config: { inline: '# custom Caddyfile\n{{sitesImport}}\n' } } };
+      const selected = {
+        ...f.proxy,
+        templates: { config: { inline: '# custom Caddyfile\n{{sitesImport}}\n' } },
+      };
       assert.strictEqual(f.run(selected).status, 0);
 
       const original = readFileSync(join(f.proxy.dir, 'Caddyfile'), 'utf8');
       assert.strictEqual(original, '# custom Caddyfile\nimport /etc/caddy/sites/*.caddy\n');
 
-      const changed = { ...selected, templates: { config: { inline: '# changed\n{{sitesImport}}\n' } } };
+      const changed = {
+        ...selected,
+        templates: { config: { inline: '# changed\n{{sitesImport}}\n' } },
+      };
       assert.notStrictEqual(f.run(changed).status, 0);
       assert.strictEqual(readFileSync(join(f.proxy.dir, 'Caddyfile'), 'utf8'), original);
     }));
 
-  it.skipIf(!hasCompose)('accepts generated Compose with literal env-file credentials in the real parser', () =>
-    fixture((f) => {
-      mkdirSync(f.proxy.dir);
+  it.skipIf(!hasCompose)(
+    'accepts generated Compose with literal env-file credentials in the real parser',
+    () =>
+      fixture((f) => {
+        mkdirSync(f.proxy.dir);
 
-      const input = JSON.parse(provisionOperation(f.proxy).input!);
-      writeFileSync(join(f.proxy.dir, 'compose.yml'), input.compose);
-      writeFileSync(join(f.proxy.dir, '.env'), 'CLOUDFLARE_API_TOKEN=WRONG_IMPLICIT_VALUE\n');
+        const input = JSON.parse(provisionOperation(f.proxy).input!);
+        writeFileSync(join(f.proxy.dir, 'compose.yml'), input.compose);
+        writeFileSync(join(f.proxy.dir, '.env'), 'CLOUDFLARE_API_TOKEN=WRONG_IMPLICIT_VALUE\n');
 
-      const result = spawnSync(
-        'docker',
-        ['compose', '--env-file', '/dev/null', '-f', join(f.proxy.dir, 'compose.yml'), 'config', '--format', 'json'],
-        { encoding: 'utf8' },
-      );
-      assert.strictEqual(result.status, 0, result.stderr);
+        const result = spawnSync(
+          'docker',
+          [
+            'compose',
+            '--env-file',
+            '/dev/null',
+            '-f',
+            join(f.proxy.dir, 'compose.yml'),
+            'config',
+            '--format',
+            'json',
+          ],
+          { encoding: 'utf8' },
+        );
+        assert.strictEqual(result.status, 0, result.stderr);
 
-      const config = JSON.parse(result.stdout);
-      // Compose escapes dollar signs when rendering a model for reuse as configuration.
-      assert.strictEqual(
-        config.services.ingress.environment.CLOUDFLARE_API_TOKEN.replaceAll('$$', '$'),
-        'FAKE_SECRET_$literal',
-      );
-      assert.strictEqual(
-        config.services.ingress.volumes.find((v: { target: string }) => v.target === '/data').source,
-        join(f.proxy.dir, 'data'),
-      );
-    }),
+        const config = JSON.parse(result.stdout);
+        // Compose escapes dollar signs when rendering a model for reuse as configuration.
+        assert.strictEqual(
+          config.services.ingress.environment.CLOUDFLARE_API_TOKEN.replaceAll('$$', '$'),
+          'FAKE_SECRET_$literal',
+        );
+        assert.strictEqual(
+          config.services.ingress.volumes.find((v: { target: string }) => v.target === '/data')
+            .source,
+          join(f.proxy.dir, 'data'),
+        );
+      }),
   );
 
   it('creates the proxy layout, validates before starting, and preserves routes and data on rerun', () =>
@@ -172,7 +191,11 @@ describe('Caddy provisioning', { timeout: 15000 }, () => {
 
       const compose = YAML.parse(readFileSync(join(f.proxy.dir, 'compose.yml'), 'utf8'));
       const service = compose.services.ingress;
-      assert.deepStrictEqual(service.ports, ['0.0.0.0:80:80', '0.0.0.0:443:443', '0.0.0.0:443:443/udp']);
+      assert.deepStrictEqual(service.ports, [
+        '0.0.0.0:80:80',
+        '0.0.0.0:443:443',
+        '0.0.0.0:443:443/udp',
+      ]);
       assert.deepStrictEqual(service.volumes, [
         './Caddyfile:/etc/caddy/Caddyfile:ro',
         './sites:/etc/caddy/sites:ro',
@@ -183,8 +206,17 @@ describe('Caddy provisioning', { timeout: 15000 }, () => {
       assert.strictEqual(service.read_only, true);
       assert.deepStrictEqual(service.security_opt, ['no-new-privileges:true']);
       assert.deepStrictEqual(service.entrypoint, ['caddy']);
-      assert.deepStrictEqual(service.command, ['run', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile']);
-      assert.deepStrictEqual(service.logging, { driver: 'json-file', options: { 'max-size': '10m', 'max-file': '3' } });
+      assert.deepStrictEqual(service.command, [
+        'run',
+        '--config',
+        '/etc/caddy/Caddyfile',
+        '--adapter',
+        'caddyfile',
+      ]);
+      assert.deepStrictEqual(service.logging, {
+        driver: 'json-file',
+        options: { 'max-size': '10m', 'max-file': '3' },
+      });
       assert.strictEqual(service.stop_grace_period, '40s');
       assert.deepStrictEqual(service.healthcheck.test, [
         'CMD',
@@ -228,18 +260,30 @@ describe('Caddy provisioning', { timeout: 15000 }, () => {
       );
       assert.strictEqual(statSync(join(f.proxy.dir, 'data')).mode & 0o777, 0o700);
 
-      writeFileSync(join(f.proxy.dir, 'sites', 'app.caddy'), 'app.example.com {\nrespond "ok"\n}\n');
+      writeFileSync(
+        join(f.proxy.dir, 'sites', 'app.caddy'),
+        'app.example.com {\nrespond "ok"\n}\n',
+      );
       writeFileSync(join(f.proxy.dir, 'data', 'certificate'), 'persistent');
 
       const before = statSync(join(f.proxy.dir, 'Caddyfile')).mtimeMs;
 
       assert.strictEqual(f.run().status, 0);
       assert.strictEqual(statSync(join(f.proxy.dir, 'Caddyfile')).mtimeMs, before);
-      assert.strictEqual(readFileSync(join(f.proxy.dir, 'data', 'certificate'), 'utf8'), 'persistent');
+      assert.strictEqual(
+        readFileSync(join(f.proxy.dir, 'data', 'certificate'), 'utf8'),
+        'persistent',
+      );
       assert.include(readFileSync(join(f.proxy.dir, 'sites', 'app.caddy'), 'utf8'), 'respond');
-      assert.strictEqual(f.calls().filter((a) => a[0] === 'network' && a[1] === 'create').length, 1);
+      assert.strictEqual(
+        f.calls().filter((a) => a[0] === 'network' && a[1] === 'create').length,
+        1,
+      );
       assert.isFalse(readdirSync(f.proxy.dir).some((s) => s.startsWith('.compoza')));
-      assert.notInclude(JSON.stringify(f.calls()) + result.stdout + result.stderr, 'FAKE_SECRET_$literal');
+      assert.notInclude(
+        JSON.stringify(f.calls()) + result.stdout + result.stderr,
+        'FAKE_SECRET_$literal',
+      );
     }));
 
   it('keeps the Docker stop budget above the rendered Caddy drain period', () =>
@@ -255,7 +299,12 @@ describe('Caddy provisioning', { timeout: 15000 }, () => {
             ssh: 'user@host',
             platform: 'linux/arm64',
             transport: { mode: 'ssh-load' },
-            ingress: { caddy: { ...selected, provision: { ...selected.provision, gracePeriodSeconds: seconds } } },
+            ingress: {
+              caddy: {
+                ...selected,
+                provision: { ...selected.provision, gracePeriodSeconds: seconds },
+              },
+            },
           }),
         );
       }
@@ -289,18 +338,22 @@ describe('Caddy provisioning', { timeout: 15000 }, () => {
       assert.isFalse(existsSync(join(f.proxy.dir, 'compose.yml')));
     }));
 
-  it.each(['fail-compose', 'fail-validate'])('leaves no generated config or leaked diagnostics after %s', (flag) =>
-    fixture((f) => {
-      writeFileSync(join(f.dir, flag), 'yes');
+  it.each(['fail-compose', 'fail-validate'])(
+    'leaves no generated config or leaked diagnostics after %s',
+    (flag) =>
+      fixture((f) => {
+        writeFileSync(join(f.dir, flag), 'yes');
 
-      const result = f.run();
-      assert.notStrictEqual(result.status, 0);
-      assert.notInclude(String(result.stdout) + String(result.stderr), 'FAKE_SECRET_$literal');
-      assert.isFalse(existsSync(join(f.proxy.dir, 'Caddyfile')));
-      assert.isFalse(existsSync(join(f.proxy.dir, 'compose.yml')));
-      assert.isFalse(f.calls().some((a) => a.includes('up') || (a[0] === 'network' && a[1] === 'create')));
-      assert.isFalse(readdirSync(f.proxy.dir).some((s) => s.startsWith('.compoza')));
-    }),
+        const result = f.run();
+        assert.notStrictEqual(result.status, 0);
+        assert.notInclude(String(result.stdout) + String(result.stderr), 'FAKE_SECRET_$literal');
+        assert.isFalse(existsSync(join(f.proxy.dir, 'Caddyfile')));
+        assert.isFalse(existsSync(join(f.proxy.dir, 'compose.yml')));
+        assert.isFalse(
+          f.calls().some((a) => a.includes('up') || (a[0] === 'network' && a[1] === 'create')),
+        );
+        assert.isFalse(readdirSync(f.proxy.dir).some((s) => s.startsWith('.compoza')));
+      }),
   );
 
   it('retains generated files on startup failure and supports a safe retry', () =>
@@ -321,7 +374,11 @@ describe('Caddy provisioning', { timeout: 15000 }, () => {
     fixture((f) => {
       writeFileSync(
         join(f.dir, 'container.json'),
-        JSON.stringify({ project: 'caddy-ingress', service: 'ingress', directory: '/another-stack' }),
+        JSON.stringify({
+          project: 'caddy-ingress',
+          service: 'ingress',
+          directory: '/another-stack',
+        }),
       );
 
       const conflict = f.run();
@@ -412,12 +469,17 @@ describe('Caddy provisioning', { timeout: 15000 }, () => {
           },
         }),
       );
-      writeFileSync(join(f.dir, 'bin', 'ssh'), '#!/bin/sh\necho unexpected-ssh >&2\nexit 90\n', { mode: 0o700 });
+      writeFileSync(join(f.dir, 'bin', 'ssh'), '#!/bin/sh\necho unexpected-ssh >&2\nexit 90\n', {
+        mode: 0o700,
+      });
 
       const result = spawnSync(
         process.execPath,
         [resolve('bin/compoza.ts'), '--hosts', hosts, 'setup-proxy', 'fixture', '--dry-run'],
-        { encoding: 'utf8', env: { ...process.env, PATH: `${join(f.dir, 'bin')}:${process.env.PATH}` } },
+        {
+          encoding: 'utf8',
+          env: { ...process.env, PATH: `${join(f.dir, 'bin')}:${process.env.PATH}` },
+        },
       );
       assert.strictEqual(result.status, 0, result.stderr);
       assert.include(result.stdout, 'provision Caddy');

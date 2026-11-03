@@ -9,7 +9,12 @@ import { AbsolutePath, Name, Target } from './schema.ts';
 export { HealthPath, CaddyIngress, NoIngress } from '../extensions/config.ts';
 
 export { Ingress, SecretsConfig } from '../extensions/config.ts';
-import { Ingress, SecretsConfig, resolveIngress, type ResolvedIngress } from '../extensions/config.ts';
+import {
+  Ingress,
+  SecretsConfig,
+  resolveIngress,
+  type ResolvedIngress,
+} from '../extensions/config.ts';
 
 /**
  * Settings that replace the deployment's for `--local` runs against this machine's Docker.
@@ -21,7 +26,8 @@ export const LocalOverrides = Schema.Struct({
   secrets: Schema.optionalKey(SecretsConfig),
 
   /**
-   * Compose files for a local run, relative to the deploy folder; typically without the host-network overlay.
+   * Compose files for a local run, relative to the deploy folder; typically without the
+   * host-network overlay.
    */
   composeFiles: Schema.optionalKey(Schema.NonEmptyArray(Schema.String)),
 
@@ -34,8 +40,8 @@ export const LocalOverrides = Schema.Struct({
 /**
  * Host-owned paths and health deadlines for SSH execution.
  *
- * The overlay, legacy host dotenv and persistent data remain operator-owned. Client-resolved providers are uploaded in
- * the protected stack .env file.
+ * The overlay, legacy host dotenv and persistent data remain operator-owned. Client-resolved
+ * providers are uploaded in the protected stack .env file.
  */
 export const RemoteConfig = Schema.Struct({
   /**
@@ -75,13 +81,16 @@ export const HealthConfig = Schema.Struct({
   /**
    * The total probe timeout in seconds, defaulting to 180.
    */
-  timeoutSeconds: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 3600 })))),
+  timeoutSeconds: Schema.optionalKey(
+    Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 3600 }))),
+  ),
 });
 
 /**
  * A named deployment selection merged over the app defaults.
  *
- * Destinations share source and image targets while selecting a host, Compose files and persistent host paths.
+ * Destinations share source and image targets while selecting a host, Compose files and persistent
+ * host paths.
  */
 export const Destination = Schema.Struct({
   /**
@@ -147,7 +156,8 @@ export const Destination = Schema.Struct({
 /**
  * The contents of an app's `deploy.yaml`, the file that opts a folder into this tool.
  *
- * Deployment paths are relative to the file; build paths use `workingDirectory`. Host folders are absolute on the host.
+ * Deployment paths are relative to the file; build paths use `workingDirectory`. Host folders are
+ * absolute on the host.
  */
 export const DeployConfig = Schema.Struct({
   /**
@@ -166,8 +176,9 @@ export const DeployConfig = Schema.Struct({
   host: Name,
 
   /**
-   * The source directory for Git and builds, relative to this file; absolute and `~/` paths are also accepted. Defaults
-   * to the deploy folder. Compose, assets, secrets and templates remain relative to this file.
+   * The source directory for Git and builds, relative to this file; absolute and `~/` paths are
+   * also accepted. Defaults to the deploy folder. Compose, assets, secrets and templates remain
+   * relative to this file.
    */
   workingDirectory: Schema.optionalKey(
     Schema.String.pipe(
@@ -185,17 +196,20 @@ export const DeployConfig = Schema.Struct({
   dockerfile: Schema.optionalKey(Schema.String),
 
   /**
-   * The build context, relative to the working directory; defaults to the root of the Git repository.
+   * The build context, relative to the working directory; defaults to the root of the Git
+   * repository.
    */
   context: Schema.optionalKey(Schema.String),
 
   /**
-   * Dockerfile targets to build; each becomes an `<TARGET>_IMAGE` Compose variable holding its image reference.
+   * Dockerfile targets to build; each becomes an `<TARGET>_IMAGE` Compose variable holding its
+   * image reference.
    */
   targets: Schema.Array(Target),
 
   /**
-   * Compose files applied in order; relative paths use the deploy folder, and absolute paths select external sources.
+   * Compose files applied in order; relative paths use the deploy folder, and absolute paths select
+   * external sources.
    */
   composeFiles: Schema.NonEmptyArray(Schema.String),
 
@@ -210,8 +224,8 @@ export const DeployConfig = Schema.Struct({
   directories: Schema.optionalKey(Schema.Array(AbsolutePath)),
 
   /**
-   * Content sections the app serves, mapped to their host folders: `publish` copies a local folder into one, and deploy
-   * creates them like `directories`.
+   * Content sections the app serves, mapped to their host folders: `publish` copies a local folder
+   * into one, and deploy creates them like `directories`.
    */
   content: Schema.optionalKey(Schema.Record(Name, AbsolutePath)),
 
@@ -221,8 +235,8 @@ export const DeployConfig = Schema.Struct({
   environment: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 
   /**
-   * A `KEY=value` file on this machine with secret Compose variables, read at deploy time and never printed. A leading
-   * `~/` means the home folder.
+   * A `KEY=value` file on this machine with secret Compose variables, read at deploy time and never
+   * printed. A leading `~/` means the home folder.
    */
   envFile: Schema.optionalKey(Schema.String),
 
@@ -273,8 +287,8 @@ export const DeployConfig = Schema.Struct({
 export type DeployConfig = typeof DeployConfig.Type;
 
 /**
- * An app ready to deploy: its configuration and the absolute folder used to resolve deployment files. Git and builds
- * use `workingDirectoryOf`.
+ * An app ready to deploy: its configuration and the absolute folder used to resolve deployment
+ * files. Git and builds use `workingDirectoryOf`.
  */
 export interface App {
   /**
@@ -294,7 +308,8 @@ export interface App {
 }
 
 /**
- * The source directory used by Git and builds, without requiring a checkout for source-free commands.
+ * The source directory used by Git and builds, without requiring a checkout for source-free
+ * commands.
  */
 export function workingDirectoryOf(app: App): string {
   return resolve(app.dir, expandHome(app.config.workingDirectory ?? '.'));
@@ -332,34 +347,44 @@ export function directoriesOf(config: DeployConfig): ReadonlyArray<string> {
 }
 
 /**
- * The Compose files for a run: the local overrides when `local` is set and they exist, the deployment's otherwise.
+ * The Compose files for a run: the local overrides when `local` is set and they exist, the
+ * deployment's otherwise.
  */
 export function composeFilesOf(config: DeployConfig, local: boolean): ReadonlyArray<string> {
   return (local ? config.local?.composeFiles : undefined) ?? config.composeFiles;
 }
 
 /**
- * The non-secret Compose variables for a run, with the local overrides merged over them when `local` is set.
+ * The non-secret Compose variables for a run, with the local overrides merged over them when
+ * `local` is set.
  */
-export function environmentOf(config: DeployConfig, local: boolean): Readonly<Record<string, string>> {
+export function environmentOf(
+  config: DeployConfig,
+  local: boolean,
+): Readonly<Record<string, string>> {
   return { ...config.environment, ...(local ? config.local?.environment : undefined) };
 }
 
 /**
  * Reads and validates the `deploy.yaml` at `target`, which may name the folder or the file itself.
  *
- * Relative targets resolve against the working directory, so `compoza deploy infra` works from a repository root and
- * `compoza deploy .` from the folder itself. A missing file is reported as such rather than as a parse error, because
- * it is the usual first mistake.
+ * Relative targets resolve against the working directory, so `compoza deploy infra` works from a
+ * repository root and `compoza deploy .` from the folder itself. A missing file is reported as such
+ * rather than as a parse error, because it is the usual first mistake.
  */
 export const loadApp = Effect.fn('loadApp')(function* (target: string) {
   const path = yield* Path.Path;
   const resolved = path.resolve(target);
   const fs = yield* FileSystem.FileSystem;
   let file = /\.ya?ml$/.test(resolved) ? resolved : path.join(resolved, DEPLOY_FILE);
-  if (file !== resolved && !(yield* fs.exists(file).pipe(Effect.mapError(platformFailure(`Looking for ${file}`))))) {
+  if (
+    file !== resolved &&
+    !(yield* fs.exists(file).pipe(Effect.mapError(platformFailure(`Looking for ${file}`))))
+  ) {
     const alternate = path.join(resolved, 'deploy.yml');
-    if (yield* fs.exists(alternate).pipe(Effect.mapError(platformFailure(`Looking for ${alternate}`)))) {
+    if (
+      yield* fs.exists(alternate).pipe(Effect.mapError(platformFailure(`Looking for ${alternate}`)))
+    ) {
       file = alternate;
     }
   }
@@ -375,7 +400,8 @@ export const loadApp = Effect.fn('loadApp')(function* (target: string) {
     try: () => validateSecretSettings(config),
     catch: () =>
       new DeployError({
-        message: 'Ambiguous secret sources: use secrets, envFile, or remote.envFile, never a combination',
+        message:
+          'Ambiguous secret sources: use secrets, envFile, or remote.envFile, never a combination',
       }),
   });
 
@@ -399,7 +425,11 @@ export function selectDestination(app: App, name?: string): App {
     );
   }
 
-  const config = { ...app.config, ...selected, environment: { ...app.config.environment, ...selected.environment } };
+  const config = {
+    ...app.config,
+    ...selected,
+    environment: { ...app.config.environment, ...selected.environment },
+  };
 
   if (selected.secrets !== undefined) {
     delete config.envFile;
@@ -425,7 +455,8 @@ export function projectNameOf(app: App): string {
 /**
  * Rejects competing source declarations before fetching secrets or mutating a host.
  *
- * Destination provider objects replace inherited sources, while conflicting declarations within one level are errors.
+ * Destination provider objects replace inherited sources, while conflicting declarations within one
+ * level are errors.
  */
 export function validateSecretSettings(config: DeployConfig): void {
   const issue = secretSettingsIssue(config);
@@ -435,10 +466,15 @@ export function validateSecretSettings(config: DeployConfig): void {
 }
 
 /**
- * Describes ambiguous source settings without throwing, for both pure planners and typed Effect callers.
+ * Describes ambiguous source settings without throwing, for both pure planners and typed Effect
+ * callers.
  */
 export function secretSettingsIssue(config: DeployConfig): string | undefined {
-  if ([config.secrets, config.envFile, config.remote?.envFile].filter((source) => source !== undefined).length > 1) {
+  if (
+    [config.secrets, config.envFile, config.remote?.envFile].filter(
+      (source) => source !== undefined,
+    ).length > 1
+  ) {
     return 'Ambiguous secret sources: use secrets, envFile, or remote.envFile, never a combination';
   }
 
