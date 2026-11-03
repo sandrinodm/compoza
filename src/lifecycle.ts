@@ -6,9 +6,8 @@ import type { IngressPlan } from './extensions/ingress.ts';
 import { type Command, command } from './command.ts';
 import { projectNameOf } from './config/deploy.ts';
 import { dockerHost, type HostConfig } from './config/hosts.ts';
-import { tryIngressPlan } from './deploy.ts';
 import { DeployError } from './errors.ts';
-import { ingressFor } from './extensions/ingress.ts';
+import { tryIngressFor, tryIngressPlan } from './extensions/ingress.ts';
 import { DRY_RUN_COMPLETE, phase, type Phase, runPhases } from './progress.ts';
 import { Remote } from './services/Remote.ts';
 import { DryRun, Shell } from './services/Shell.ts';
@@ -39,10 +38,14 @@ export type LifecycleAction = 'stop' | 'start';
 /**
  * The word that opens the line printed after a lifecycle action succeeds.
  */
-const ACTION_PAST_TENSE: Readonly<Record<LifecycleAction, string>> = {
-  stop: 'Stopped',
-  start: 'Started',
-};
+function pastTense(action: LifecycleAction): string {
+  switch (action) {
+    case 'stop':
+      return 'Stopped';
+    case 'start':
+      return 'Started';
+  }
+}
 
 /**
  * The Compose command for a lifecycle action on the app's project.
@@ -88,7 +91,7 @@ export const lifecycle = Effect.fn('lifecycle')(function* (
 
   const { name, host } = resolved.app.config;
   yield* Console.log(
-    (yield* DryRun) ? DRY_RUN_COMPLETE : `${ACTION_PAST_TENSE[action]} ${name} on ${host}`,
+    (yield* DryRun) ? DRY_RUN_COMPLETE : `${pastTense(action)} ${name} on ${host}`,
   );
 });
 
@@ -108,7 +111,7 @@ export const remove = Effect.fn('remove')(function* (resolved: Resolved, volumes
     return yield* removeDeployedStack(resolved, volumes);
   }
 
-  const ingress = ingressFor(app);
+  const ingress = yield* tryIngressFor(app);
   const phases: Array<Phase<DeployError, never>> = [];
 
   if (ingress !== undefined) {

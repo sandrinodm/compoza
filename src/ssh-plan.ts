@@ -304,12 +304,15 @@ printf 'buildkit='; if ${buildkitCheck}; then echo yes; else echo no; fi
 }
 
 /**
- * Whether a configured stack root is safe to embed and operate on: not the filesystem root, with no
- * `.` or `..` components and no line breaks or NUL.
+ * Whether a configured stack root is safe to embed and operate on: an absolute path that is not the
+ * filesystem root, with no `.` or `..` components and no line breaks or NUL.
+ *
+ * The config schema already requires an absolute path; checking it here as well keeps a relative
+ * root from resolving against the SSH user's working folder when an app is built without decoding.
  */
 function isSafeStackRoot(root: string): boolean {
   const hasDotComponent = root.split('/').some((part) => part === '.' || part === '..');
-  return root !== '/' && !hasDotComponent && !LINE_BREAK_OR_NUL.test(root);
+  return root.startsWith('/') && root !== '/' && !hasDotComponent && !LINE_BREAK_OR_NUL.test(root);
 }
 
 /**

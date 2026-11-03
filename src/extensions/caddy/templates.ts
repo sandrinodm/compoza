@@ -63,6 +63,10 @@ export function renderTemplate(
   const stack: Array<{ key: string; active: boolean }> = [];
   let cursor = 0;
   let output = '';
+
+  /**
+   * Whether output is currently being kept: true when every open section's condition holds.
+   */
   const active = () => stack.every((section) => section.active);
 
   for (const match of template.matchAll(PLACEHOLDER_PATTERN)) {
@@ -143,6 +147,11 @@ export const loadTemplate = Effect.fn('loadTemplate')(function* (
     path.dirname(file),
     source.startsWith('~/') ? path.join(homedir(), source.slice(2)) : source,
   );
+
+  /**
+   * The single error for every way the file can be unusable: missing, not a regular file, too
+   * large, or unreadable.
+   */
   const fail = () =>
     new DeployError({
       message:
@@ -167,7 +176,14 @@ export const loadTemplate = Effect.fn('loadTemplate')(function* (
  * operation.
  */
 const templateVariables = {
+  /**
+   * The per-app site file, `sites/<project>.caddy`.
+   */
   site: { name: '', domain: '', upstream: '', tls: '', logSnippet: '' },
+
+  /**
+   * The shared Caddyfile of a provisioned Caddy.
+   */
   config: { acmeDns: '', logSnippet: '', sitesImport: '', gracePeriod: '' },
 };
 

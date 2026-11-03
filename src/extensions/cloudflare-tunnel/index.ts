@@ -314,7 +314,17 @@ function managedRoutingChecks(probe: Record<string, string>): ReadonlyArray<Chec
  * connectors and DNS.
  */
 export const cloudflareIngress: IngressExtension = {
+  /**
+   * Selected by `ingress.mode: cloudflare-tunnel` and host proxies with that provider.
+   */
   id: 'cloudflare-tunnel',
+
+  /**
+   * With managed routing, routes the app by adding its hostname to the tunnel's configuration
+   * through the Cloudflare API and unroutes by removing the rule compoza owns; with manual routing,
+   * both are no-ops because the operator publishes routes. Throws when the host has no matching
+   * Cloudflare proxy.
+   */
   plan: (app, host) => {
     const proxy = requireProxy(host);
     const ingress = settings(app);
@@ -331,6 +341,11 @@ export const cloudflareIngress: IngressExtension = {
       healthUrl: `https://${ingress.domain}${ingress.healthPath ?? '/'}`,
     };
   },
+  /**
+   * Prepares route ownership storage on the host (managed routing) or checks the connector (manual
+   * routing), and provisions the connector first when the proxy has `provision` settings. Throws
+   * when the host has no matching Cloudflare proxy.
+   */
   setup: (host) => {
     const proxy = requireProxy(host);
     if (proxy.provision !== undefined) {
@@ -352,10 +367,22 @@ export const cloudflareIngress: IngressExtension = {
       label: '<prepare Cloudflare Tunnel route ownership storage>',
     };
   },
+  /**
+   * The app's domain, or `undefined` when the host has no Cloudflare proxy to check it against.
+   */
   domain: (app, host) => (proxyFor(host) === undefined ? undefined : settings(app).domain),
+
+  /**
+   * The read-only probe of the Cloudflare route state (managed routing) or the connector (manual
+   * routing, or managed routing with a known connector container), or `undefined` when the host has
+   * no Cloudflare proxy.
+   */
   probe: (app, host) => {
     const proxy = proxyFor(host);
     return proxy === undefined ? undefined : script(proxy, 'probe', app);
   },
+  /**
+   * Turns DNS answers and probe keys into Cloudflare readiness checks.
+   */
   checks,
 };

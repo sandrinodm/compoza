@@ -187,6 +187,11 @@ function runPipeline(
       }
 
       const stopped = new Set<number>();
+
+      /**
+       * Kills every still-running stage before `index`, once each. It runs whenever a stage exits,
+       * because the stages feeding it would otherwise block writing into a pipe nobody reads.
+       */
       const stopUpstream = (index: number) =>
         Effect.forEach(
           handles.slice(0, index),

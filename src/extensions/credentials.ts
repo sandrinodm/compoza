@@ -45,7 +45,14 @@ export interface CredentialProvider {
  * New providers add their configuration schema and an entry here; Docker execution stays unchanged.
  */
 export const credentialProviders = {
+  /**
+   * A dotenv file on the operator machine.
+   */
   'env-file': envFileProvider,
+
+  /**
+   * A 1Password Environment, read through the optional SDK.
+   */
   '1password': onePasswordProvider,
 } as const satisfies Readonly<Record<CredentialProviderId, CredentialProvider>>;
 

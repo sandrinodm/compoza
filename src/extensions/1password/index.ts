@@ -115,8 +115,23 @@ export const OnePasswordReader = Context.Reference<typeof fetchEnvironment>(
  * The bundled 1Password credential provider; SDK authentication stays on the operator machine.
  */
 export const onePasswordProvider: CredentialProvider = {
+  /**
+   * Selected by `secrets: { 1password: … }`.
+   */
   id: '1password',
+
+  /**
+   * The SDK's service-account token (`OP_SERVICE_ACCOUNT_TOKEN`) and compoza's own 1Password
+   * settings, kept out of printed commands and child processes.
+   */
   authEnvironmentPrefixes: ['OP_', 'COMPOZA_1PASSWORD_'],
+
+  /**
+   * Reads the selected 1Password Environment through the SDK, keeping only the declared variables
+   * when the source lists them. Fails with a `DeployError` when the SDK is missing or access fails,
+   * when an entry is malformed or duplicated, or when a declared variable is absent; messages name
+   * variables but never include values.
+   */
   read: Effect.fn('onePasswordProvider.read')(function* (source) {
     if (source.provider !== '1password') {
       return yield* new DeployError({ message: 'Invalid 1Password source selection' });

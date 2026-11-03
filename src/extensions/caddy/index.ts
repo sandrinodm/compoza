@@ -55,7 +55,15 @@ function settings(app: App) {
  * operation in SSH lifecycle metadata.
  */
 export const caddyIngress: IngressExtension = {
+  /**
+   * Selected by `ingress.mode: caddy` and by host proxies without a provider.
+   */
   id: 'caddy',
+
+  /**
+   * Routes the app by writing `sites/<project>.caddy` into the shared Caddy and reloading it, and
+   * removes that file to unroute. Throws when the host has no Caddy proxy.
+   */
   plan: (app, host) => {
     const proxy = caddyProxy(host);
     const ingress = settings(app);
@@ -74,6 +82,11 @@ export const caddyIngress: IngressExtension = {
       healthUrl: `https://${ingress.domain}${ingress.healthPath ?? '/'}`,
     };
   },
+  /**
+   * Provisions the Caddy stack when the proxy has `provision` settings; otherwise prepares the
+   * `sites` folder of an operator-managed Caddy and recreates it. Throws when the host has no Caddy
+   * proxy.
+   */
   setup: (host) => {
     const proxy = caddyProxy(host);
     if (proxy.provision !== undefined) {
@@ -85,10 +98,21 @@ export const caddyIngress: IngressExtension = {
       label: `<set up ${proxy.dir}/sites, recreate Caddy>`,
     };
   },
+  /**
+   * The app's domain, or `undefined` when the host has no Caddy proxy to check it against.
+   */
   domain: (app, host) => (caddyProxyOf(host) === undefined ? undefined : settings(app).domain),
+
+  /**
+   * The read-only Caddy probe (site file, mounts, container state), or `undefined` when the host
+   * has no Caddy proxy.
+   */
   probe: (app, host) => {
     const proxy = caddyProxyOf(host);
     return proxy === undefined ? undefined : checkScript({ proxy, name: projectNameOf(app) });
   },
+  /**
+   * Turns DNS answers and probe keys into Caddy readiness checks.
+   */
   checks: caddyChecks,
 };

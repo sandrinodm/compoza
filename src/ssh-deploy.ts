@@ -8,7 +8,7 @@ import { readBundle } from './bundle.ts';
 import { blocking, formatChecks, runChecks } from './checks.ts';
 import { command, shellQuote } from './command.ts';
 import { readSecrets, selectSecretSource } from './config/secrets.ts';
-import { DeployError } from './errors.ts';
+import { DeployError, tryPlan } from './errors.ts';
 import { planDeployment } from './plan.ts';
 import { DRY_RUN_COMPLETE, phase, runPhases } from './progress.ts';
 import { Remote } from './services/Remote.ts';
@@ -33,13 +33,7 @@ const SSH_DRY_RUN_SUMMARY =
  * No candidate configuration or secret-bearing resolved model is included in these messages.
  */
 function planned<A>(build: () => A): Effect.Effect<A, DeployError> {
-  return Effect.try({
-    try: build,
-    catch: (cause) =>
-      new DeployError({
-        message: cause instanceof Error ? cause.message : 'Invalid SSH deployment plan',
-      }),
-  });
+  return tryPlan(build, 'Invalid SSH deployment plan');
 }
 
 /**
@@ -69,15 +63,18 @@ export const deploySsh = Effect.fn('deploySsh')(function* (
   );
 
   // The plan's last step is the local Compose command; over SSH the host runs Compose itself.
-  const builds = planDeployment({
-    app,
-    host,
-    tag: source.tag,
-    context: source.context,
-    local: false,
-    reuseImages: options.tag._tag === 'Some',
-    secrets: {},
-  }).slice(0, -1);
+  const plan = yield* planned(() =>
+    planDeployment({
+      app,
+      host,
+      tag: source.tag,
+      context: source.context,
+      local: false,
+      reuseImages: options.tag._tag === 'Some',
+      secrets: {},
+    }),
+  );
+  const builds = plan.slice(0, -1);
 
   const readiness = phase(
     'checks',

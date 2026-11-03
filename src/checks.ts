@@ -4,8 +4,8 @@ import { Resolver } from 'node:dns/promises';
 import type { App } from './config/deploy.ts';
 
 import { type HostConfig, registryOf } from './config/hosts.ts';
-import { DeployError } from './errors.ts';
-import { ingressFor } from './extensions/ingress.ts';
+import { tryPlan } from './errors.ts';
+import { ingressFor, tryIngressFor } from './extensions/ingress.ts';
 import { parseCheck, registryProbe } from './probe.ts';
 import { Remote } from './services/Remote.ts';
 import { sshReadinessScript } from './ssh-plan.ts';
@@ -132,7 +132,7 @@ export function formatChecks(checks: ReadonlyArray<Check>): string {
  */
 export const runChecks = Effect.fn('runChecks')(function* (app: App, host: HostConfig) {
   const remote = yield* Remote;
-  const ingress = ingressFor(app);
+  const ingress = yield* tryIngressFor(app);
   const domain = ingress?.domain(app, host);
   const registry = requiredRegistry(app, host);
   const scripts = [
@@ -183,13 +183,7 @@ function registryDetail(registry: string, login: string | undefined): string {
  */
 const sshReadinessChecks = Effect.fn('sshReadinessChecks')(function* (app: App, host: HostConfig) {
   const remote = yield* Remote;
-  const script = yield* Effect.try({
-    try: () => sshReadinessScript(app, host),
-    catch: (cause) =>
-      new DeployError({
-        message: cause instanceof Error ? cause.message : 'Invalid SSH configuration',
-      }),
-  });
+  const script = yield* tryPlan(() => sshReadinessScript(app, host), 'Invalid SSH configuration');
   const readiness = parseCheck(yield* remote.probe(host, script));
   return Object.entries(readiness).map(([name, value]): Check => ({
     name,

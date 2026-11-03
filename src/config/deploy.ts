@@ -417,12 +417,12 @@ export const loadApp = Effect.fn('loadApp')(function* (target: string) {
     `No ${file}. Point compoza at a folder holding a ${DEPLOY_FILE}.`,
     { privateInput: true },
   );
-  const app: App = { dir: path.dirname(file), file, config };
-  yield* Effect.try({
-    try: () => validateSecretSettings(config),
-    catch: () => new DeployError({ message: AMBIGUOUS_SECRET_SOURCES }),
-  });
+  const issue = secretSettingsIssue(config);
+  if (issue !== undefined) {
+    return yield* new DeployError({ message: issue });
+  }
 
+  const app: App = { dir: path.dirname(file), file, config };
   return app;
 });
 
@@ -514,9 +514,12 @@ export function secretSettingsIssue(config: DeployConfig): string | undefined {
     return AMBIGUOUS_SECRET_SOURCES;
   }
 
-  for (const destination of Object.values(config.destinations ?? {})) {
+  for (const [name, destination] of Object.entries(config.destinations ?? {})) {
     if (destination.secrets !== undefined && destination.remote?.envFile !== undefined) {
-      return 'Ambiguous destination secret sources';
+      return (
+        `Ambiguous secret sources in destination "${name}": ` +
+        'use secrets or remote.envFile, never both'
+      );
     }
   }
 

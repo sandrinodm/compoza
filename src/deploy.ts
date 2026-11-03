@@ -17,9 +17,9 @@ import {
 } from './config/deploy.ts';
 import { dockerHost, type HostConfig, hostFor, loadHostsForRun } from './config/hosts.ts';
 import { readSecrets } from './config/secrets.ts';
-import { DeployError } from './errors.ts';
+import { DeployError, tryPlan } from './errors.ts';
 import { loadAppExtensionFiles } from './extensions/config.ts';
-import { ingressFor } from './extensions/ingress.ts';
+import { tryIngressFor, tryIngressPlan } from './extensions/ingress.ts';
 import { planDeployment } from './plan.ts';
 import { DRY_RUN_COMPLETE, formatDuration, phase, runPhases } from './progress.ts';
 import { Git } from './services/Git.ts';
@@ -35,9 +35,9 @@ import { WAIT_TIMEOUT_MILLIS, waitForUrl } from './wait.ts';
 const THIRD_PARTY_TAG = 'third-party';
 
 /**
- * The message of a failed ingress plan when the extension throws something other than an `Error`.
+ * The message of a failed deployment plan when the planner throws something other than an `Error`.
  */
-const INVALID_INGRESS_MESSAGE = 'Invalid ingress configuration';
+const INVALID_DEPLOYMENT_PLAN = 'Invalid deployment plan';
 
 /**
  * What the `deploy` command was asked to do.
@@ -93,27 +93,6 @@ export interface Resolved {
    * Its host.
    */
   readonly host: HostConfig;
-}
-
-/**
- * Runs a synchronous planning function that reports invalid configuration by throwing, and fails
- * with a `DeployError` carrying the thrown error's message, or `fallback` when the thrown value is
- * not an `Error`.
- */
-export function tryPlan<A>(plan: () => A, fallback: string): Effect.Effect<A, DeployError> {
-  return Effect.try({
-    try: plan,
-    catch: (cause) =>
-      new DeployError({ message: cause instanceof Error ? cause.message : fallback }),
-  });
-}
-
-/**
- * `tryPlan` for an ingress extension's `plan` or `setup`, failing with `Invalid ingress
- * configuration` when the extension throws something other than an `Error`.
- */
-export function tryIngressPlan<A>(plan: () => A): Effect.Effect<A, DeployError> {
-  return tryPlan(plan, INVALID_INGRESS_MESSAGE);
 }
 
 /**
@@ -274,13 +253,25 @@ const planRun = Effect.fn('planRun')(function* (
   const where = options.local ? 'local Docker' : `${app.config.host} (${dockerHost(host)})`;
   const header = `Deploying ${app.config.name} ${tag} to ${where}`;
   const phases: Array<DeployPhase> = [];
+
+  /**
+   * The finished run: the header and phases planned so far, closed with `summary`.
+   */
   const done = (summary: DeployRun['summary']): DeployRun => ({ header, phases, summary });
+
+  /**
+   * The closing line of a deploy that ran to completion, with the total duration already formatted.
+   */
   const deployed = (total: string) =>
     `Deployed ${app.config.name} ${tag} to ${where} (${total} total)`;
+
+  /**
+   * Runs planned Docker steps one after another, stopping at the first that fails.
+   */
   const runSteps = (planned: ReadonlyArray<Step>) =>
     Effect.forEach(planned, (step) => shell.run(step), { discard: true });
 
-  const ingress = options.local ? undefined : ingressFor(app);
+  const ingress = options.local ? undefined : yield* tryIngressFor(app);
   const directories = directoriesOf(app.config);
   const images = imageCount(app.config.targets.length);
 
@@ -362,15 +353,20 @@ const planSteps = Effect.fn('planSteps')(function* (
   options: DeployOptions,
   source: Source,
 ) {
-  const steps = planDeployment({
-    app,
-    host,
-    tag: source.tag,
-    local: options.local,
-    reuseImages: options.tag._tag === 'Some',
-    context: source.context,
-    secrets: yield* readSecrets(app, options.local),
-  });
+  const secrets = yield* readSecrets(app, options.local);
+  const steps = yield* tryPlan(
+    () =>
+      planDeployment({
+        app,
+        host,
+        tag: source.tag,
+        local: options.local,
+        reuseImages: options.tag._tag === 'Some',
+        context: source.context,
+        secrets,
+      }),
+    INVALID_DEPLOYMENT_PLAN,
+  );
   yield* Effect.logDebug(
     `plan, ${steps.length} steps:\n${steps.map((step) => `$ ${printableStep(step)}`).join('\n')}`,
   );

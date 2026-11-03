@@ -1,6 +1,6 @@
 import type { PlatformError } from 'effect/PlatformError';
 
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 
 /**
  * A deployment that cannot proceed: a configuration problem, a failed readiness check, a repository
@@ -24,4 +24,20 @@ export class DeployError extends Schema.TaggedError<DeployError>()('DeployError'
  */
 export function platformFailure(attempt: string): (cause: PlatformError) => DeployError {
   return (cause) => new DeployError({ message: `${attempt}: ${cause.message}` });
+}
+
+/**
+ * Runs a synchronous planning function that reports invalid configuration by throwing, and fails
+ * with a `DeployError` carrying the thrown error's message, or `fallback` when the thrown value is
+ * not an `Error`.
+ *
+ * Planners throw plain errors so they stay usable outside Effect; wrapping every call made from
+ * Effect code keeps a bad configuration a printed message instead of an unexpected defect.
+ */
+export function tryPlan<A>(plan: () => A, fallback: string): Effect.Effect<A, DeployError> {
+  return Effect.try({
+    try: plan,
+    catch: (cause) =>
+      new DeployError({ message: cause instanceof Error ? cause.message : fallback }),
+  });
 }

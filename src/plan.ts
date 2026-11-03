@@ -16,7 +16,22 @@ import { secretSource, validateSecrets } from './config/secrets.ts';
  * Variables cleared for a build on the host's daemon, so a Docker context or Buildx builder
  * selected on this machine cannot redirect the build away from the explicit `--host`.
  */
-const REMOTE_BUILD_ENVIRONMENT = { DOCKER_CONTEXT: '', BUILDX_BUILDER: '', BUILDX_HOST: '' };
+const REMOTE_BUILD_ENVIRONMENT = {
+  /**
+   * The Docker context selected with `docker context use`, which would override `DOCKER_HOST`.
+   */
+  DOCKER_CONTEXT: '',
+
+  /**
+   * The Buildx builder selected with `docker buildx use`, which may run on another daemon.
+   */
+  BUILDX_BUILDER: '',
+
+  /**
+   * A Buildx endpoint override.
+   */
+  BUILDX_HOST: '',
+};
 
 /**
  * Everything a plan needs decided: the app and host, the tag, where the build context is, and the

@@ -32,6 +32,7 @@ import {
   deploymentScript,
   generatedEnvironment,
   sshReadinessScript,
+  stackRoot,
 } from './ssh-plan.ts';
 
 /**
@@ -591,5 +592,23 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
         }),
       'reserved',
     );
+  });
+
+  it('accepts only absolute stack roots below the filesystem root', () => {
+    const withStackDir = (stackDir: string): App => ({
+      dir: '/app',
+      config: {
+        name: 'app',
+        host: 'host',
+        targets: [],
+        composeFiles: ['compose.yaml'],
+        remote: { stackDir },
+      },
+    });
+
+    assert.strictEqual(stackRoot(withStackDir('/srv/app/')), '/srv/app');
+    for (const stackDir of ['stacks/app', './app', '/', '/srv/../etc', '/srv/app\nx']) {
+      assert.throws(() => stackRoot(withStackDir(stackDir)), 'remote.stackDir');
+    }
   });
 });

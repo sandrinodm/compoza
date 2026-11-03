@@ -1,3 +1,5 @@
+import { Effect } from 'effect';
+
 import type { Check } from '../checks.ts';
 import type { App } from '../config/deploy.ts';
 import type { HostConfig } from '../config/hosts.ts';
@@ -6,8 +8,14 @@ import type { IngressId, SecretsConfig } from './config.ts';
 import { shellQuote } from '../command.ts';
 import { ingressOf } from '../config/deploy.ts';
 import { ingressConfigOf } from '../config/hosts.ts';
+import { DeployError, tryPlan } from '../errors.ts';
 import { caddyIngress } from './caddy/index.ts';
 import { cloudflareIngress } from './cloudflare-tunnel/index.ts';
+
+/**
+ * The message of a failed ingress plan when the extension throws something other than an `Error`.
+ */
+const INVALID_INGRESS_MESSAGE = 'Invalid ingress configuration';
 
 /**
  * A host operation planned by an ingress extension and executed by the core Remote service.
@@ -119,7 +127,14 @@ export interface IngressExtension {
  * configuration schemas.
  */
 export const ingressExtensions = {
+  /**
+   * A shared Caddy reverse proxy on the Docker host.
+   */
   caddy: caddyIngress,
+
+  /**
+   * An existing, remotely managed Cloudflare Tunnel.
+   */
   'cloudflare-tunnel': cloudflareIngress,
 } as const satisfies Readonly<Record<IngressId, IngressExtension>>;
 
@@ -141,6 +156,23 @@ export function ingressExtension(id: string): IngressExtension {
 export function ingressFor(app: App): IngressExtension | undefined {
   const mode = ingressOf(app.config).mode;
   return mode === 'none' ? undefined : ingressExtension(mode);
+}
+
+/**
+ * `ingressFor` for Effect callers: an unknown ingress mode fails with a `DeployError` instead of
+ * throwing.
+ */
+export function tryIngressFor(app: App): Effect.Effect<IngressExtension | undefined, DeployError> {
+  return tryIngressPlan(() => ingressFor(app));
+}
+
+/**
+ * Runs an ingress extension's synchronous `plan` or `setup` and fails with a `DeployError` carrying
+ * the extension's message, or `Invalid ingress configuration` when it throws something other than
+ * an `Error`.
+ */
+export function tryIngressPlan<A>(plan: () => A): Effect.Effect<A, DeployError> {
+  return tryPlan(plan, INVALID_INGRESS_MESSAGE);
 }
 
 /**

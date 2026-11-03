@@ -51,6 +51,9 @@ export class Git extends Context.Service<
     Effect.gen(function* () {
       const shell = yield* Shell;
 
+      /**
+       * Runs `git -C dir args` and returns its trimmed output.
+       */
       const git = (dir: string, ...args: ReadonlyArray<string>) =>
         shell
           .capture(command('git', ['-C', dir, ...args]))

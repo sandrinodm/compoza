@@ -188,4 +188,27 @@ describe('loadApp', () => {
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect('names the setting that makes secret sources ambiguous', () =>
+    withTempDir((dir) =>
+      Effect.gen(function* () {
+        const file = join(dir, 'deploy.yaml');
+        const topLevel = { ...valid, envFile: 'legacy.env', secrets: { none: {} } };
+        yield* Effect.promise(() => writeFile(file, YAML.stringify(topLevel)));
+
+        const ambiguous = yield* loadApp(dir).pipe(Effect.flip);
+        assert.include(ambiguous.message, 'Ambiguous secret sources: use secrets, envFile');
+
+        const staging = {
+          secrets: { none: {} },
+          remote: { stackDir: '/srv/demo/staging', envFile: '/srv/demo/staging/.env' },
+        };
+        const destination = { ...valid, destinations: { staging } };
+        yield* Effect.promise(() => writeFile(file, YAML.stringify(destination)));
+
+        const inDestination = yield* loadApp(dir).pipe(Effect.flip);
+        assert.include(inDestination.message, 'destination "staging"');
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
 });

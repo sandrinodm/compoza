@@ -10,8 +10,21 @@ import { DeployError } from '../../errors.ts';
  * The bundled dotenv credential provider with literal parsing and private file diagnostics.
  */
 export const envFileProvider: CredentialProvider = {
+  /**
+   * Selected by `secrets: { env-file: { path } }`.
+   */
   id: 'env-file',
+
+  /**
+   * None: a local file needs no operator credentials.
+   */
   authEnvironmentPrefixes: [],
+
+  /**
+   * Reads the dotenv file at the source's path (with `~/` expanded, relative to the deployment
+   * folder) and parses it literally. Fails with a `DeployError` that never names the file's
+   * contents when it cannot be read or a line is invalid.
+   */
   read: Effect.fn('envFileProvider.read')(function* (source, directory) {
     if (source.provider !== 'env-file') {
       return yield* new DeployError({ message: 'Invalid env-file source selection' });
