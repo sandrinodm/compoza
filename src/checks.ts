@@ -49,13 +49,24 @@ const PUBLIC_RESOLVERS = ['1.1.1.1', '1.0.0.1'];
 const DNS_TIMEOUT_MILLIS = 3_000;
 
 /**
+ * How many times each DNS query is sent before the check reports no record.
+ */
+const DNS_TRIES = 2;
+
+/**
+ * The detail of a failed SSH readiness key: everything the host's own deploy script needs.
+ */
+const SSH_REQUIREMENTS =
+  'check host Docker/Compose, Bash 3.2+, jq 1.6+, paths and optional curl/Buildx';
+
+/**
  * Resolves both IP families through public resolvers; one missing family does not discard the other
  * answer.
  */
 export function lookup(domain: string): Effect.Effect<ReadonlyArray<string>> {
   return Effect.tryPromise({
     try: async () => {
-      const resolver = new Resolver({ timeout: DNS_TIMEOUT_MILLIS, tries: 2 });
+      const resolver = new Resolver({ timeout: DNS_TIMEOUT_MILLIS, tries: DNS_TRIES });
       resolver.setServers(PUBLIC_RESOLVERS);
 
       const answers = await Promise.allSettled([
@@ -82,18 +93,12 @@ export function evaluateChecks(
   probe: Record<string, string>,
 ): ReadonlyArray<Check> {
   const checks: Array<Check> = [...(ingressFor(app)?.checks(app, host, addresses, probe) ?? [])];
-  const registry = app.config.targets.length === 0 ? undefined : registryOf(host);
+  const registry = requiredRegistry(app, host);
   if (registry !== undefined) {
-    const loggedIn = probe.registry_login === 'yes';
     checks.push({
       name: 'registry',
-      ok: loggedIn,
-      detail:
-        probe.registry_login === undefined
-          ? `stored login for ${registry} was not probed`
-          : loggedIn
-            ? `host is logged in to ${registry}`
-            : `host has no stored login for ${registry}; run docker login there`,
+      ok: probe.registry_login === 'yes',
+      detail: registryDetail(registry, probe.registry_login),
       fix: 'manual',
     });
   }
@@ -129,7 +134,7 @@ export const runChecks = Effect.fn('runChecks')(function* (app: App, host: HostC
   const remote = yield* Remote;
   const ingress = ingressFor(app);
   const domain = ingress?.domain(app, host);
-  const registry = app.config.targets.length === 0 ? undefined : registryOf(host);
+  const registry = requiredRegistry(app, host);
   const scripts = [
     ingress?.probe(app, host),
     registry === undefined ? undefined : registryProbe(registry),
@@ -144,27 +149,55 @@ export const runChecks = Effect.fn('runChecks')(function* (app: App, host: HostC
   const checks = [...evaluateChecks(app, host, addresses, parseCheck(output))];
 
   if (app.config.execution === 'ssh') {
-    const script = yield* Effect.try({
-      try: () => sshReadinessScript(app, host),
-      catch: (cause) =>
-        new DeployError({
-          message: cause instanceof Error ? cause.message : 'Invalid SSH configuration',
-        }),
-    });
-    const readiness = parseCheck(yield* remote.probe(host, script));
-
-    for (const [name, value] of Object.entries(readiness)) {
-      checks.push({
-        name,
-        ok: value === 'yes',
-        detail:
-          value === 'yes'
-            ? `${name} ready for SSH execution`
-            : `${name} unavailable; check host Docker/Compose, Bash 3.2+, jq 1.6+, paths and optional curl/Buildx`,
-        fix: 'manual',
-      });
-    }
+    checks.push(...(yield* sshReadinessChecks(app, host)));
   }
 
   return checks;
+});
+
+/**
+ * The registry the host must be logged in to, or `undefined` when the app builds no images and so
+ * pushes nothing.
+ */
+function requiredRegistry(app: App, host: HostConfig): string | undefined {
+  return app.config.targets.length === 0 ? undefined : registryOf(host);
+}
+
+/**
+ * The detail of the registry check, given the probe's `registry_login` value: `yes` when the host
+ * has a stored login, anything else when it has none, `undefined` when the key was not probed.
+ */
+function registryDetail(registry: string, login: string | undefined): string {
+  if (login === undefined) {
+    return `stored login for ${registry} was not probed`;
+  }
+
+  return login === 'yes'
+    ? `host is logged in to ${registry}`
+    : `host has no stored login for ${registry}; run docker login there`;
+}
+
+/**
+ * Probes what an `execution: ssh` deploy needs on the host and turns each reported key into a
+ * check, passing when the host printed `yes` for it.
+ */
+const sshReadinessChecks = Effect.fn('sshReadinessChecks')(function* (app: App, host: HostConfig) {
+  const remote = yield* Remote;
+  const script = yield* Effect.try({
+    try: () => sshReadinessScript(app, host),
+    catch: (cause) =>
+      new DeployError({
+        message: cause instanceof Error ? cause.message : 'Invalid SSH configuration',
+      }),
+  });
+  const readiness = parseCheck(yield* remote.probe(host, script));
+  return Object.entries(readiness).map(([name, value]): Check => ({
+    name,
+    ok: value === 'yes',
+    detail:
+      value === 'yes'
+        ? `${name} ready for SSH execution`
+        : `${name} unavailable; ${SSH_REQUIREMENTS}`,
+    fix: 'manual',
+  }));
 });

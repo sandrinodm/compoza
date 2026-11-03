@@ -29,6 +29,16 @@ const cloudflareHost = {
   stateDir: '/srv/cloudflare/state',
 };
 
+/**
+ * Decodes app configuration the way the CLI does, rejecting unknown fields.
+ */
+const decodeDeployConfig = Schema.decodeUnknownSync(DeployConfig, { onExcessProperty: 'error' });
+
+/**
+ * Decodes a hosts file the way the CLI does, rejecting unknown fields.
+ */
+const decodeHosts = Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' });
+
 const app: App = {
   dir: '/repo',
   config: {
@@ -94,10 +104,8 @@ describe('named extension configuration', () => {
   );
 
   it('keeps Caddy planning and frozen SSH releases equivalent to legacy configuration', () => {
-    const canonical = Schema.decodeUnknownSync(DeployConfig, { onExcessProperty: 'error' })(
-      app.config,
-    );
-    const hosts = Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({ server: host });
+    const canonical = decodeDeployConfig(app.config);
+    const hosts = decodeHosts({ server: host });
 
     assert.deepStrictEqual(ingressOf(canonical), { mode: 'caddy', ...caddy });
     assert.deepStrictEqual(ingressConfigOf(hosts.server!), { provider: 'caddy', ...caddyHost });
@@ -137,13 +145,13 @@ describe('named extension configuration', () => {
   it('selects Cloudflare from named app and host settings', () => {
     const selected: App = {
       ...app,
-      config: Schema.decodeUnknownSync(DeployConfig, { onExcessProperty: 'error' })({
+      config: decodeDeployConfig({
         ...app.config,
         ingress: { 'cloudflare-tunnel': cloudflare },
       }),
     };
 
-    const namedHost = Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({
+    const namedHost = decodeHosts({
       server: { ...host, ingress: { 'cloudflare-tunnel': cloudflareHost } },
     }).server!;
     const extension = ingressFor(selected)!;
@@ -179,7 +187,7 @@ describe('named extension configuration', () => {
   ] as const) {
     it(`rejects ${name}`, () =>
       assert.throws(() =>
-        Schema.decodeUnknownSync(DeployConfig, { onExcessProperty: 'error' })({
+        decodeDeployConfig({
           ...app.config,
           ingress,
         }),
@@ -201,7 +209,7 @@ describe('named extension configuration', () => {
       },
     ]) {
       assert.throws(() =>
-        Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({
+        decodeHosts({
           server: { ...host, ingress },
         }),
       );
@@ -209,22 +217,23 @@ describe('named extension configuration', () => {
 
     assert.throws(
       () =>
-        Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({
+        decodeHosts({
           server: { ...host, proxy: caddyHost },
         }),
       'never both',
     );
     assert.throws(() => ingressConfigOf({ ...host, proxy: caddyHost }), 'never both');
+
     const { ingress: _ingress, ...legacyHost } = host;
     assert.throws(() =>
-      Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({
+      decodeHosts({
         server: { ...legacyHost, proxy: { ...caddyHost, provider: 'caddy-sites' } },
       }),
     );
   });
 
   it('selects each app provider independently on a host with both ingress capabilities', () => {
-    const combined = Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({
+    const combined = decodeHosts({
       server: { ...host, ingress: { caddy: caddyHost, 'cloudflare-tunnel': cloudflareHost } },
     }).server!;
     assert.throws(() => ingressConfigOf(combined), 'select --ingress');
@@ -298,7 +307,7 @@ describe('named extension configuration', () => {
       { '1password': { environmentId: 'prod', variables: ['TOKEN'] } },
       { provider: '1password', environmentId: 'prod', variables: ['TOKEN'] },
     ]) {
-      const config = Schema.decodeUnknownSync(DeployConfig, { onExcessProperty: 'error' })({
+      const config = decodeDeployConfig({
         ...app.config,
         secrets,
         destinations: {
@@ -332,7 +341,7 @@ describe('named extension configuration', () => {
         { provider: '1password', environmentId: 'prod', variables },
       ]) {
         assert.throws(() =>
-          Schema.decodeUnknownSync(DeployConfig, { onExcessProperty: 'error' })({
+          decodeDeployConfig({
             ...app.config,
             secrets,
           }),
@@ -352,7 +361,7 @@ describe('named extension configuration', () => {
       { none: {}, '1password': { environmentId: 'prod' } },
     ]) {
       assert.throws(() =>
-        Schema.decodeUnknownSync(DeployConfig, { onExcessProperty: 'error' })({
+        decodeDeployConfig({
           ...app.config,
           secrets,
         }),

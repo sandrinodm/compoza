@@ -19,6 +19,7 @@ import {
 } from './cloudflare-tunnel/config.ts';
 import { loadCloudflareAppFiles, loadCloudflareHostFiles } from './cloudflare-tunnel/templates.ts';
 import { EnvFileConfig, EnvFileSelection } from './env-file/config.ts';
+
 export { CaddyIngress, HealthPath } from './caddy/config.ts';
 
 /**
@@ -111,6 +112,11 @@ export type Ingress = typeof Ingress.Type;
 export type ResolvedIngress = typeof ResolvedIngress.Type;
 
 /**
+ * An ingress provider's internal identifier, shared by host selection and app planning.
+ */
+export type IngressId = Exclude<ResolvedIngress['mode'], 'none'>;
+
+/**
  * The decoded host ingress input.
  */
 export type HostIngress = typeof HostIngress.Type;
@@ -124,6 +130,11 @@ export type ProxyConfig = typeof ProxyConfig.Type;
  * The decoded credential source input.
  */
 export type SecretsConfig = typeof SecretsConfig.Type;
+
+/**
+ * The normalized credential provider selection.
+ */
+export type ResolvedSecretsConfig = typeof ResolvedSecretsConfig.Type;
 
 /**
  * Loads extension-owned host files relative to the winning host definition before pure planning.
@@ -140,11 +151,6 @@ export function loadHostExtensionFiles(host: HostConfig, file: string) {
 export function loadAppExtensionFiles(app: App) {
   return loadAppTemplates(app).pipe(Effect.flatMap(loadCloudflareAppFiles));
 }
-
-/**
- * The normalized credential provider selection.
- */
-export type ResolvedSecretsConfig = typeof ResolvedSecretsConfig.Type;
 
 /**
  * Resolves named app settings to the provider's existing planning contract without changing
@@ -165,11 +171,6 @@ export function resolveIngress(config: Ingress): ResolvedIngress {
 
   return { mode: 'none' };
 }
-
-/**
- * An ingress provider's internal identifier, shared by host selection and app planning.
- */
-export type IngressId = Exclude<ResolvedIngress['mode'], 'none'>;
 
 /**
  * Selects a host capability, requiring an explicit provider when the host supports both.

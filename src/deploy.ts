@@ -2,6 +2,8 @@ import type { HttpClient } from 'effect/http';
 
 import { Console, Effect, FileSystem, type Option, Path } from 'effect';
 
+import type { Step } from './command.ts';
+import type { IngressPlan } from './extensions/ingress.ts';
 import type { Phase } from './progress.ts';
 
 import { blocking, formatChecks, runChecks } from './checks.ts';
@@ -19,12 +21,23 @@ import { DeployError } from './errors.ts';
 import { loadAppExtensionFiles } from './extensions/config.ts';
 import { ingressFor } from './extensions/ingress.ts';
 import { planDeployment } from './plan.ts';
-import { formatDuration, phase, runPhases } from './progress.ts';
+import { DRY_RUN_COMPLETE, formatDuration, phase, runPhases } from './progress.ts';
 import { Git } from './services/Git.ts';
 import { Remote } from './services/Remote.ts';
 import { DryRun, Shell } from './services/Shell.ts';
 import { deploySsh } from './ssh-deploy.ts';
 import { WAIT_TIMEOUT_MILLIS, waitForUrl } from './wait.ts';
+
+/**
+ * The tag of a deploy without targets: nothing is built, so there is no commit to name the images
+ * after.
+ */
+const THIRD_PARTY_TAG = 'third-party';
+
+/**
+ * The message of a failed ingress plan when the extension throws something other than an `Error`.
+ */
+const INVALID_INGRESS_MESSAGE = 'Invalid ingress configuration';
 
 /**
  * What the `deploy` command was asked to do.
@@ -83,6 +96,27 @@ export interface Resolved {
 }
 
 /**
+ * Runs a synchronous planning function that reports invalid configuration by throwing, and fails
+ * with a `DeployError` carrying the thrown error's message, or `fallback` when the thrown value is
+ * not an `Error`.
+ */
+export function tryPlan<A>(plan: () => A, fallback: string): Effect.Effect<A, DeployError> {
+  return Effect.try({
+    try: plan,
+    catch: (cause) =>
+      new DeployError({ message: cause instanceof Error ? cause.message : fallback }),
+  });
+}
+
+/**
+ * `tryPlan` for an ingress extension's `plan` or `setup`, failing with `Invalid ingress
+ * configuration` when the extension throws something other than an `Error`.
+ */
+export function tryIngressPlan<A>(plan: () => A): Effect.Effect<A, DeployError> {
+  return tryPlan(plan, INVALID_INGRESS_MESSAGE);
+}
+
+/**
  * Reads the app's `deploy.yaml` and the hosts file, and pairs the app with its host.
  */
 export const resolve = Effect.fn('resolve')(function* (
@@ -91,11 +125,10 @@ export const resolve = Effect.fn('resolve')(function* (
   destination?: string,
 ) {
   const loaded = yield* loadApp(target);
-  const selected = yield* Effect.try({
-    try: () => selectDestination(loaded, destination),
-    catch: (cause) =>
-      new DeployError({ message: cause instanceof Error ? cause.message : 'Invalid destination' }),
-  });
+  const selected = yield* tryPlan(
+    () => selectDestination(loaded, destination),
+    'Invalid destination',
+  );
   const app = yield* loadAppExtensionFiles(selected);
   const host = yield* hostFor(app.config, yield* loadHostsForRun(hosts));
   const resolved: Resolved = { app, host };
@@ -142,23 +175,11 @@ const chooseSource = Effect.fn('chooseSource')(function* (app: App, options: Dep
   }
 
   if (app.config.targets.length === 0) {
-    return { tag: 'third-party', context: configured ?? directory };
+    return { tag: THIRD_PARTY_TAG, context: configured ?? directory };
   }
 
   if (app.config.workingDirectory !== undefined) {
-    const fs = yield* FileSystem.FileSystem;
-    const info = yield* fs
-      .stat(directory)
-      .pipe(
-        Effect.mapError(
-          () => new DeployError({ message: `Cannot access working directory: ${directory}` }),
-        ),
-      );
-    if (info.type !== 'Directory') {
-      return yield* Effect.fail(
-        new DeployError({ message: `Working directory is not a directory: ${directory}` }),
-      );
-    }
+    yield* requireDirectory(directory);
   }
 
   const git = yield* Git;
@@ -179,6 +200,26 @@ const chooseSource = Effect.fn('chooseSource')(function* (app: App, options: Dep
     context: configured ?? root,
   };
   return built;
+});
+
+/**
+ * Fails unless the configured working directory exists and is a directory, so a mistyped
+ * `workingDirectory` is reported by name before Git is asked about it.
+ */
+const requireDirectory = Effect.fn('requireDirectory')(function* (directory: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const info = yield* fs
+    .stat(directory)
+    .pipe(
+      Effect.mapError(
+        () => new DeployError({ message: `Cannot access working directory: ${directory}` }),
+      ),
+    );
+  if (info.type !== 'Directory') {
+    return yield* new DeployError({
+      message: `Working directory is not a directory: ${directory}`,
+    });
+  }
 });
 
 /**
@@ -225,153 +266,75 @@ const planRun = Effect.fn('planRun')(function* (
   source: Source,
 ) {
   const shell = yield* Shell;
-  const remote = yield* Remote;
   const dryRun = yield* DryRun;
 
-  const { tag, context } = source;
-  const steps = planDeployment({
-    app,
-    host,
-    tag,
-    local: options.local,
-    reuseImages: options.tag._tag === 'Some',
-    context,
-    secrets: yield* readSecrets(app, options.local),
-  });
-  yield* Effect.logDebug(
-    `plan, ${steps.length} steps:\n${steps.map((step) => `$ ${printableStep(step)}`).join('\n')}`,
-  );
+  const { tag } = source;
+  const steps = yield* planSteps(app, host, options, source);
 
   const where = options.local ? 'local Docker' : `${app.config.host} (${dockerHost(host)})`;
   const header = `Deploying ${app.config.name} ${tag} to ${where}`;
   const phases: Array<DeployPhase> = [];
   const done = (summary: DeployRun['summary']): DeployRun => ({ header, phases, summary });
+  const deployed = (total: string) =>
+    `Deployed ${app.config.name} ${tag} to ${where} (${total} total)`;
+  const runSteps = (planned: ReadonlyArray<Step>) =>
+    Effect.forEach(planned, (step) => shell.run(step), { discard: true });
 
   const ingress = options.local ? undefined : ingressFor(app);
   const directories = directoriesOf(app.config);
-  const images = `${app.config.targets.length} ${app.config.targets.length === 1 ? 'image' : 'images'}`;
+  const images = imageCount(app.config.targets.length);
 
-  // `planDeployment` puts the Compose command last, after every build and transport step; with `--tag` it is alone.
+  // `planDeployment` puts the Compose command last, after every build and transport step; with
+  // `--tag` it is alone.
   const build = steps.slice(0, -1);
   const compose = steps.slice(-1);
 
   if (!options.local) {
-    phases.push(
-      phase(
-        'checks',
-        `Checking readiness on ${app.config.host}`,
-        Effect.gen(function* () {
-          const checks = yield* runChecks(app, host);
-          if (checks.length > 0) {
-            yield* Console.log(formatChecks(checks));
-          }
-
-          const failed = blocking(checks);
-          if (failed.length > 0) {
-            const names = failed.map((check) => check.name).join(', ');
-            return yield* new DeployError({
-              message: `Not ready to deploy: ${names}. See \`compoza check\`.`,
-            });
-          }
-        }),
-      ),
-    );
+    phases.push(checksPhase(app, host));
   }
 
   if (!options.local && directories.length > 0) {
-    const script = mkdirScript(directories);
-    phases.push(
-      phase(
-        'folders',
-        'Creating host folders',
-        Effect.andThen(
-          Effect.logDebug(`host folders script:\n${script}`),
-          remote.run(host, script),
-        ),
-      ),
-    );
+    phases.push(foldersPhase(host, directories));
   }
 
   if (build.length > 0) {
-    phases.push(
-      phase(
-        'build',
-        options.local ? `Building ${images}` : `Building and shipping ${images}`,
-        Effect.forEach(build, (step) => shell.run(step), { discard: true }),
-      ),
-    );
+    const title = options.local ? `Building ${images}` : `Building and shipping ${images}`;
+    phases.push(phase('build', title, runSteps(build)));
   }
 
-  phases.push(
-    phase(
-      'compose',
-      options.local
-        ? 'Starting the stack with Compose on local Docker'
-        : 'Starting the stack with Compose',
-      Effect.forEach(compose, (step) => shell.run(step), { discard: true }),
-    ),
-  );
+  const composeTitle = options.local
+    ? 'Starting the stack with Compose on local Docker'
+    : 'Starting the stack with Compose';
+  phases.push(phase('compose', composeTitle, runSteps(compose)));
 
   if (options.local) {
     return done((total) =>
       Console.log(
-        dryRun ? 'Dry run complete.' : `Running ${app.config.name} ${tag} locally (${total} total)`,
+        dryRun ? DRY_RUN_COMPLETE : `Running ${app.config.name} ${tag} locally (${total} total)`,
       ),
     );
   }
 
   if (ingress === undefined) {
-    return done((total) =>
-      Console.log(
-        dryRun
-          ? 'Dry run complete.'
-          : `Deployed ${app.config.name} ${tag} to ${where} (${total} total)`,
-      ),
-    );
+    return done((total) => Console.log(dryRun ? DRY_RUN_COMPLETE : deployed(total)));
   }
 
-  const routing = yield* Effect.try({
-    try: () => ingress.plan(app, host),
-    catch: (cause) =>
-      new DeployError({
-        message: cause instanceof Error ? cause.message : 'Invalid ingress configuration',
-      }),
-  });
+  const routing = yield* tryIngressPlan(() => ingress.plan(app, host));
 
   let site = '';
   phases.push(
-    phase(
-      'route',
-      `Routing ${routing.description}`,
-      Effect.gen(function* () {
-        const { script, input, label } = routing.route;
-        yield* Effect.logDebug(`route script:\n${script}`);
-
-        if (input !== undefined) {
-          yield* Effect.logDebug(`route configuration:\n${input}`);
-        }
-
-        const output = yield* remote.run(host, script, input, label);
-        if (!dryRun && output.trim() !== '') {
-          yield* Console.log(output.trimEnd());
-        }
-
-        site = input ?? '';
-      }),
-    ),
+    routePhase(host, routing, (routed) => {
+      site = routed;
+    }),
   );
 
   if (dryRun) {
-    return done(() =>
-      Effect.andThen(Console.log(site.trimEnd()), Console.log('Dry run complete.')),
-    );
+    return done(() => Effect.andThen(Console.log(site.trimEnd()), Console.log(DRY_RUN_COMPLETE)));
   }
 
   const url = routing.healthUrl;
   if (url === undefined) {
-    return done((total) =>
-      Console.log(`Deployed ${app.config.name} ${tag} to ${where} (${total} total)`),
-    );
+    return done((total) => Console.log(deployed(total)));
   }
 
   let status = 0;
@@ -384,10 +347,116 @@ const planRun = Effect.fn('planRun')(function* (
 
   return done((total) =>
     Console.log(
-      `Deployed ${app.config.name} ${tag} to ${app.config.host}: ${url} (HTTP ${status}, ${total} total)`,
+      `Deployed ${app.config.name} ${tag} to ${app.config.host}: ${url} ` +
+        `(HTTP ${status}, ${total} total)`,
     ),
   );
 });
+
+/**
+ * Reads the secrets and plans the Docker commands of a deploy, logging the plan at debug level.
+ */
+const planSteps = Effect.fn('planSteps')(function* (
+  app: App,
+  host: HostConfig,
+  options: DeployOptions,
+  source: Source,
+) {
+  const steps = planDeployment({
+    app,
+    host,
+    tag: source.tag,
+    local: options.local,
+    reuseImages: options.tag._tag === 'Some',
+    context: source.context,
+    secrets: yield* readSecrets(app, options.local),
+  });
+  yield* Effect.logDebug(
+    `plan, ${steps.length} steps:\n${steps.map((step) => `$ ${printableStep(step)}`).join('\n')}`,
+  );
+
+  return steps;
+});
+
+/**
+ * `1 image` or `<count> images`, for the build phase title.
+ */
+function imageCount(count: number): string {
+  return `${count} ${count === 1 ? 'image' : 'images'}`;
+}
+
+/**
+ * The readiness phase: runs the checks, prints them, and fails naming the blocking ones, so nothing
+ * is built for a host that cannot take the deploy.
+ */
+function checksPhase(app: App, host: HostConfig): DeployPhase {
+  return phase(
+    'checks',
+    `Checking readiness on ${app.config.host}`,
+    Effect.gen(function* () {
+      const checks = yield* runChecks(app, host);
+      if (checks.length > 0) {
+        yield* Console.log(formatChecks(checks));
+      }
+
+      const failed = blocking(checks);
+      if (failed.length > 0) {
+        const names = failed.map((check) => check.name).join(', ');
+        return yield* new DeployError({
+          message: `Not ready to deploy: ${names}. See \`compoza check\`.`,
+        });
+      }
+    }),
+  );
+}
+
+/**
+ * The phase that creates the app's host folders before Compose mounts them.
+ */
+function foldersPhase(host: HostConfig, directories: ReadonlyArray<string>): DeployPhase {
+  const script = mkdirScript(directories);
+  return phase(
+    'folders',
+    'Creating host folders',
+    Effect.gen(function* () {
+      const remote = yield* Remote;
+      yield* Effect.logDebug(`host folders script:\n${script}`);
+      yield* remote.run(host, script);
+    }),
+  );
+}
+
+/**
+ * The phase that writes and validates the ingress route, printing the host's output outside a dry
+ * run and handing the site file (the route's input, or `''`) to `onRouted` for the summary.
+ */
+function routePhase(
+  host: HostConfig,
+  routing: IngressPlan,
+  onRouted: (site: string) => void,
+): DeployPhase {
+  return phase(
+    'route',
+    `Routing ${routing.description}`,
+    Effect.gen(function* () {
+      const remote = yield* Remote;
+      const dryRun = yield* DryRun;
+      const { script, input, label } = routing.route;
+      yield* Effect.logDebug(`route script:\n${script}`);
+
+      if (input !== undefined) {
+        yield* Effect.logDebug(`route configuration:\n${input}`);
+      }
+
+      const output = yield* remote.run(host, script, input, label);
+      if (!dryRun && output.trim() !== '') {
+        yield* Console.log(output.trimEnd());
+      }
+
+      onRouted(input ?? '');
+    }),
+  );
+}
 
 /**
  * Deploys an app: checks readiness, builds and ships the images, runs Compose on the host, writes

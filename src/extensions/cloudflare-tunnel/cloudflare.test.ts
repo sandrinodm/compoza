@@ -30,6 +30,28 @@ const accountId = 'a'.repeat(32);
 const tunnelId = '12345678-1234-1234-1234-123456789abc';
 const sentinel = 'SENTINEL_CLOUDFLARE_TOKEN';
 
+/**
+ * How long one host script may run against the fake API before it counts as hung.
+ */
+const SCRIPT_TIMEOUT_MILLIS = 10_000;
+
+/**
+ * Each test runs several real Bash/jq scripts, so it gets more than the default five seconds.
+ */
+const INTEGRATION_TIMEOUT_MILLIS = 15_000;
+
+/**
+ * A route template that adds origin settings to the required hostname and service.
+ */
+const ORIGIN_ROUTE_TEMPLATE = [
+  'hostname: {{domain}}',
+  'service: {{service}}',
+  'originRequest:',
+  '  connectTimeout: 20',
+  '  httpHostHeader: origin.example.com',
+  '',
+].join('\n');
+
 const unrelated = {
   hostname: 'other.example.com',
   service: 'https://other:443',
@@ -129,10 +151,7 @@ if (!url.endsWith('/configurations')) {
     spawnSync(
       '/bin/bash',
       ['-c', script.replaceAll(REMOTE_PATH, `export PATH=${shellQuote(bin)}:$PATH`)],
-      {
-        encoding: 'utf8',
-        timeout: 10000,
-      },
+      { encoding: 'utf8', timeout: SCRIPT_TIMEOUT_MILLIS },
     );
 
   use({
@@ -146,17 +165,23 @@ if (!url.endsWith('/configurations')) {
   });
 }
 
+/**
+ * Asserts that a script succeeded without printing the API token.
+ */
 function succeeded(result: ReturnType<typeof spawnSync>) {
   assert.strictEqual(result.status, 0, String(result.stderr));
   assert.notInclude(String(result.stdout) + String(result.stderr), sentinel);
 }
 
+/**
+ * Asserts that a script failed without printing the API token.
+ */
 function failed(result: ReturnType<typeof spawnSync>) {
   assert.notStrictEqual(result.status, 0);
   assert.notInclude(String(result.stdout) + String(result.stderr), sentinel);
 }
 
-describe('Cloudflare Tunnel extension', { timeout: 15_000 }, () => {
+describe('Cloudflare Tunnel extension', { timeout: INTEGRATION_TIMEOUT_MILLIS }, () => {
   it('applies templated origin settings through the real merge and rejects subsequent external edits', () =>
     fixture(({ app, host, run, state, setState }) => {
       if (host.proxy?.provider !== 'cloudflare-tunnel') {
@@ -167,12 +192,7 @@ describe('Cloudflare Tunnel extension', { timeout: 15_000 }, () => {
         ...host,
         proxy: {
           ...host.proxy,
-          templates: {
-            route: {
-              inline:
-                'hostname: {{domain}}\nservice: {{service}}\noriginRequest:\n  connectTimeout: 20\n  httpHostHeader: origin.example.com\n',
-            },
-          },
+          templates: { route: { inline: ORIGIN_ROUTE_TEMPLATE } },
         },
       };
       succeeded(run(cloudflareIngress.setup(selected).script));
@@ -194,6 +214,7 @@ describe('Cloudflare Tunnel extension', { timeout: 15_000 }, () => {
 
       assert.deepStrictEqual(state(), changed);
     }));
+
   it('decodes without a public origin address and rejects invalid identifiers and credential-bearing URLs', () =>
     fixture(({ app, host }) => {
       assert.deepStrictEqual(Schema.decodeUnknownSync(Hosts)({ fixture: host }), { fixture: host });

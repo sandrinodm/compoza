@@ -1,13 +1,15 @@
 import { Console, Effect } from 'effect';
 
 import type { Resolved } from './deploy.ts';
+import type { IngressPlan } from './extensions/ingress.ts';
 
 import { type Command, command } from './command.ts';
 import { projectNameOf } from './config/deploy.ts';
-import { dockerHost } from './config/hosts.ts';
+import { dockerHost, type HostConfig } from './config/hosts.ts';
+import { tryIngressPlan } from './deploy.ts';
 import { DeployError } from './errors.ts';
 import { ingressFor } from './extensions/ingress.ts';
-import { phase, type Phase, runPhases } from './progress.ts';
+import { DRY_RUN_COMPLETE, phase, type Phase, runPhases } from './progress.ts';
 import { Remote } from './services/Remote.ts';
 import { DryRun, Shell } from './services/Shell.ts';
 import { deployedScript } from './ssh-plan.ts';
@@ -35,6 +37,14 @@ export function projectArgs({ app, host }: Resolved): ReadonlyArray<string> {
 export type LifecycleAction = 'stop' | 'start';
 
 /**
+ * The word that opens the line printed after a lifecycle action succeeds.
+ */
+const ACTION_PAST_TENSE: Readonly<Record<LifecycleAction, string>> = {
+  stop: 'Stopped',
+  start: 'Started',
+};
+
+/**
  * The Compose command for a lifecycle action on the app's project.
  */
 export function lifecycleCommand(resolved: Resolved, action: LifecycleAction): Command {
@@ -50,12 +60,7 @@ export function lifecycleCommand(resolved: Resolved, action: LifecycleAction): C
  * find it.
  */
 export function downCommand(resolved: Resolved, volumes: boolean): Command {
-  return command('docker', [
-    ...projectArgs(resolved),
-    'down',
-    '--remove-orphans',
-    ...(volumes ? ['--volumes'] : []),
-  ]);
+  return command('docker', [...projectArgs(resolved), ...downArgs(volumes)]);
 }
 
 /**
@@ -76,17 +81,14 @@ export const lifecycle = Effect.fn('lifecycle')(function* (
       undefined,
       `<${action} deployed stack>`,
     );
-    if (output !== '') {
-      yield* Console.log(output.trimEnd());
-    }
+    yield* printOutput(output);
   } else {
     yield* shell.run(lifecycleCommand(resolved, action));
   }
 
+  const { name, host } = resolved.app.config;
   yield* Console.log(
-    (yield* DryRun)
-      ? 'Dry run complete.'
-      : `${action === 'stop' ? 'Stopped' : 'Started'} ${resolved.app.config.name} on ${resolved.app.config.host}`,
+    (yield* DryRun) ? DRY_RUN_COMPLETE : `${ACTION_PAST_TENSE[action]} ${name} on ${host}`,
   );
 });
 
@@ -103,49 +105,15 @@ export const remove = Effect.fn('remove')(function* (resolved: Resolved, volumes
   const remote = yield* Remote;
   const { app, host } = resolved;
   if (app.config.execution === 'ssh') {
-    const output = yield* remote.run(
-      host,
-      deployedScript(app, ['down', '--remove-orphans', ...(volumes ? ['--volumes'] : [])], true),
-      undefined,
-      '<delete deployed stack; keep stack files, secrets and data>',
-    );
-    if (output !== '') {
-      yield* Console.log(output.trimEnd());
-    }
-
-    yield* Console.log(
-      (yield* DryRun)
-        ? 'Dry run complete.'
-        : `Deleted ${app.config.name}; data, secrets and stack files stay`,
-    );
-
-    return;
+    return yield* removeDeployedStack(resolved, volumes);
   }
 
   const ingress = ingressFor(app);
   const phases: Array<Phase<DeployError, never>> = [];
 
   if (ingress !== undefined) {
-    const routing = yield* Effect.try({
-      try: () => ingress.plan(app, host),
-      catch: (cause) =>
-        new DeployError({
-          message: cause instanceof Error ? cause.message : 'Invalid ingress configuration',
-        }),
-    });
-    phases.push(
-      phase(
-        'unroute',
-        `Removing the route for ${routing.description}`,
-        remote
-          .run(host, routing.unroute.script, routing.unroute.input, routing.unroute.label)
-          .pipe(
-            Effect.flatMap((output) =>
-              output === '' ? Effect.void : Console.log(output.trimEnd()),
-            ),
-          ),
-      ),
-    );
+    const routing = yield* tryIngressPlan(() => ingress.plan(app, host));
+    phases.push(unroutePhase(remote, host, routing));
   }
 
   phases.push(
@@ -159,7 +127,62 @@ export const remove = Effect.fn('remove')(function* (resolved: Resolved, volumes
   yield* runPhases(phases);
   yield* Console.log(
     (yield* DryRun)
-      ? 'Dry run complete.'
+      ? DRY_RUN_COMPLETE
       : `Deleted ${app.config.name} from ${app.config.host}; host folders were left in place`,
   );
 });
+
+/**
+ * The `compose` arguments that remove the stack: `down --remove-orphans`, plus `--volumes` when the
+ * named volumes go too.
+ */
+function downArgs(volumes: boolean): ReadonlyArray<string> {
+  return ['down', '--remove-orphans', ...(volumes ? ['--volumes'] : [])];
+}
+
+/**
+ * Prints a host script's output, without its trailing newline, unless the script printed nothing.
+ */
+function printOutput(output: string): Effect.Effect<void> {
+  return output === '' ? Effect.void : Console.log(output.trimEnd());
+}
+
+/**
+ * `remove` for an app deployed with `execution: ssh`: the host's own script takes the stack down,
+ * leaving its stack files, secrets and data on the host.
+ */
+const removeDeployedStack = Effect.fn('removeDeployedStack')(function* (
+  resolved: Resolved,
+  volumes: boolean,
+) {
+  const remote = yield* Remote;
+  const output = yield* remote.run(
+    resolved.host,
+    deployedScript(resolved.app, downArgs(volumes), true),
+    undefined,
+    '<delete deployed stack; keep stack files, secrets and data>',
+  );
+  yield* printOutput(output);
+
+  yield* Console.log(
+    (yield* DryRun)
+      ? DRY_RUN_COMPLETE
+      : `Deleted ${resolved.app.config.name}; data, secrets and stack files stay`,
+  );
+});
+
+/**
+ * The phase that removes the app's ingress route, printing whatever the host reports.
+ */
+function unroutePhase(
+  remote: typeof Remote.Service,
+  host: HostConfig,
+  routing: IngressPlan,
+): Phase<DeployError, never> {
+  const { script, input, label } = routing.unroute;
+  return phase(
+    'unroute',
+    `Removing the route for ${routing.description}`,
+    remote.run(host, script, input, label).pipe(Effect.flatMap(printOutput)),
+  );
+}

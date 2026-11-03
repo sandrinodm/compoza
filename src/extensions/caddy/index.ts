@@ -10,12 +10,25 @@ import { provisionOperation } from './provision.ts';
 import { checkScript, routeScript, setupScript, siteFile, unrouteScript } from './scripts.ts';
 
 /**
+ * The host's Caddy proxy entry, from either the named `caddy` ingress or a legacy `proxy` entry;
+ * undefined when the host has none or its entry belongs to another extension.
+ */
+function caddyProxyOf(host: HostConfig): ProxyConfig | undefined {
+  const proxy = ingressConfigOf(host, 'caddy');
+  if (proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy')) {
+    return undefined;
+  }
+
+  return proxy;
+}
+
+/**
  * Requires host settings compatible with the selected Caddy extension before creating mutation
  * scripts.
  */
 function caddyProxy(host: HostConfig): ProxyConfig {
-  const proxy = ingressConfigOf(host, 'caddy');
-  if (proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy')) {
+  const proxy = caddyProxyOf(host);
+  if (proxy === undefined) {
     throw new Error('caddy requires a host proxy configured for the Caddy ingress extension');
   }
 
@@ -72,17 +85,10 @@ export const caddyIngress: IngressExtension = {
       label: `<set up ${proxy.dir}/sites, recreate Caddy>`,
     };
   },
-  domain: (app, host) => {
-    const proxy = ingressConfigOf(host, 'caddy');
-    return proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy')
-      ? undefined
-      : settings(app).domain;
-  },
+  domain: (app, host) => (caddyProxyOf(host) === undefined ? undefined : settings(app).domain),
   probe: (app, host) => {
-    const proxy = ingressConfigOf(host, 'caddy');
-    return proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy')
-      ? undefined
-      : checkScript({ proxy, name: projectNameOf(app) });
+    const proxy = caddyProxyOf(host);
+    return proxy === undefined ? undefined : checkScript({ proxy, name: projectNameOf(app) });
   },
   checks: caddyChecks,
 };

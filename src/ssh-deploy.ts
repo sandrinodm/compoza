@@ -10,10 +10,22 @@ import { command, shellQuote } from './command.ts';
 import { readSecrets, selectSecretSource } from './config/secrets.ts';
 import { DeployError } from './errors.ts';
 import { planDeployment } from './plan.ts';
-import { phase, runPhases } from './progress.ts';
+import { DRY_RUN_COMPLETE, phase, runPhases } from './progress.ts';
 import { Remote } from './services/Remote.ts';
 import { DryRun, Shell } from './services/Shell.ts';
 import { deployedScript, deploymentScript } from './ssh-plan.ts';
+
+/**
+ * What the host stack transaction does after staging the bundle, shown in its progress label.
+ */
+const STACK_UPDATE_SUMMARY = 'lock, validate, compose up --wait, route, health';
+
+/**
+ * The closing message of a dry run, which stops before anything reaches the host.
+ */
+const SSH_DRY_RUN_SUMMARY =
+  `${DRY_RUN_COMPLETE} No host writes, locks, builds or staging. ` +
+  'Candidate config cannot be fully validated remotely until staged with the host env and overlay.';
 
 /**
  * Converts pure planning failures into concise user-facing deployment errors.
@@ -56,6 +68,7 @@ export const deploySsh = Effect.fn('deploySsh')(function* (
     deploymentScript(app, host, source.tag, bundle, managed ? values : undefined),
   );
 
+  // The plan's last step is the local Compose command; over SSH the host runs Compose itself.
   const builds = planDeployment({
     app,
     host,
@@ -66,51 +79,49 @@ export const deploySsh = Effect.fn('deploySsh')(function* (
     secrets: {},
   }).slice(0, -1);
 
+  const readiness = phase(
+    'checks',
+    'Checking SSH host readiness',
+    Effect.gen(function* () {
+      const checks = yield* runChecks(app, host);
+      yield* Console.log(formatChecks(checks));
+
+      if (blocking(checks).length > 0) {
+        return yield* new DeployError({
+          message: 'Host is not ready for SSH deployment; see check details',
+        });
+      }
+    }),
+  );
+
+  const build = phase(
+    'build',
+    `Building and shipping ${app.config.targets.length} images (${host.transport.mode})`,
+    Effect.forEach(builds, (step) => shell.run(step), { discard: true }),
+  );
+
+  const stackUpdate = remote
+    .run(
+      host,
+      deployment.script,
+      deployment.input,
+      `<stage ${bundle.length} declared files; ${STACK_UPDATE_SUMMARY}>`,
+      true,
+    )
+    .pipe(
+      Effect.flatMap((output) => (output === '' ? Effect.void : Console.log(output.trimEnd()))),
+    );
+
   yield* Console.log(`Deploying ${app.config.name} ${source.tag} to ${app.config.host} over SSH`);
   yield* runPhases([
-    phase(
-      'checks',
-      'Checking SSH host readiness',
-      Effect.gen(function* () {
-        const checks = yield* runChecks(app, host);
-        yield* Console.log(formatChecks(checks));
-
-        if (blocking(checks).length > 0) {
-          return yield* new DeployError({
-            message: 'Host is not ready for SSH deployment; see check details',
-          });
-        }
-      }),
-    ),
-    ...(builds.length === 0
-      ? []
-      : [
-          phase(
-            'build',
-            `Building and shipping ${app.config.targets.length} images (${host.transport.mode})`,
-            Effect.forEach(builds, (step) => shell.run(step), { discard: true }),
-          ),
-        ]),
-    phase(
-      'compose',
-      'Staging, validating and updating the host stack',
-      remote
-        .run(
-          host,
-          deployment.script,
-          deployment.input,
-          `<stage ${bundle.length} declared files; lock, validate, compose up --wait, route, health>`,
-          true,
-        )
-        .pipe(
-          Effect.flatMap((output) => (output === '' ? Effect.void : Console.log(output.trimEnd()))),
-        ),
-    ),
+    readiness,
+    ...(builds.length === 0 ? [] : [build]),
+    phase('compose', 'Staging, validating and updating the host stack', stackUpdate),
   ]);
 
   yield* Console.log(
     (yield* DryRun)
-      ? 'Dry run complete. No host writes, locks, builds or staging. Candidate config cannot be fully validated remotely until staged with the host env and overlay.'
+      ? SSH_DRY_RUN_SUMMARY
       : `Deployed ${app.config.name} ${source.tag} to ${app.config.host}; stack folder updated.`,
   );
 });

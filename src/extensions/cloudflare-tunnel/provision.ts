@@ -6,7 +6,8 @@ import type { CloudflareProxy } from './config.ts';
 
 import { REMOTE_PATH, shellQuote } from '../../command.ts';
 import { renderTemplate } from '../caddy/templates.ts';
-import { defaultComposeTemplate } from './templates.ts';
+import { COMPOSE_FILE_NAME_PATTERN } from './config.ts';
+import { defaultComposeTemplate, MAX_RENDERED_TEMPLATE_BYTES } from './templates.ts';
 
 /**
  * Reviewed multiarchitecture connector image; release updates deliberately replace this digest.
@@ -15,12 +16,127 @@ export const DEFAULT_CLOUDFLARED_IMAGE =
   'cloudflare/cloudflared:2026.10.0@sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07';
 
 /**
+ * The numeric nonroot UID:GID the connector runs as unless `provision.user` overrides it.
+ */
+const DEFAULT_CONNECTOR_USER = '65532:65532';
+
+/**
+ * How long the connector drains in-flight requests on shutdown unless
+ * `provision.gracePeriodSeconds` overrides it.
+ */
+const DEFAULT_GRACE_PERIOD_SECONDS = 30;
+
+/**
+ * The extra time Docker gives the connector to exit after its drain deadline, added to the grace
+ * period to form `stop_grace_period`.
+ */
+const SHUTDOWN_HEADROOM_SECONDS = 10;
+
+/**
+ * How long setup waits for the connector to report connections unless
+ * `provision.waitTimeoutSeconds` overrides it.
+ */
+const DEFAULT_WAIT_TIMEOUT_SECONDS = 120;
+
+/**
+ * The private loopback listener for connector metrics, which the readiness check queries.
+ */
+const METRICS_ADDRESS = '127.0.0.1:20241';
+
+/**
+ * The only top-level Compose settings a custom connector template may use.
+ */
+const ALLOWED_TOP_LEVEL_SETTINGS = new Set(['name', 'services', 'networks']);
+
+/**
+ * The only connector service settings a custom template may use. Leaving out ports, volumes, builds
+ * and namespace or privilege overrides is what keeps the connector isolated.
+ */
+const ALLOWED_CONNECTOR_SETTINGS = new Set([
+  'image',
+  'container_name',
+  'user',
+  'restart',
+  'entrypoint',
+  'command',
+  'read_only',
+  'cap_drop',
+  'security_opt',
+  'stop_grace_period',
+  'mem_limit',
+  'pids_limit',
+  'cpus',
+  'logging',
+  'env_file',
+  'networks',
+  'healthcheck',
+]);
+
+/**
+ * The cloudflared options that would supply credentials or configuration outside the selected env
+ * file.
+ */
+const CREDENTIAL_OPTIONS = [
+  '--token',
+  '--token-file',
+  '--credentials-file',
+  '--cred-file',
+  '--credentials-contents',
+  '--config',
+];
+
+/**
+ * The Docker log drivers that rotate their files.
+ */
+const ROTATING_LOG_DRIVERS = new Set(['local', 'json-file']);
+
+/**
+ * The only networks the connector stack may define.
+ */
+const ALLOWED_NETWORKS = new Set(['edge', 'egress']);
+
+/**
+ * The only settings the shared edge network may use.
+ */
+const ALLOWED_EDGE_NETWORK_SETTINGS = new Set(['name', 'external']);
+
+/**
+ * A positive Compose byte size such as `128m` or `10mb`.
+ */
+const BYTE_SIZE_PATTERN = /^[1-9][0-9]*(?:[kmgt]b?)?$/i;
+
+/**
+ * A positive decimal integer without a leading zero.
+ */
+const POSITIVE_INTEGER_PATTERN = /^[1-9][0-9]*$/;
+
+/**
+ * Characters that would let a command argument expand or span lines.
+ */
+const NON_LITERAL_ARGUMENT_PATTERN = /\$|\r|\n/;
+
+/**
+ * Characters a host path must not contain, because the bootstrap script expands or splits on them.
+ */
+const UNSAFE_PATH_PATTERN = /[$\r\n\0]/;
+
+/**
  * Rejects custom Compose output with the runtime requirement it failed to preserve.
  */
 function requireCondition(condition: unknown, requirement: string): asserts condition {
   if (!condition) {
     throw new Error(`Cloudflare Compose template must ${requirement}`);
   }
+}
+
+/**
+ * Distinguishes YAML mappings from scalars, null and sequences.
+ *
+ * It returns a plain boolean rather than a type predicate so the parsed model stays untyped and its
+ * fields can be read without further narrowing.
+ */
+function isMapping(value: unknown): boolean {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 /**
@@ -33,67 +149,61 @@ function validateCompose(
   service: string,
   envFile: string,
 ): void {
-  if (Buffer.byteLength(compose) > 256 * 1024) {
+  const model = parseCompose(compose);
+  const connector = connectorService(model, service);
+  checkConnectorIdentity(model, connector, proxy);
+  checkConnectorIsolation(connector, envFile);
+
+  const gracePeriodSeconds = proxy.provision?.gracePeriodSeconds ?? DEFAULT_GRACE_PERIOD_SECONDS;
+  checkConnectorCommand(connector.command, gracePeriodSeconds);
+  checkConnectorRuntime(connector, gracePeriodSeconds);
+  checkNetworks(model, connector, proxy);
+}
+
+/**
+ * Parses rendered Compose text, rejecting oversized output, duplicate keys and aliases.
+ */
+function parseCompose(compose: string): any {
+  if (Buffer.byteLength(compose) > MAX_RENDERED_TEMPLATE_BYTES) {
     throw new Error('Cloudflare Compose template is too large');
   }
 
-  let model;
-
   try {
-    model = YAML.parse(compose, { uniqueKeys: true, maxAliasCount: 0 });
+    return YAML.parse(compose, { uniqueKeys: true, maxAliasCount: 0 });
   } catch {
     throw new Error('Cloudflare Compose template must render valid YAML');
   }
+}
 
-  // Validate the shape before checking individual connector settings.
-  requireCondition(
-    model && typeof model === 'object' && !Array.isArray(model),
-    'render a Compose mapping',
-  );
-  requireCondition(
-    model.services && typeof model.services === 'object' && !Array.isArray(model.services),
-    'define a services mapping',
-  );
+/**
+ * Checks the model's shape and returns its single connector service, rejecting settings outside the
+ * allowlists.
+ */
+function connectorService(model: any, service: string): any {
+  requireCondition(isMapping(model), 'render a Compose mapping');
+  requireCondition(isMapping(model.services), 'define a services mapping');
   requireCondition(
     Object.keys(model.services).length === 1,
     'define exactly one connector service',
   );
 
   const connector = model.services[service];
+  requireCondition(isMapping(connector), `define the connector service "${service}"`);
   requireCondition(
-    connector && typeof connector === 'object' && !Array.isArray(connector),
-    `define the connector service "${service}"`,
-  );
-  requireCondition(
-    Object.keys(model).every((key) => ['name', 'services', 'networks'].includes(key)),
+    Object.keys(model).every((key) => ALLOWED_TOP_LEVEL_SETTINGS.has(key)),
     'use only the supported top-level settings',
   );
   requireCondition(
-    Object.keys(connector).every((key) =>
-      [
-        'image',
-        'container_name',
-        'user',
-        'restart',
-        'entrypoint',
-        'command',
-        'read_only',
-        'cap_drop',
-        'security_opt',
-        'stop_grace_period',
-        'mem_limit',
-        'pids_limit',
-        'cpus',
-        'logging',
-        'env_file',
-        'networks',
-        'healthcheck',
-      ].includes(key),
-    ),
+    Object.keys(connector).every((key) => ALLOWED_CONNECTOR_SETTINGS.has(key)),
     'use only the supported connector settings',
   );
+  return connector;
+}
 
-  // Keep the stack identity fixed while allowing supported runtime tuning.
+/**
+ * Keeps the stack identity fixed while allowing supported runtime tuning.
+ */
+function checkConnectorIdentity(model: any, connector: any, proxy: CloudflareProxy): void {
   requireCondition(model.name === `${proxy.container}-ingress`, 'preserve the stack project name');
   requireCondition(
     connector.container_name === proxy.container,
@@ -104,12 +214,17 @@ function validateCompose(
     'use the configured connector image',
   );
   requireCondition(
-    connector.user === (proxy.provision?.user ?? '65532:65532'),
+    connector.user === (proxy.provision?.user ?? DEFAULT_CONNECTOR_USER),
     'use the configured connector user',
   );
   requireCondition(connector.restart === 'unless-stopped', 'use the unless-stopped restart policy');
+}
 
-  // The allowed settings above exclude ports, volumes, builds and namespace or privilege overrides.
+/**
+ * Checks the connector's privilege restrictions and credential source.
+ */
+function checkConnectorIsolation(connector: any, envFile: string): void {
+  // The allowed settings exclude ports, volumes, builds and namespace or privilege overrides.
   requireCondition(connector.read_only === true, 'keep the connector filesystem read-only');
   requireCondition(connector.cap_drop?.includes('ALL'), 'drop all connector capabilities');
   requireCondition(
@@ -117,7 +232,8 @@ function validateCompose(
     'prevent privilege escalation',
   );
 
-  // Credentials come only from the selected raw env file, never command arguments or environment overrides.
+  // Credentials come only from the selected raw env file, never command arguments or environment
+  // overrides.
   requireCondition(
     JSON.stringify(connector.env_file) ===
       JSON.stringify([{ path: envFile, required: true, format: 'raw' }]),
@@ -127,12 +243,18 @@ function validateCompose(
     JSON.stringify(connector.entrypoint) === '["cloudflared"]',
     'use the cloudflared entrypoint',
   );
+}
 
-  const command = connector.command;
+/**
+ * Checks that the connector command is a literal `tunnel … run` argument list without credential
+ * options, with private metrics and the configured drain deadline.
+ */
+function checkConnectorCommand(command: unknown, gracePeriodSeconds: number): void {
   requireCondition(Array.isArray(command), 'define the connector command as an argument list');
   requireCondition(
     command.every(
-      (argument: unknown) => typeof argument === 'string' && !/\$|\r|\n/.test(argument),
+      (argument: unknown) =>
+        typeof argument === 'string' && !NON_LITERAL_ARGUMENT_PATTERN.test(argument),
     ),
     'use literal single-line command arguments',
   );
@@ -141,17 +263,12 @@ function validateCompose(
     'run the cloudflared tunnel command',
   );
 
-  for (const flag of [
-    '--token',
-    '--token-file',
-    '--credentials-file',
-    '--cred-file',
-    '--credentials-contents',
-    '--config',
-  ]) {
+  for (const option of CREDENTIAL_OPTIONS) {
     requireCondition(
-      command.every((argument: string) => argument !== flag && !argument.startsWith(flag + '=')),
-      `omit the ${flag} command option`,
+      command.every(
+        (argument: string) => argument !== option && !argument.startsWith(option + '='),
+      ),
+      `omit the ${option} command option`,
     );
   }
 
@@ -167,11 +284,9 @@ function validateCompose(
     'use a separate metrics address argument',
   );
   requireCondition(
-    command[command.indexOf('--metrics') + 1] === '127.0.0.1:20241',
+    command[command.indexOf('--metrics') + 1] === METRICS_ADDRESS,
     'bind metrics to the private listener',
   );
-
-  const gracePeriodSeconds = proxy.provision?.gracePeriodSeconds ?? 30;
   requireCondition(
     command.filter((argument) => argument === '--grace-period').length === 1,
     'set the drain deadline exactly once',
@@ -180,28 +295,32 @@ function validateCompose(
     command[command.indexOf('--grace-period') + 1] === `${gracePeriodSeconds}s`,
     'preserve the configured drain deadline',
   );
+}
 
-  // Readiness, bounded resources and shutdown budgets remain mandatory.
+/**
+ * Keeps readiness, bounded resources and shutdown budgets mandatory.
+ */
+function checkConnectorRuntime(connector: any, gracePeriodSeconds: number): void {
+  const readinessTest = ['CMD', 'cloudflared', 'tunnel', '--metrics', METRICS_ADDRESS, 'ready'];
   requireCondition(
-    JSON.stringify(connector.healthcheck?.test) ===
-      '["CMD","cloudflared","tunnel","--metrics","127.0.0.1:20241","ready"]',
+    JSON.stringify(connector.healthcheck?.test) === JSON.stringify(readinessTest),
     'use the native connector readiness check',
   );
   requireCondition(!connector.healthcheck?.disable, 'keep the readiness check enabled');
   requireCondition(
-    ['local', 'json-file'].includes(connector.logging?.driver),
+    ROTATING_LOG_DRIVERS.has(connector.logging?.driver),
     'use a supported rotating log driver',
   );
   requireCondition(
-    /^[1-9][0-9]*(?:[kmgt]b?)?$/i.test(String(connector.logging?.options?.['max-size'])),
+    BYTE_SIZE_PATTERN.test(String(connector.logging?.options?.['max-size'])),
     'set a positive log file size limit',
   );
   requireCondition(
-    /^[1-9][0-9]*$/.test(String(connector.logging?.options?.['max-file'])),
+    POSITIVE_INTEGER_PATTERN.test(String(connector.logging?.options?.['max-file'])),
     'set a positive log file retention count',
   );
   requireCondition(
-    /^[1-9][0-9]*(?:[kmgt]b?)?$/i.test(String(connector.mem_limit)),
+    BYTE_SIZE_PATTERN.test(String(connector.mem_limit)),
     'set a positive memory limit',
   );
   requireCondition(
@@ -209,17 +328,18 @@ function validateCompose(
     'set a positive PID limit',
   );
   requireCondition(
-    connector.stop_grace_period === `${gracePeriodSeconds + 10}s`,
+    connector.stop_grace_period === `${gracePeriodSeconds + SHUTDOWN_HEADROOM_SECONDS}s`,
     'preserve shutdown headroom beyond the drain deadline',
   );
+}
 
-  // Origins share one external network; only the connector joins the separate egress network.
+/**
+ * Origins share one external network; only the connector joins the separate egress network.
+ */
+function checkNetworks(model: any, connector: any, proxy: CloudflareProxy): void {
+  requireCondition(isMapping(model.networks), 'define a networks mapping');
   requireCondition(
-    model.networks && typeof model.networks === 'object' && !Array.isArray(model.networks),
-    'define a networks mapping',
-  );
-  requireCondition(
-    Object.keys(model.networks).every((key) => ['edge', 'egress'].includes(key)),
+    Object.keys(model.networks).every((key) => ALLOWED_NETWORKS.has(key)),
     'define only the edge and egress networks',
   );
   requireCondition(
@@ -228,12 +348,9 @@ function validateCompose(
   );
 
   const edge = model.networks.edge;
+  requireCondition(isMapping(edge), 'define the shared edge network');
   requireCondition(
-    edge && typeof edge === 'object' && !Array.isArray(edge),
-    'define the shared edge network',
-  );
-  requireCondition(
-    Object.keys(edge).every((key) => ['name', 'external'].includes(key)),
+    Object.keys(edge).every((key) => ALLOWED_EDGE_NETWORK_SETTINGS.has(key)),
     'use only the supported edge network settings',
   );
   requireCondition(edge.name === proxy.network, 'preserve the shared edge network name');
@@ -241,6 +358,15 @@ function validateCompose(
   requireCondition(
     JSON.stringify(connector.networks) === '["edge","egress"]',
     'join only the edge and egress networks',
+  );
+}
+
+/**
+ * JSON-quotes every template value, so substituted scalars can't change the YAML structure.
+ */
+function jsonQuoted(values: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [key, JSON.stringify(value)]),
   );
 }
 
@@ -262,8 +388,8 @@ export function provisionOperation(proxy: CloudflareProxy): IngressOperation {
   const composeFile = proxy.composeFile ?? 'compose.yaml';
   const envFile = config.envFile ?? `${proxy.dir}/.credentials.env`;
   if (
-    !/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.ya?ml$/.test(composeFile) ||
-    [proxy.dir, envFile].some((path) => /[$\r\n\0]/.test(path)) ||
+    !COMPOSE_FILE_NAME_PATTERN.test(composeFile) ||
+    [proxy.dir, envFile].some((path) => UNSAFE_PATH_PATTERN.test(path)) ||
     envFile === `${proxy.dir}/${composeFile}`
   ) {
     throw new Error('Cloudflare provisioning requires safe separate Compose and credential paths');
@@ -271,19 +397,18 @@ export function provisionOperation(proxy: CloudflareProxy): IngressOperation {
 
   const service = proxy.service ?? 'connector';
   const project = `${proxy.container}-ingress`;
-  const values = Object.fromEntries(
-    Object.entries({
-      service,
-      project,
-      container: proxy.container,
-      network: proxy.network,
-      image: config.image ?? DEFAULT_CLOUDFLARED_IMAGE,
-      envFile,
-      user: config.user ?? '65532:65532',
-      gracePeriod: `${config.gracePeriodSeconds ?? 30}s`,
-      stopGracePeriod: `${(config.gracePeriodSeconds ?? 30) + 10}s`,
-    }).map(([key, value]) => [key, JSON.stringify(value)]),
-  );
+  const gracePeriodSeconds = config.gracePeriodSeconds ?? DEFAULT_GRACE_PERIOD_SECONDS;
+  const values = jsonQuoted({
+    service,
+    project,
+    container: proxy.container,
+    network: proxy.network,
+    image: config.image ?? DEFAULT_CLOUDFLARED_IMAGE,
+    envFile,
+    user: config.user ?? DEFAULT_CONNECTOR_USER,
+    gracePeriod: `${gracePeriodSeconds}s`,
+    stopGracePeriod: `${gracePeriodSeconds + SHUTDOWN_HEADROOM_SECONDS}s`,
+  });
 
   const compose = renderTemplate(
     proxy.templates?.compose,
@@ -295,7 +420,9 @@ export function provisionOperation(proxy: CloudflareProxy): IngressOperation {
   validateCompose(compose, proxy, service, envFile);
 
   return {
-    label: `<provision Cloudflare connector ${proxy.container} in ${proxy.dir}, validate and wait for connections>`,
+    label:
+      `<provision Cloudflare connector ${proxy.container} in ${proxy.dir}, ` +
+      'validate and wait for connections>',
     input: JSON.stringify({ compose }),
     ...(config.secrets === undefined
       ? {}
@@ -303,21 +430,23 @@ export function provisionOperation(proxy: CloudflareProxy): IngressOperation {
           secrets: config.secrets,
           secretVariables: { TUNNEL_TOKEN: config.tokenVariable ?? 'CLOUDFLARE_TUNNEL_TOKEN' },
         }),
-    script: `set +x
-set -euo pipefail
-${REMOTE_PATH}
-proxy_dir=${shellQuote(proxy.dir)}
-compose_file=${shellQuote(composeFile)}
-container=${shellQuote(proxy.container)}
-service=${shellQuote(service)}
-project=${shellQuote(project)}
-network=${shellQuote(proxy.network)}
-env_file=${shellQuote(envFile)}
-managed_credentials=${config.secrets === undefined ? 'no' : 'yes'}
-wait_timeout=${config.waitTimeoutSeconds ?? 120}
-cf_account=${shellQuote(proxy.accountId)}
-cf_tunnel=${shellQuote(proxy.tunnelId)}
-${readFileSync(new URL('./provision.sh', import.meta.url), 'utf8')}
-`,
+    script: [
+      'set +x',
+      'set -euo pipefail',
+      REMOTE_PATH,
+      `proxy_dir=${shellQuote(proxy.dir)}`,
+      `compose_file=${shellQuote(composeFile)}`,
+      `container=${shellQuote(proxy.container)}`,
+      `service=${shellQuote(service)}`,
+      `project=${shellQuote(project)}`,
+      `network=${shellQuote(proxy.network)}`,
+      `env_file=${shellQuote(envFile)}`,
+      `managed_credentials=${config.secrets === undefined ? 'no' : 'yes'}`,
+      `wait_timeout=${config.waitTimeoutSeconds ?? DEFAULT_WAIT_TIMEOUT_SECONDS}`,
+      `cf_account=${shellQuote(proxy.accountId)}`,
+      `cf_tunnel=${shellQuote(proxy.tunnelId)}`,
+      readFileSync(new URL('./provision.sh', import.meta.url), 'utf8'),
+      '',
+    ].join('\n'),
   };
 }

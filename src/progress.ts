@@ -3,6 +3,17 @@ import type { LogLevel } from 'effect/LogLevel';
 import { Cause, Clock, Console, Effect, Exit, Formatter, Logger } from 'effect';
 
 /**
+ * Durations below this many tenths of a second (one minute) print with tenths; longer ones print in
+ * whole minutes and seconds.
+ */
+const TENTHS_PER_MINUTE = 600;
+
+/**
+ * The last line of every dry run, printed in place of the summary of what was done.
+ */
+export const DRY_RUN_COMPLETE = 'Dry run complete.';
+
+/**
  * One phase of a run: a key that names it in logs, the title printed for it, and the work, which
  * yields the word printed on its finish line.
  *
@@ -39,7 +50,7 @@ export interface Phase<E, R> {
  */
 export function formatDuration(millis: number): string {
   const tenths = Math.round(Math.max(0, millis) / 100);
-  if (tenths < 600) {
+  if (tenths < TENTHS_PER_MINUTE) {
     return `${(tenths / 10).toFixed(1)} s`;
   }
 
@@ -94,12 +105,7 @@ export function runPhases<E, R>(phases: ReadonlyArray<Phase<E, R>>): Effect.Effe
       yield* Effect.onExit(planned.run, (exit) =>
         Effect.gen(function* () {
           const duration = formatDuration((yield* Clock.currentTimeMillis) - start);
-          const result = Exit.isSuccess(exit)
-            ? exit.value
-            : Cause.hasInterruptsOnly(exit.cause)
-              ? 'interrupted'
-              : 'failed';
-          yield* Console.log(`${line} ${result} (${duration})`);
+          yield* Console.log(`${line} ${finishWord(exit)} (${duration})`);
         }),
       );
     }
@@ -109,23 +115,21 @@ export function runPhases<E, R>(phases: ReadonlyArray<Phase<E, R>>): Effect.Effe
 }
 
 /**
- * The prefix of a log line for each level, lower case so it reads as a note beside the progress
- * lines.
+ * The word on a phase's finish line: the phase's own outcome when it succeeded, `interrupted` when
+ * it was only interrupted, and `failed` for any other failure.
  */
-const LEVEL_LABELS: Readonly<Record<LogLevel, string>> = {
-  All: 'all',
-  Fatal: 'fatal',
-  Error: 'error',
-  Warn: 'warn',
-  Info: 'info',
-  Debug: 'debug',
-  Trace: 'trace',
-  None: 'none',
-};
+function finishWord(exit: Exit.Exit<string, unknown>): string {
+  if (Exit.isSuccess(exit)) {
+    return exit.value;
+  }
+
+  return Cause.hasInterruptsOnly(exit.cause) ? 'interrupted' : 'failed';
+}
 
 /**
- * Formats one log event as `[level] message`, continuation lines indented by two spaces, with the
- * cause's pretty report appended when there is one.
+ * Formats one log event as `[level] message`, the level in lower case so it reads as a note beside
+ * the progress lines, continuation lines indented by two spaces, and the cause's pretty report
+ * appended when there is one.
  *
  * Multi-line messages are the norm here (scripts, site files), so continuation lines are indented
  * to stay visibly part of their entry. Strings print as is and other values through
@@ -145,7 +149,7 @@ export function formatLogLine(
     parts.push(Cause.pretty(cause));
   }
 
-  return `[${LEVEL_LABELS[logLevel]}] ${parts.join(' ')}`.replaceAll('\n', '\n  ');
+  return `[${logLevel.toLowerCase()}] ${parts.join(' ')}`.replaceAll('\n', '\n  ');
 }
 
 /**

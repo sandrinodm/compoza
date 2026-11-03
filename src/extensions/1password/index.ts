@@ -87,6 +87,18 @@ async function fetchEnvironment(
 }
 
 /**
+ * Whether an SDK entry has the documented name, value and masking types. The SDK response is not
+ * trusted to match its declarations, so entries are checked at runtime.
+ */
+function isWellFormed(variable: EnvironmentVariable | undefined): boolean {
+  return (
+    typeof variable?.name === 'string' &&
+    typeof variable.value === 'string' &&
+    typeof variable.masked === 'boolean'
+  );
+}
+
+/**
  * The replaceable SDK boundary used by isolated tests without a real account or vault.
  *
  * Production uses the official SDK lazily; providers cannot run shell commands or expose exception
@@ -121,7 +133,8 @@ export const onePasswordProvider: CredentialProvider = {
       catch: () =>
         new DeployError({
           message:
-            '1Password Environment access failed; verify optional @1password/sdk installation, operator authentication and Environment access privately',
+            '1Password Environment access failed; verify optional @1password/sdk installation, ' +
+            'operator authentication and Environment access privately',
         }),
     });
     if (!Array.isArray(variables)) {
@@ -135,12 +148,7 @@ export const onePasswordProvider: CredentialProvider = {
         continue;
       }
 
-      if (
-        typeof variable?.name !== 'string' ||
-        typeof variable.value !== 'string' ||
-        typeof variable.masked !== 'boolean' ||
-        Object.hasOwn(values, variable.name)
-      ) {
+      if (!isWellFormed(variable) || Object.hasOwn(values, variable.name)) {
         return yield* new DeployError({
           message: `Invalid or duplicate 1Password variable at entry ${index + 1}`,
         });

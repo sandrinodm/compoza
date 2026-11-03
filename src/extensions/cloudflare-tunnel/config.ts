@@ -13,6 +13,24 @@ import { CaddyTemplate } from '../caddy/config.ts';
 import { EnvFileSelection } from '../env-file/config.ts';
 
 /**
+ * A Compose filename inside the connector directory: a plain name ending in `.yaml` or `.yml`, with
+ * no path separators.
+ */
+export const COMPOSE_FILE_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*\.ya?ml$/;
+
+/**
+ * The longest drain deadline or connection wait accepted for a provisioned connector, in seconds.
+ */
+const MAX_CONNECTOR_WAIT_SECONDS = 60 * 60;
+
+/**
+ * The error shown when host settings fail `validCloudflareHost`.
+ */
+const HOST_REQUIREMENTS_MESSAGE =
+  'Managed Cloudflare routing requires apiTokenFile/stateDir; ' +
+  'provisioning/manual routing requires dir, container and network';
+
+/**
  * Host validation is shared by named and legacy inputs; spreading fields alone would drop Struct
  * refinements.
  */
@@ -79,14 +97,14 @@ export const CloudflareProvision = Schema.Struct({
    * In-flight request drain deadline; Docker allows ten additional seconds for exit.
    */
   gracePeriodSeconds: Schema.optionalKey(
-    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3600 })),
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_CONNECTOR_WAIT_SECONDS })),
   ),
 
   /**
    * The bounded Compose connection-readiness wait, defaulting to 120 seconds.
    */
   waitTimeoutSeconds: Schema.optionalKey(
-    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3600 })),
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: MAX_CONNECTOR_WAIT_SECONDS })),
   ),
 }).check(
   Schema.makeFilter((p) => (p.envFile === undefined) !== (p.secrets === undefined), {
@@ -185,9 +203,7 @@ export const CloudflareHostSettings = Schema.Struct({
   /**
    * Compose filename within dir; defaults to compose.yaml.
    */
-  composeFile: Schema.optionalKey(
-    Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._-]*\.ya?ml$/)),
-  ),
+  composeFile: Schema.optionalKey(Schema.String.check(Schema.isPattern(COMPOSE_FILE_NAME_PATTERN))),
 
   /**
    * Opt-in host connector provisioning; absent settings keep existing connectors operator-managed.
@@ -216,12 +232,7 @@ export const CloudflareHostSettings = Schema.Struct({
    * lock.
    */
   stateDir: Schema.optionalKey(AbsolutePath),
-}).check(
-  Schema.makeFilter(validCloudflareHost, {
-    message:
-      'Managed Cloudflare routing requires apiTokenFile/stateDir; provisioning/manual routing requires dir, container and network',
-  }),
-);
+}).check(Schema.makeFilter(validCloudflareHost, { message: HOST_REQUIREMENTS_MESSAGE }));
 
 /**
  * The legacy flat app configuration and normalized runtime representation.
@@ -243,12 +254,7 @@ export const CloudflareProxy = Schema.Struct({
    */
   provider: Schema.Literal('cloudflare-tunnel'),
   ...CloudflareHostSettings.fields,
-}).check(
-  Schema.makeFilter(validCloudflareHost, {
-    message:
-      'Managed Cloudflare routing requires apiTokenFile/stateDir; provisioning/manual routing requires dir, container and network',
-  }),
-);
+}).check(Schema.makeFilter(validCloudflareHost, { message: HOST_REQUIREMENTS_MESSAGE }));
 
 /**
  * The named Cloudflare Tunnel app configuration.

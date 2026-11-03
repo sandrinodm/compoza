@@ -22,9 +22,16 @@ import type { HostConfig } from './config/hosts.ts';
 import { REMOTE_PATH, shellQuote } from './command.ts';
 import { deployedScript, deploymentScript } from './ssh-plan.ts';
 
+/**
+ * Each test runs the real Compose parser several times; the headroom keeps a loaded machine from
+ * turning a slow but passing transaction into a timeout.
+ */
+const FIXTURE_TIMEOUT_MS = 15_000;
+
 const docker = spawnSync('sh', ['-c', 'command -v docker'], { encoding: 'utf8' }).stdout.trim();
 const composeAvailable =
   docker !== '' && spawnSync(docker, ['compose', 'version'], { stdio: 'ignore' }).status === 0;
+
 const host: HostConfig = {
   ssh: 'fixture',
   platform: 'linux/arm64',
@@ -75,7 +82,7 @@ exec ${shellQuote(docker)} "$@"
     spawnSync('/bin/bash', ['-c', script.replaceAll(REMOTE_PATH, path)], {
       input,
       encoding: 'utf8',
-      timeout: 15_000,
+      timeout: FIXTURE_TIMEOUT_MS,
       env: { ...process.env, WEB_IMAGE: 'wrong-session-image', TOKEN: 'wrong-session-token' },
     });
 
@@ -84,7 +91,7 @@ exec ${shellQuote(docker)} "$@"
 
 describe.skipIf(!composeAvailable)(
   'flat stack with the actual Compose parser',
-  { timeout: 15_000 },
+  { timeout: FIXTURE_TIMEOUT_MS },
   () => {
     it('normalizes absolute Compose sources in order without retaining workstation paths or build definitions', () =>
       composeFixture(({ app, root, run }) => {
@@ -143,13 +150,12 @@ describe.skipIf(!composeAvailable)(
           const result = spawnSync(
             docker,
             ['compose', '--file', join(root, 'compose.yaml'), 'config', '--hash', 'web'],
-            {
-              encoding: 'utf8',
-            },
+            { encoding: 'utf8' },
           );
           assert.strictEqual(result.status, 0, result.stderr);
           return result.stdout;
         };
+
         deployAsset('old');
         const beforeHash = hash();
         const beforeInode = statSync(join(root, 'settings.txt')).ino;

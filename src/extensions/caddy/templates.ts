@@ -30,6 +30,18 @@ export const defaultConfigTemplate = readFileSync(
 const MAX_TEMPLATE_BYTES = 256 * 1024;
 
 /**
+ * Matches one `{{...}}` placeholder; the capture is everything between the braces, newlines
+ * included, so a malformed token is reported rather than copied as literal text.
+ */
+const PLACEHOLDER_PATTERN = /\{\{([\s\S]*?)\}\}/g;
+
+/**
+ * Splits a placeholder body into its optional section sigil (`#` opens, `^` opens inverted, `/`
+ * closes) and a variable name, allowing surrounding whitespace.
+ */
+const TOKEN_PATTERN = /^\s*([#^/]?)([a-zA-Z][a-zA-Z0-9]*)\s*$/;
+
+/**
  * Renders literal text, variables, truthy sections and inverted sections without evaluating code or
  * environment.
  *
@@ -44,7 +56,7 @@ export function renderTemplate(
   label: string,
 ): string {
   if (typeof source === 'string') {
-    throw new Error(`${label}: template file must be loaded before planning`);
+    throw templateError(label, 'template file must be loaded before planning');
   }
 
   const template = (source?.inline ?? fallback).replaceAll('\r\n', '\n');
@@ -53,32 +65,33 @@ export function renderTemplate(
   let output = '';
   const active = () => stack.every((section) => section.active);
 
-  for (const match of template.matchAll(/\{\{([\s\S]*?)\}\}/g)) {
+  for (const match of template.matchAll(PLACEHOLDER_PATTERN)) {
     const before = template.slice(cursor, match.index);
     if (before.includes('{{')) {
-      throw new Error(`${label}: malformed template placeholder`);
+      throw templateError(label, 'malformed template placeholder');
     }
 
     if (active()) {
       output += before;
     }
 
-    const token = /^\s*([#^/]?)([a-zA-Z][a-zA-Z0-9]*)\s*$/.exec(match[1]!);
+    const token = TOKEN_PATTERN.exec(match[1]!);
     if (token === null) {
-      throw new Error(`${label}: invalid template placeholder`);
+      throw templateError(label, 'invalid template placeholder');
     }
 
     const kind = token[1]!;
     const key = token[2]!;
     if (!Object.hasOwn(values, key)) {
-      throw new Error(`${label}: unknown template variable ${key}`);
+      throw templateError(label, `unknown template variable ${key}`);
     }
 
     if (kind === '/') {
       if (stack.pop()?.key !== key) {
-        throw new Error(`${label}: mismatched template section ${key}`);
+        throw templateError(label, `mismatched template section ${key}`);
       }
     } else if (kind === '#' || kind === '^') {
+      // A section renders when its value is set; an inverted section when it is empty.
       stack.push({ key, active: kind === '#' ? values[key] !== '' : values[key] === '' });
     } else if (active()) {
       output += values[key];
@@ -89,11 +102,11 @@ export function renderTemplate(
 
   const tail = template.slice(cursor);
   if (tail.includes('{{')) {
-    throw new Error(`${label}: unclosed template placeholder`);
+    throw templateError(label, 'unclosed template placeholder');
   }
 
   if (stack.length > 0) {
-    throw new Error(`${label}: unclosed template section`);
+    throw templateError(label, 'unclosed template section');
   }
 
   if (active()) {
@@ -101,6 +114,14 @@ export function renderTemplate(
   }
 
   return output;
+}
+
+/**
+ * Builds a template syntax error prefixed with the template's label. A plain `Error` because
+ * `renderTemplate` is synchronous; `loadCheckedTemplate` turns it into a configuration error.
+ */
+function templateError(label: string, problem: string): Error {
+  return new Error(`${label}: ${problem}`);
 }
 
 /**
@@ -124,7 +145,9 @@ export const loadTemplate = Effect.fn('loadTemplate')(function* (
   );
   const fail = () =>
     new DeployError({
-      message: `Cannot read ${label} ${resolved}; use a readable text file no larger than 256 KiB`,
+      message:
+        `Cannot read ${label} ${resolved}; ` +
+        `use a readable text file no larger than ${MAX_TEMPLATE_BYTES / 1024} KiB`,
     });
   const info = yield* fs.stat(resolved).pipe(Effect.mapError(fail));
   if (info.type !== 'File' || Number(info.size) > MAX_TEMPLATE_BYTES) {
@@ -182,8 +205,8 @@ export const loadHostTemplates = Effect.fn('loadCaddyHostTemplates')(function* (
   host: HostConfig,
   file: string,
 ) {
-  const proxy =
-    host.ingress !== undefined && 'caddy' in host.ingress ? host.ingress.caddy : host.proxy;
+  const named = host.ingress !== undefined && 'caddy' in host.ingress;
+  const proxy = named ? host.ingress.caddy : host.proxy;
   if (proxy === undefined || ('provider' in proxy && proxy.provider === 'cloudflare-tunnel')) {
     return host;
   }
@@ -202,7 +225,7 @@ export const loadHostTemplates = Effect.fn('loadCaddyHostTemplates')(function* (
     templates.config = yield* loadCheckedTemplate(templates.config, file, 'config');
   }
 
-  return host.ingress !== undefined && 'caddy' in host.ingress
+  return named
     ? { ...host, ingress: { ...host.ingress, caddy: { ...host.ingress.caddy, templates } } }
     : { ...host, proxy: { ...caddy, templates } };
 });
@@ -216,12 +239,7 @@ export const loadAppTemplates = Effect.fn('loadCaddyAppTemplates')(function* (ap
     return app;
   }
 
-  const settings =
-    'caddy' in ingress
-      ? ingress.caddy
-      : 'mode' in ingress && ingress.mode === 'caddy'
-        ? ingress
-        : undefined;
+  const settings = caddySettingsOf(ingress);
   if (settings?.siteTemplate === undefined) {
     return app;
   }
@@ -242,3 +260,19 @@ export const loadAppTemplates = Effect.fn('loadCaddyAppTemplates')(function* (ap
     },
   };
 });
+
+/**
+ * The Caddy settings of an app's ingress, from either the named `caddy` selection or the legacy
+ * `mode: caddy` form; undefined when the app routes through another extension.
+ */
+function caddySettingsOf(ingress: NonNullable<App['config']['ingress']>) {
+  if ('caddy' in ingress) {
+    return ingress.caddy;
+  }
+
+  if ('mode' in ingress && ingress.mode === 'caddy') {
+    return ingress;
+  }
+
+  return undefined;
+}

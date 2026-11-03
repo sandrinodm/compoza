@@ -40,11 +40,13 @@ describe('lifecycle commands', () => {
   it('remove containers and networks, and volumes only when asked', () => {
     assert.strictEqual(
       printable(downCommand(resolved, false)),
-      'docker --host ssh://deploy@atlas.example.com compose --project-name demo down --remove-orphans',
+      'docker --host ssh://deploy@atlas.example.com compose --project-name demo ' +
+        'down --remove-orphans',
     );
     assert.strictEqual(
       printable(downCommand(resolved, true)),
-      'docker --host ssh://deploy@atlas.example.com compose --project-name demo down --remove-orphans --volumes',
+      'docker --host ssh://deploy@atlas.example.com compose --project-name demo ' +
+        'down --remove-orphans --volumes',
     );
   });
 });

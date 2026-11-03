@@ -1,7 +1,7 @@
 import type { Check } from '../checks.ts';
 import type { App } from '../config/deploy.ts';
 import type { HostConfig } from '../config/hosts.ts';
-import type { IngressId, ResolvedIngress, SecretsConfig } from './config.ts';
+import type { IngressId, SecretsConfig } from './config.ts';
 
 import { shellQuote } from '../command.ts';
 import { ingressOf } from '../config/deploy.ts';
@@ -80,7 +80,7 @@ export interface IngressExtension {
   /**
    * The selector used by app ingress and host proxy configuration.
    */
-  readonly id: Exclude<ResolvedIngress['mode'], 'none'>;
+  readonly id: IngressId;
 
   /**
    * Plans activation and removal, rejecting missing or incompatible host settings.
@@ -121,7 +121,7 @@ export interface IngressExtension {
 export const ingressExtensions = {
   caddy: caddyIngress,
   'cloudflare-tunnel': cloudflareIngress,
-} as const satisfies Readonly<Record<Exclude<ResolvedIngress['mode'], 'none'>, IngressExtension>>;
+} as const satisfies Readonly<Record<IngressId, IngressExtension>>;
 
 /**
  * Resolves a supported ingress extension without silently ignoring an unknown selector.
@@ -167,7 +167,11 @@ export function hostIngress(host: HostConfig, provider?: IngressId): IngressExte
  * private deployment stdin channel.
  */
 export function ingressOperationScript(operation: IngressOperation): string {
-  return operation.input === undefined
-    ? operation.script
-    : `set -euo pipefail\nprintf '%s' ${shellQuote(operation.input)} | bash -c ${shellQuote(operation.script)}\n`;
+  if (operation.input === undefined) {
+    return operation.script;
+  }
+
+  const input = shellQuote(operation.input);
+  const script = shellQuote(operation.script);
+  return ['set -euo pipefail', `printf '%s' ${input} | bash -c ${script}`, ''].join('\n');
 }

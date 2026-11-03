@@ -15,11 +15,21 @@ import { provisionOperation } from './provision.ts';
 const image = process.env.COMPOZA_TEST_CLOUDFLARED_IMAGE;
 
 /**
+ * How long one Docker command may run, so a stuck command fails the test instead of hanging it.
+ */
+const DOCKER_TIMEOUT_MILLIS = 30_000;
+
+/**
+ * The whole test starts, inspects and removes a container, so it gets two Docker timeouts.
+ */
+const TEST_TIMEOUT_MILLIS = 60_000;
+
+/**
  * Runs bounded native probes; every diagnostic belongs to an isolated container using a synthetic
  * token.
  */
 function run(args: string[], required = true) {
-  const result = spawnSync('docker', args, { encoding: 'utf8', timeout: 30000 });
+  const result = spawnSync('docker', args, { encoding: 'utf8', timeout: DOCKER_TIMEOUT_MILLIS });
 
   if (required) {
     assert.strictEqual(result.status, 0, result.stderr);
@@ -30,21 +40,22 @@ function run(args: string[], required = true) {
 
 it.skipIf(image === undefined)(
   'runs the pinned native connector with production isolation and account-free readiness probes',
-  { timeout: 60000 },
+  { timeout: TEST_TIMEOUT_MILLIS },
   () => {
     using temporary = mkdtempDisposableSync(join(tmpdir(), 'compoza-cloudflare-native-'));
     const dir = temporary.path;
 
     const name = `compoza-cf-${randomBytes(6).toString('hex')}`;
     const accountId = 'a'.repeat(32);
-
     const tunnelId = '12345678-1234-1234-1234-123456789abc';
-    const envFile = join(dir, 'token.env');
-    writeFileSync(
-      envFile,
-      `TUNNEL_TOKEN=${Buffer.from(JSON.stringify({ a: accountId, t: tunnelId, s: Buffer.alloc(32).toString('base64') })).toString('base64')}\n`,
-      { mode: 0o600 },
+
+    // A well-formed tunnel token for this account and tunnel, with an all-zero secret.
+    const secret = Buffer.alloc(32).toString('base64');
+    const token = Buffer.from(JSON.stringify({ a: accountId, t: tunnelId, s: secret })).toString(
+      'base64',
     );
+    const envFile = join(dir, 'token.env');
+    writeFileSync(envFile, `TUNNEL_TOKEN=${token}\n`, { mode: 0o600 });
 
     const operation = provisionOperation({
       provider: 'cloudflare-tunnel',
@@ -58,7 +69,8 @@ it.skipIf(image === undefined)(
     });
 
     const model = YAML.parse(JSON.parse(operation.input!).compose);
-    // Isolate the fixture from every external network; real connection success needs a separately authorized account.
+    // Isolate the fixture from every external network; real connection success needs a separately
+    // authorized account.
     model.services.connector.network_mode = 'none';
     delete model.services.connector.networks;
     delete model.networks;
@@ -104,12 +116,12 @@ it.skipIf(image === undefined)(
       assert.isTrue(info.State.Running);
 
       const logResult = run(['logs', name]);
-
       const logs = logResult.stdout + logResult.stderr;
       assert.notInclude(logs, 'flag provided but not defined');
       assert.include(logs, 'Starting tunnel');
       assert.include(logs, 'grace-period:30s');
-      // No external connection means ready must fail; this proves process-running alone is not readiness.
+      // No external connection means ready must fail; this proves process-running alone is not
+      // readiness.
       assert.notStrictEqual(
         run(['exec', name, 'cloudflared', 'tunnel', '--metrics', '127.0.0.1:20241', 'ready'], false)
           .status,

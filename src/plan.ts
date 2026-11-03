@@ -13,6 +13,12 @@ import { dockerHost, type HostConfig } from './config/hosts.ts';
 import { secretSource, validateSecrets } from './config/secrets.ts';
 
 /**
+ * Variables cleared for a build on the host's daemon, so a Docker context or Buildx builder
+ * selected on this machine cannot redirect the build away from the explicit `--host`.
+ */
+const REMOTE_BUILD_ENVIRONMENT = { DOCKER_CONTEXT: '', BUILDX_BUILDER: '', BUILDX_HOST: '' };
+
+/**
  * Everything a plan needs decided: the app and host, the tag, where the build context is, and the
  * secrets.
  */
@@ -143,53 +149,85 @@ export function planDeployment(options: PlanOptions): ReadonlyArray<Step> {
       continue;
     }
 
-    const push = !local && host.transport.mode === 'registry';
-    steps.push(
-      command(
-        'docker',
-        [
-          ...(!local && host.transport.mode === 'remote-build' ? ['--host', dockerHost(host)] : []),
-          'buildx',
-          'build',
-          ...(!local && host.transport.mode === 'remote-build' ? ['--builder', 'default'] : []),
-          ...(local ? [] : ['--platform', host.platform]),
-          push ? '--push' : '--load',
-          '--file',
-          dockerfile,
-          '--target',
-          target,
-          '--tag',
-          reference,
-          options.context,
-        ],
-        {
-          cwd: workingDirectoryOf(app),
-          ...(!local && host.transport.mode === 'remote-build'
-            ? { env: { DOCKER_CONTEXT: '', BUILDX_BUILDER: '', BUILDX_HOST: '' } }
-            : {}),
-        },
-      ),
-    );
+    steps.push(buildCommand(options, dockerfile, target, reference));
 
     if (!local && host.transport.mode === 'ssh-load') {
-      steps.push({
-        stages: [
-          command('docker', ['save', reference]),
-          command('gzip', []),
-          command('ssh', ['-o', 'BatchMode=yes', host.ssh, LOAD_SCRIPT]),
-        ],
-      });
+      steps.push(loadPipeline(host, reference));
     }
   }
 
+  steps.push(composeUpCommand(options, images));
+
+  return steps;
+}
+
+/**
+ * The `docker buildx build` command for one target: pushed to the registry, built on the host's own
+ * daemon, or loaded into this machine's daemon, depending on the transport and `local`.
+ */
+function buildCommand(
+  options: PlanOptions,
+  dockerfile: string,
+  target: string,
+  reference: string,
+): Command {
+  const { app, host, local } = options;
+  const push = !local && host.transport.mode === 'registry';
+  const remoteBuild = !local && host.transport.mode === 'remote-build';
+  return command(
+    'docker',
+    [
+      ...(remoteBuild ? ['--host', dockerHost(host)] : []),
+      'buildx',
+      'build',
+      ...(remoteBuild ? ['--builder', 'default'] : []),
+      ...(local ? [] : ['--platform', host.platform]),
+      push ? '--push' : '--load',
+      '--file',
+      dockerfile,
+      '--target',
+      target,
+      '--tag',
+      reference,
+      options.context,
+    ],
+    {
+      cwd: workingDirectoryOf(app),
+      ...(remoteBuild ? { env: REMOTE_BUILD_ENVIRONMENT } : {}),
+    },
+  );
+}
+
+/**
+ * The `docker save | gzip | ssh … docker load` pipeline that ships one locally built image to the
+ * host.
+ */
+function loadPipeline(host: HostConfig, reference: string): Step {
+  return {
+    stages: [
+      command('docker', ['save', reference]),
+      command('gzip', []),
+      command('ssh', ['-o', 'BatchMode=yes', host.ssh, LOAD_SCRIPT]),
+    ],
+  };
+}
+
+/**
+ * The `docker compose up` command that starts the stack with the built image references.
+ *
+ * A secret source or secret values replace Compose's automatic `.env` lookup with `/dev/null`, so a
+ * stray dotenv file in the project directory cannot add or override variables.
+ */
+function composeUpCommand(options: PlanOptions, images: Readonly<Record<string, string>>): Command {
+  const { app, host, local } = options;
   const pull = !local && host.transport.mode === 'registry' ? 'always' : 'missing';
-  const compose: Command = command(
+  const replacesDotenv =
+    secretSource(app, local) !== undefined || Object.keys(options.secrets).length > 0;
+  return command(
     'docker',
     [
       ...composePrefix(app, local ? undefined : host),
-      ...(secretSource(app, local) !== undefined || Object.keys(options.secrets).length > 0
-        ? ['--env-file', devNull]
-        : []),
+      ...(replacesDotenv ? ['--env-file', devNull] : []),
       ...composeFilesOf(app.config, local).flatMap((file) => ['--file', resolve(app.dir, file)]),
       ...(app.config.profiles ?? []).flatMap((profile) => ['--profile', profile]),
       'up',
@@ -206,7 +244,4 @@ export function planDeployment(options: PlanOptions): ReadonlyArray<Step> {
       sensitive: true,
     },
   );
-  steps.push(compose);
-
-  return steps;
 }

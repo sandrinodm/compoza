@@ -19,6 +19,11 @@ const app: App = {
   config: { name: 'app', host: 'host', targets: [], composeFiles: ['compose.yaml'] },
 };
 
+const namedApp: App = {
+  ...app,
+  config: { ...app.config, ingress: { 'cloudflare-tunnel': settings } },
+};
+
 describe('Cloudflare route templates', () => {
   it.each([{ 'cloudflare-tunnel': settings }, { mode: 'cloudflare-tunnel' as const, ...settings }])(
     'renders named and legacy application settings: %s',
@@ -45,15 +50,7 @@ describe('Cloudflare route templates', () => {
     'hostname: {{domain}}\nservice: {{service}}\noriginRequest: []',
   ])('rejects non-mapping routes and origin settings: %s', (inline) => {
     assert.throws(
-      () =>
-        routeRule(
-          { ...proxy, templates: { route: { inline } } },
-          {
-            ...app,
-            config: { ...app.config, ingress: { 'cloudflare-tunnel': settings } },
-          },
-          'app',
-        ),
+      () => routeRule({ ...proxy, templates: { route: { inline } } }, namedApp, 'app'),
       'must preserve hostname/service',
     );
   });
@@ -61,15 +58,7 @@ describe('Cloudflare route templates', () => {
   it('rejects oversized rendered output before parsing malformed YAML', () => {
     const inline = '[' + 'é'.repeat(128 * 1024);
     assert.throws(
-      () =>
-        routeRule(
-          { ...proxy, templates: { route: { inline } } },
-          {
-            ...app,
-            config: { ...app.config, ingress: { 'cloudflare-tunnel': settings } },
-          },
-          'app',
-        ),
+      () => routeRule({ ...proxy, templates: { route: { inline } } }, namedApp, 'app'),
       'Cloudflare route template is too large',
     );
   });

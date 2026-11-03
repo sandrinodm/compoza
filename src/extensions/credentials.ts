@@ -7,6 +7,11 @@ import { onePasswordProvider } from './1password/index.ts';
 import { envFileProvider } from './env-file/index.ts';
 
 /**
+ * A credential provider's selector, as written in application configuration.
+ */
+type CredentialProviderId = Exclude<ResolvedSecretsConfig['provider'], 'none'>;
+
+/**
  * A client-side source of Compose credentials.
  *
  * Providers return values only; the deployment core owns source selection, dry runs, validation and
@@ -17,7 +22,7 @@ export interface CredentialProvider {
   /**
    * The source selector used in application configuration.
    */
-  readonly id: Exclude<ResolvedSecretsConfig['provider'], 'none'>;
+  readonly id: CredentialProviderId;
 
   /**
    * The operator environment prefixes masked in commands and stripped from every child process.
@@ -42,9 +47,7 @@ export interface CredentialProvider {
 export const credentialProviders = {
   'env-file': envFileProvider,
   '1password': onePasswordProvider,
-} as const satisfies Readonly<
-  Record<Exclude<ResolvedSecretsConfig['provider'], 'none'>, CredentialProvider>
->;
+} as const satisfies Readonly<Record<CredentialProviderId, CredentialProvider>>;
 
 /**
  * Resolves a credential provider, rejecting unsupported selectors instead of falling back to

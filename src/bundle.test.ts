@@ -98,6 +98,7 @@ describe('bounded Compose bundle', () => {
             }).pipe(Effect.flip);
             assert.match(error.message, /symlinks|dot or empty components/);
           }
+
           const secret = yield* readBundle({
             ...app,
             config: {

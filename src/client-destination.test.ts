@@ -10,6 +10,7 @@ import * as YAML from 'yaml';
 
 import type { Step } from './command.ts';
 import type { HostConfig } from './config/hosts.ts';
+import type { ProxyConfig } from './extensions/caddy/config.ts';
 
 import { evaluateChecks } from './checks.ts';
 import { printableStep } from './command.ts';
@@ -23,9 +24,11 @@ import { DryRun, Shell } from './services/Shell.ts';
 vi.mock('node:dns/promises', () => ({
   Resolver: class {
     setServers() {}
+
     resolve4() {
       return Promise.resolve(['192.0.2.1']);
     }
+
     resolve6() {
       return Promise.reject(new Error('No AAAA record'));
     }
@@ -40,10 +43,9 @@ it.effect(
       readonly input?: string | undefined;
       readonly label?: string | undefined;
     }> = [];
-
     const probes: Array<string> = [];
     const steps: Array<Step> = [];
-    const host: HostConfig & { proxy: import('./extensions/caddy/config.ts').ProxyConfig } = {
+    const host: HostConfig & { proxy: ProxyConfig } = {
       ssh: 'fixture',
       address: '192.0.2.1',
       platform: 'linux/arm64',

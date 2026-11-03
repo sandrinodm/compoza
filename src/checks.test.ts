@@ -2,6 +2,7 @@ import { assert, describe, it } from '@effect/vitest';
 
 import type { App } from './config/deploy.ts';
 import type { HostConfig } from './config/hosts.ts';
+import type { ProxyConfig } from './extensions/caddy/config.ts';
 
 import { blocking, evaluateChecks, formatChecks } from './checks.ts';
 import { sha256, siteFile } from './extensions/caddy/scripts.ts';
@@ -18,7 +19,7 @@ const app: App = {
   },
 };
 
-const host: HostConfig & { proxy: import('./extensions/caddy/config.ts').ProxyConfig } = {
+const host: HostConfig & { proxy: ProxyConfig } = {
   ssh: 'deploy@atlas.example.com',
   address: '192.0.2.42',
   platform: 'linux/arm64',

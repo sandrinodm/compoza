@@ -20,5 +20,10 @@ export function runtimeAsset(name: 'runtime.sh' | 'model.jq' | 'status.jq'): str
  * program definitions.
  */
 export function runtimeSource(): string {
-  return `${runtimeAsset('runtime.sh')}\nmodel_filter=${shellQuote(runtimeAsset('model.jq'))}\nstatus_filter=${shellQuote(runtimeAsset('status.jq'))}\n`;
+  return [
+    runtimeAsset('runtime.sh'),
+    `model_filter=${shellQuote(runtimeAsset('model.jq'))}`,
+    `status_filter=${shellQuote(runtimeAsset('status.jq'))}`,
+    '',
+  ].join('\n');
 }

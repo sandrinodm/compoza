@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 
 import type { App } from '../config/deploy.ts';
 import type { HostConfig } from '../config/hosts.ts';
+import type { ProxyConfig as CaddyProxy } from './caddy/config.ts';
 
 import { DeployConfig } from '../config/deploy.ts';
 import { Hosts } from '../config/hosts.ts';
@@ -33,7 +34,7 @@ const app: App = {
   },
 };
 
-const host: HostConfig & { proxy: import('./caddy/config.ts').ProxyConfig } = {
+const host: HostConfig & { proxy: CaddyProxy } = {
   ssh: 'deploy@atlas.example.com',
   address: '192.0.2.42',
   platform: 'linux/amd64',
@@ -122,9 +123,7 @@ describe('frozen ingress operations', () => {
       execFileSync(
         '/bin/bash',
         ['-c', ingressOperationScript({ script: 'cat', input: '', label: '<empty>' })],
-        {
-          encoding: 'utf8',
-        },
+        { encoding: 'utf8' },
       ),
       '',
     );

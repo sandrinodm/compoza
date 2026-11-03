@@ -5,7 +5,7 @@ import type { HostConfig } from '../config/hosts.ts';
 
 import { shellQuote } from '../command.ts';
 import { DeployError } from '../errors.ts';
-import { childEnvironment, collect, DryRun } from './Shell.ts';
+import { childEnvironment, collect, DryRun, exitFailure } from './Shell.ts';
 
 /**
  * Shortens a script to the text printed after `$ ssh <host>` when `Remote.run` is given no label:
@@ -23,10 +23,10 @@ export function scriptLabel(script: string): string {
 /**
  * Runs scripts on a Docker host over SSH.
  *
- * Every script runs under `bash -c` on the host, whatever the login shell there is: the hosts seen
- * so far log in with zsh, which does not word-split unquoted variables, and a script written for
- * bash silently misbehaves under it. `BatchMode=yes` makes a missing key an error instead of a
- * password prompt, so a deployment never hangs waiting for input nobody will type.
+ * Every script runs under `bash -c` on the host, whatever the login shell there is: a host that
+ * logs in with zsh does not word-split unquoted variables, so a script written for bash would
+ * silently misbehave under it. `BatchMode=yes` makes a missing key an error instead of a password
+ * prompt, so a deployment never hangs waiting for input nobody will type.
  *
  * Like `Shell`, the service has two members so that `--dry-run` stays a faithful preview: `run` is
  * for scripts that change the host, prints a `$ ssh …` line and does nothing else under `DryRun`;
@@ -102,7 +102,7 @@ export class Remote extends Context.Service<
               yield* Console.log(output);
             }
 
-            return yield* new DeployError({ message: `ssh ${host.ssh} exited with ${code}` });
+            return yield* exitFailure(`ssh ${host.ssh}`, code);
           }
 
           return output;

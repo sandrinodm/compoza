@@ -7,6 +7,11 @@ import { setupOperationInput } from './ingress-setup.ts';
 
 const operation = { label: 'setup', script: 'true', input: '{"compose":"safe"}' };
 
+/**
+ * A 1Password credential source; the tests replace its reader, so nothing is fetched.
+ */
+const ONE_PASSWORD_SECRETS = { '1password': { environmentId: 'fixture' } };
+
 describe('setupOperationInput', () => {
   it.effect('preserves input without reading a credential source', () =>
     Effect.gen(function* () {
@@ -21,7 +26,7 @@ describe('setupOperationInput', () => {
       Effect.gen(function* () {
         const input = yield* setupOperationInput({
           ...operation,
-          secrets: { '1password': { environmentId: 'fixture' } },
+          secrets: ONE_PASSWORD_SECRETS,
           ...(secretVariables === undefined ? {} : { secretVariables }),
         }).pipe(
           Effect.provideService(OnePasswordReader, async () => [
@@ -52,7 +57,7 @@ describe('setupOperationInput', () => {
     Effect.gen(function* () {
       const error = yield* setupOperationInput({
         ...operation,
-        secrets: { '1password': { environmentId: 'fixture' } },
+        secrets: ONE_PASSWORD_SECRETS,
         secretVariables: { TUNNEL_TOKEN: 'PROVIDER_TOKEN' },
       }).pipe(
         Effect.provideService(OnePasswordReader, async () => [

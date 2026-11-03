@@ -27,7 +27,6 @@ export const DryRun = Context.Reference<boolean>('compoza/DryRun', { defaultValu
  */
 export function childEnvironment(command?: Command): Record<string, string | undefined> {
   const environment = { ...process.env, ...command?.env };
-
   for (const key of Object.keys(environment)) {
     if (isCredentialEnvironment(key)) {
       delete environment[key];
@@ -88,7 +87,8 @@ export interface Collected {
 /**
  * Spawns `child` with standard output piped, reads all of it as text, then waits for the exit code,
  * failing with a `DeployError` that opens with `label` when the process cannot be spawned or
- * awaited.
+ * awaited. With `stream`, each chunk is printed as it arrives instead, and the returned output is
+ * empty.
  *
  * A non-zero exit is returned rather than raised because `Shell.capture` and `Remote` word their
  * errors differently, and `Remote` prints the output first. The output is read before the exit is
@@ -133,6 +133,14 @@ export interface RunOptions {
 }
 
 /**
+ * The failure of a program, or a command line, that exited with a non-zero `code`, as `docker
+ * exited with 1`.
+ */
+export function exitFailure(name: string, code: number): DeployError {
+  return new DeployError({ message: `${name} exited with ${code}` });
+}
+
+/**
  * How long a pipeline stage stopped by `runPipeline` gets to exit after `SIGTERM` before it is sent
  * `SIGKILL`.
  *
@@ -145,10 +153,10 @@ const STOP_GRACE = '5 seconds';
  * Runs pipeline stages connected stdout to stdin and fails with a `DeployError` naming the first
  * stage, in pipeline order, that exited non-zero, as `docker save exited with 1`.
  *
- * `ChildProcess.pipeTo` reports only the last stage's exit code, so a failing `docker save` showed
- * up as a failing `ssh`. Here each stage is spawned with the previous stage's `stdout` stream as
- * its `stdin`, which is what `pipeTo` does internally (the spawner forks a fiber in the scope that
- * runs the stream into the child's input), and every stage's exit code is awaited.
+ * `ChildProcess.pipeTo` reports only the last stage's exit code, so a failing `docker save` would
+ * show up as a failing `ssh`. Here each stage is spawned with the previous stage's `stdout` stream
+ * as its `stdin`, which is what `pipeTo` does internally (the spawner forks a fiber in the scope
+ * that runs the stream into the child's input), and every stage's exit code is awaited.
  *
  * When a stage exits, earlier stages still running have lost their reader and would block on a full
  * pipe forever, so they are stopped, as a shell's `SIGPIPE` would, and not blamed: when `ssh` fails
@@ -215,9 +223,7 @@ function runPipeline(
         }
 
         if (result.success !== 0) {
-          return yield* new DeployError({
-            message: `${stages[index]?.program} exited with ${result.success}`,
-          });
+          return yield* exitFailure(String(stages[index]?.program), result.success);
         }
       }
     }),
@@ -273,20 +279,13 @@ export class Shell extends Context.Service<
             return yield* runPipeline(spawner, step.stages);
           }
 
+          const spawnFailure: (cause: PlatformError) => DeployError =
+            step.sensitive === true ? sensitiveSpawnFailure : platformFailure(line);
           const code = yield* spawner
             .exitCode(childProcess(step, { stdin: 'inherit', stdout: 'inherit' }))
-            .pipe(
-              Effect.mapError(
-                step.sensitive === true
-                  ? () =>
-                      new DeployError({
-                        message: 'Secret-bearing Compose command could not run; details suppressed',
-                      })
-                  : platformFailure(line),
-              ),
-            );
+            .pipe(Effect.mapError(spawnFailure));
           if (code !== 0) {
-            return yield* new DeployError({ message: `${step.program} exited with ${code}` });
+            return yield* exitFailure(step.program, code);
           }
         });
 
@@ -298,7 +297,7 @@ export class Shell extends Context.Service<
             label,
           );
           if (code !== 0) {
-            return yield* new DeployError({ message: `${label} exited with ${code}` });
+            return yield* exitFailure(label, code);
           }
 
           return output;
@@ -307,4 +306,14 @@ export class Shell extends Context.Service<
         return Shell.of({ run, capture });
       }),
     );
+}
+
+/**
+ * The failure of a secret-bearing command that could not be spawned or awaited. The platform's
+ * message is dropped because it can repeat the command's arguments.
+ */
+function sensitiveSpawnFailure(): DeployError {
+  return new DeployError({
+    message: 'Secret-bearing Compose command could not run; details suppressed',
+  });
 }

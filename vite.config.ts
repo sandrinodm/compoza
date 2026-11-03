@@ -36,8 +36,8 @@ export default defineConfig({
   },
   staged: {
     '*': 'vp check --fix',
-    // jsdoc-lint checks a file named on the command line even when `jsdoc.json` excludes it, so this glob leaves out
-    // tests and declarations itself.
+    // jsdoc-lint checks a file named on the command line even when `jsdoc.json` excludes it, so
+    // this glob leaves out tests and declarations itself.
     '{src,bin}/**/!(*.test|*.spec|*.d).{ts,mts,cts}': 'jsdoc-lint',
   },
   fmt: {

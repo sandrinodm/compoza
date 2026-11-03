@@ -19,6 +19,22 @@ import { REMOTE_PATH } from '../../command.ts';
 import { routeScript, unrouteScript, setupScript } from './scripts.ts';
 
 /**
+ * The per-test limit; each test spawns a few short Bash and fake Docker processes.
+ */
+const ROUTE_TEST_TIMEOUT_MS = 15_000;
+
+/**
+ * How long `until` waits for a lock or child exit, generous for process startup under full-suite
+ * load.
+ */
+const UNTIL_DEADLINE_MS = 5_000;
+
+/**
+ * How often `until` re-checks its predicate.
+ */
+const UNTIL_POLL_INTERVAL_MS = 10;
+
+/**
  * Runs the actual host scripts with a fake Docker that can reject a reload or fail its recovery.
  */
 async function fixture(
@@ -78,18 +94,18 @@ fs.writeFileSync(path.join(dir, 'active'), fs.existsSync(path.join(dir,'sites','
  * timing.
  */
 async function until(predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + UNTIL_DEADLINE_MS;
 
   while (!predicate()) {
     if (Date.now() > deadline) {
       throw new Error('Timed out waiting for route process');
     }
 
-    await setTimeout(10);
+    await setTimeout(UNTIL_POLL_INTERVAL_MS);
   }
 }
 
-describe('Caddy route transactions', { timeout: 15000 }, () => {
+describe('Caddy route transactions', { timeout: ROUTE_TEST_TIMEOUT_MS }, () => {
   it('shares the setup lock and restores legacy files without printing Compose diagnostics', () =>
     fixture((f) => {
       const caddyfile = '# existing config\n';

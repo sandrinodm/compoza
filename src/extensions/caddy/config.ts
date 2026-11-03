@@ -13,6 +13,22 @@ import {
 } from '../../config/schema.ts';
 
 /**
+ * A template filename: one line with at least one non-space character.
+ */
+const TEMPLATE_FILE_PATTERN = /^[^\r\n]*\S[^\r\n]*$/;
+
+/**
+ * A Docker image reference with an optional tag or digest; the leading character rules out values
+ * Docker would read as an option.
+ */
+const IMAGE_REFERENCE_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._/:@-]*$/;
+
+/**
+ * The `acme_dns` arguments: one line that does not start with whitespace.
+ */
+const ACME_DNS_PATTERN = /^\S[^\r\n]*$/;
+
+/**
  * An optional DNS assertion accepts either IP family; Caddy itself does not need the host IP.
  */
 const DnsAddress = Schema.String.check(
@@ -23,7 +39,7 @@ const DnsAddress = Schema.String.check(
  * A local template filename or inline template text; file sources are loaded before planning.
  */
 export const CaddyTemplate = Schema.Union([
-  Schema.String.check(Schema.isPattern(/^[^\r\n]*\S[^\r\n]*$/)),
+  Schema.String.check(Schema.isPattern(TEMPLATE_FILE_PATTERN)),
   Schema.Struct({
     /**
      * The complete template text, with literal Caddy syntax and optional compoza placeholders.
@@ -100,7 +116,7 @@ export const CaddyProvision = Schema.Struct({
   /**
    * The Caddy image, including any required DNS modules; a tag or digest can pin the version.
    */
-  image: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9._/:@-]*$/)),
+  image: Schema.String.check(Schema.isPattern(IMAGE_REFERENCE_PATTERN)),
 
   /**
    * An existing absolute host env-file path passed to Caddy without interpolation.
@@ -111,7 +127,7 @@ export const CaddyProvision = Schema.Struct({
    * The global acme_dns arguments, e.g. cloudflare {env.CLOUDFLARE_API_TOKEN}; never put
    * credentials here.
    */
-  acmeDns: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\S[^\r\n]*$/))),
+  acmeDns: Schema.optionalKey(Schema.String.check(Schema.isPattern(ACME_DNS_PATTERN))),
 
   /**
    * Additional DNS aliases for Caddy on the shared Docker network.

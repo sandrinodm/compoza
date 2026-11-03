@@ -7,7 +7,39 @@ import { resolveSecrets, type ResolvedSecretsConfig } from '../extensions/config
 import { credentialProvider, isCredentialEnvironment } from '../extensions/credentials.ts';
 import { imageVariable } from '../plan.ts';
 import { DryRun } from '../services/Shell.ts';
-import { environmentOf, secretSettingsIssue } from './deploy.ts';
+import { declaredSecretSources, environmentOf, secretSettingsIssue } from './deploy.ts';
+import { VARIABLE_NAME_PATTERN } from './env-file.ts';
+
+/**
+ * Prefixes of the variables Compose, the Docker CLI and Buildx read for their own configuration; a
+ * secret with one of them would change how the deployment itself runs.
+ */
+const RESERVED_PREFIX_PATTERN = /^(?:COMPOSE_|DOCKER_|BUILDX_)/;
+
+/**
+ * Process variables a secret may not replace, because shells, loaders and language runtimes on the
+ * host read them before any application code runs.
+ */
+const RESERVED_VARIABLES = new Set([
+  'HOME',
+  'PATH',
+  'USER',
+  'SHELL',
+  'BASH_ENV',
+  'ENV',
+  'XDG_RUNTIME_DIR',
+  'NODE_OPTIONS',
+  'LD_PRELOAD',
+  'LD_LIBRARY_PATH',
+  'DYLD_INSERT_LIBRARIES',
+  'PYTHONPATH',
+]);
+
+/**
+ * Characters a secret value may not contain: the dotenv format written for Compose has no way to
+ * carry line breaks, and NUL cannot appear in a process environment.
+ */
+const UNSUPPORTED_VALUE_PATTERN = /[\r\n\0]/;
 
 /**
  * Selects a complete source, preserving the legacy client dotenv alias.
@@ -27,12 +59,7 @@ export function selectSecretSource(
 
   if (local) {
     const source = app.config.local?.secrets;
-    if (
-      source === undefined &&
-      (app.config.secrets !== undefined ||
-        app.config.envFile !== undefined ||
-        app.config.remote?.envFile !== undefined)
-    ) {
+    if (source === undefined && declaredSecretSources(app.config).length > 0) {
       return Result.fail(
         new DeployError({
           message: 'Local runs require local.secrets; select a development source or {none:{}}',
@@ -76,37 +103,19 @@ export function validateSecrets(
   values: Readonly<Record<string, string>>,
   local = false,
 ): void {
-  const reserved = new Set(app.config.targets.map(imageVariable));
+  const imageVariables = new Set(app.config.targets.map(imageVariable));
   const environment = environmentOf(app.config, local);
 
-  if (reserved.size !== app.config.targets.length) {
+  if (imageVariables.size !== app.config.targets.length) {
     throw new Error('Targets must map to distinct image variables');
   }
 
   for (const [index, [key, value]] of Object.entries(values).entries()) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || typeof value !== 'string') {
+    if (!VARIABLE_NAME_PATTERN.test(key) || typeof value !== 'string') {
       throw new Error(`Invalid secret variable at entry ${index + 1}`);
     }
 
-    if (
-      reserved.has(key) ||
-      /^(?:COMPOSE_|DOCKER_|BUILDX_)/.test(key) ||
-      isCredentialEnvironment(key) ||
-      [
-        'HOME',
-        'PATH',
-        'USER',
-        'SHELL',
-        'BASH_ENV',
-        'ENV',
-        'XDG_RUNTIME_DIR',
-        'NODE_OPTIONS',
-        'LD_PRELOAD',
-        'LD_LIBRARY_PATH',
-        'DYLD_INSERT_LIBRARIES',
-        'PYTHONPATH',
-      ].includes(key)
-    ) {
+    if (isReservedVariable(key, imageVariables)) {
       throw new Error(`Reserved secret variable: ${key}`);
     }
 
@@ -114,7 +123,7 @@ export function validateSecrets(
       throw new Error(`Secret variable collides with environment: ${key}`);
     }
 
-    if (/[\r\n\0]/.test(value)) {
+    if (UNSUPPORTED_VALUE_PATTERN.test(value)) {
       throw new Error(`Unsupported multiline or NUL secret value: ${key}`);
     }
   }
@@ -127,17 +136,8 @@ export function validateSecrets(
  * their contents.
  */
 export function secretEnvironment(values: Readonly<Record<string, string>>): string {
-  return (
-    Object.entries(values)
-      .map(
-        ([key, value]) =>
-          `${key}="${value
-            .replaceAll('\\', '\\\\')
-            .replaceAll('"', '\\"')
-            .replaceAll('$', () => '$$')}"`,
-      )
-      .join('\n') + '\n'
-  );
+  const lines = Object.entries(values).map(([key, value]) => `${key}="${dotenvLiteral(value)}"`);
+  return lines.join('\n') + '\n';
 }
 
 /**
@@ -166,3 +166,27 @@ export const readSecrets = Effect.fn('readSecrets')(function* (app: App, local =
 
   return { ...values };
 });
+
+/**
+ * Whether a secret named `key` would replace an image variable, a Docker or Compose setting, a
+ * secret provider's credential or a process variable the host's shell and runtimes read.
+ */
+function isReservedVariable(key: string, imageVariables: ReadonlySet<string>): boolean {
+  return (
+    imageVariables.has(key) ||
+    RESERVED_PREFIX_PATTERN.test(key) ||
+    isCredentialEnvironment(key) ||
+    RESERVED_VARIABLES.has(key)
+  );
+}
+
+/**
+ * Escapes a value for a double-quoted Compose dotenv entry: backslashes and quotes get a backslash,
+ * and `$` is doubled so Compose does not interpolate it.
+ */
+function dotenvLiteral(value: string): string {
+  return value
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"')
+    .replaceAll('$', () => '$$');
+}

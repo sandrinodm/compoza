@@ -13,12 +13,61 @@ import { provisionOperation } from './provision.ts';
 import { routeRule } from './templates.ts';
 
 /**
+ * The route script for manually routed tunnels. Their published routes are edited in the Cloudflare
+ * dashboard, so activating or removing an application changes nothing.
+ */
+const MANUAL_ROUTE_SCRIPT = [
+  'set -eu',
+  '# Published routes are operator-managed in Cloudflare.',
+  'true',
+  '',
+].join('\n');
+
+/**
+ * The `docker inspect` template printing whether the connector runs and, when it defines a health
+ * check, its health status. A ready connector prints `true healthy`.
+ */
+const CONNECTOR_STATE_FORMAT =
+  '{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}';
+
+/**
+ * The shell block that fails setup when the connector probe found the network or connector missing
+ * or unhealthy.
+ */
+const CONNECTOR_READY_GUARD = [
+  'if [ "$ready" != yes ]; then',
+  "  echo 'Cloudflare connector/network is not healthy; " +
+    "run setup-proxy with provision or prepare the connector' >&2",
+  '  exit 1',
+  'fi',
+].join('\n');
+
+/**
+ * What a host script does: prepare route ownership storage, probe readiness, or apply or remove one
+ * application's route.
+ */
+type ScriptAction = 'setup' | 'probe' | 'route' | 'unroute';
+
+/**
  * Selects Cloudflare host settings without accepting a different ingress implementation
  * accidentally.
  */
 function proxyFor(host: HostConfig): CloudflareProxy | undefined {
   const proxy = ingressConfigOf(host, 'cloudflare-tunnel');
   return proxy?.provider === 'cloudflare-tunnel' ? proxy : undefined;
+}
+
+/**
+ * Selects Cloudflare host settings for planning, throwing when the host has no Cloudflare Tunnel
+ * ingress.
+ */
+function requireProxy(host: HostConfig): CloudflareProxy {
+  const proxy = proxyFor(host);
+  if (proxy === undefined) {
+    throw new Error('cloudflare-tunnel requires a matching host proxy');
+  }
+
+  return proxy;
 }
 
 /**
@@ -39,14 +88,10 @@ function settings(app: App) {
  * SSH stack operations embed these sources just like the Caddy operations. Only the host reads its
  * API token; the script contains a token file path but never the token itself.
  */
-function script(
-  proxy: CloudflareProxy,
-  action: 'setup' | 'probe' | 'route' | 'unroute',
-  app?: App,
-): string {
+function script(proxy: CloudflareProxy, action: ScriptAction, app?: App): string {
   if (proxy.routing === 'manual') {
     if (action === 'route' || action === 'unroute') {
-      return 'set -eu\n# Published routes are operator-managed in Cloudflare.\ntrue\n';
+      return MANUAL_ROUTE_SCRIPT;
     }
 
     return connectorProbe(proxy, action === 'setup');
@@ -57,26 +102,45 @@ function script(
   }
 
   const root = `${proxy.stateDir}/${proxy.accountId}-${proxy.tunnelId}`;
+  const owner = app === undefined ? 'setup' : projectNameOf(app);
   const rule = app === undefined ? [] : [routeRule(proxy, app, projectNameOf(app))];
   const wanted = action === 'unroute' ? [] : rule;
-  const source = readFileSync(new URL('./runtime.sh', import.meta.url), 'utf8');
-
+  const runtime = readFileSync(new URL('./runtime.sh', import.meta.url), 'utf8');
   const merge = readFileSync(new URL('./merge.jq', import.meta.url), 'utf8');
-  return `set +x
-set -euo pipefail
-${REMOTE_PATH}
-cf_account=${shellQuote(proxy.accountId)}
-cf_tunnel=${shellQuote(proxy.tunnelId)}
-cf_token_file=${shellQuote(proxy.apiTokenFile)}
-cf_state_dir=${shellQuote(proxy.stateDir)}
-cf_root=${shellQuote(root)}
-cf_owner_file=${shellQuote(`${root}/routes/${app === undefined ? 'setup' : projectNameOf(app)}.json`)}
-cf_wanted=${shellQuote(JSON.stringify(wanted))}
-cf_merge_filter=${shellQuote(merge)}
-${source}
-${action === 'probe' ? 'cf_probe' : action === 'setup' ? 'cf_setup' : 'cf_mutate'}
-${action === 'probe' && proxy.container !== undefined && proxy.network !== undefined ? connectorProbe(proxy) : ''}
-`;
+  const probeConnector =
+    action === 'probe' && proxy.container !== undefined && proxy.network !== undefined;
+  return [
+    'set +x',
+    'set -euo pipefail',
+    REMOTE_PATH,
+    `cf_account=${shellQuote(proxy.accountId)}`,
+    `cf_tunnel=${shellQuote(proxy.tunnelId)}`,
+    `cf_token_file=${shellQuote(proxy.apiTokenFile)}`,
+    `cf_state_dir=${shellQuote(proxy.stateDir)}`,
+    `cf_root=${shellQuote(root)}`,
+    `cf_owner_file=${shellQuote(`${root}/routes/${owner}.json`)}`,
+    `cf_wanted=${shellQuote(JSON.stringify(wanted))}`,
+    `cf_merge_filter=${shellQuote(merge)}`,
+    runtime,
+    runtimeCommand(action),
+    probeConnector ? connectorProbe(proxy) : '',
+    '',
+  ].join('\n');
+}
+
+/**
+ * Names the runtime.sh function that performs a managed-routing action.
+ */
+function runtimeCommand(action: ScriptAction): string {
+  switch (action) {
+    case 'probe':
+      return 'cf_probe';
+    case 'setup':
+      return 'cf_setup';
+    case 'route':
+    case 'unroute':
+      return 'cf_mutate';
+  }
 }
 
 /**
@@ -88,39 +152,33 @@ function connectorProbe(proxy: CloudflareProxy, requireReady = false): string {
     throw new Error('Cloudflare connector checks require container and network');
   }
 
-  return `set +x
-set -eu
-${REMOTE_PATH}
-ready=yes
-if docker network inspect ${shellQuote(proxy.network)} >/dev/null 2>&1; then
-  echo cf_network=yes
-else
-  echo cf_network=no
-  ready=no
-fi
-if [ "$(docker inspect -f '{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' ${shellQuote(proxy.container)} 2>/dev/null)" = 'true healthy' ]; then
-  echo cf_connector=yes
-else
-  echo cf_connector=no
-  ready=no
-fi
-${
-  requireReady
-    ? `if [ "$ready" != yes ]; then
-  echo 'Cloudflare connector/network is not healthy; run setup-proxy with provision or prepare the connector' >&2
-  exit 1
-fi`
-    : ''
-}
-`;
+  const container = shellQuote(proxy.container);
+  const inspectState = `docker inspect -f ${shellQuote(CONNECTOR_STATE_FORMAT)} ${container}`;
+  return [
+    'set +x',
+    'set -eu',
+    REMOTE_PATH,
+    'ready=yes',
+    `if docker network inspect ${shellQuote(proxy.network)} >/dev/null 2>&1; then`,
+    '  echo cf_network=yes',
+    'else',
+    '  echo cf_network=no',
+    '  ready=no',
+    'fi',
+    `if [ "$(${inspectState} 2>/dev/null)" = 'true healthy' ]; then`,
+    '  echo cf_connector=yes',
+    'else',
+    '  echo cf_connector=no',
+    '  ready=no',
+    'fi',
+    requireReady ? CONNECTOR_READY_GUARD : '',
+    '',
+  ].join('\n');
 }
 
 /**
  * Interprets read-only API and host checks without exposing configuration or requiring a public
  * origin IP.
- *
- * Cloudflare's proxied DNS resolves to its edge, so it must not be compared with the Docker host's
- * address.
  */
 function checks(
   app: App,
@@ -141,35 +199,66 @@ function checks(
   }
 
   const ingress = settings(app);
+  const dns = dnsCheck(ingress.domain, proxy, addresses);
+  const connector = connectorChecks(proxy, probe);
+  if (proxy.routing === 'manual') {
+    return [dns, ...connector];
+  }
 
-  const localChecks: Array<Check> =
-    proxy.container === undefined
-      ? []
-      : [
-          {
-            name: 'cloudflare-connector',
-            ok: probe.cf_connector === 'yes',
-            detail: 'Host connector must be running and healthy',
-            fix: 'setup-proxy',
-          },
-          {
-            name: 'cloudflare-network',
-            ok: probe.cf_network === 'yes',
-            detail: 'Shared connector network must exist; the app must join it',
-            fix: 'setup-proxy',
-          },
-        ];
+  return [dns, ...managedRoutingChecks(probe), ...connector];
+}
 
-  const checks: Array<Check> = [
+/**
+ * Reports whether the public hostname resolves at all.
+ *
+ * Cloudflare's proxied DNS resolves to its edge, so the addresses must not be compared with the
+ * Docker host's address.
+ */
+function dnsCheck(domain: string, proxy: CloudflareProxy, addresses: ReadonlyArray<string>): Check {
+  const resolves = addresses.length > 0;
+  return {
+    name: 'dns',
+    ok: resolves,
+    detail: resolves
+      ? `${domain} resolves through public DNS; ` +
+        'the post-deploy HTTP probe verifies service availability'
+      : `Create a proxied CNAME for ${domain} to ${proxy.tunnelId}.cfargotunnel.com`,
+    fix: 'dns',
+  };
+}
+
+/**
+ * Interprets the local connector probe, skipped when the host names no connector container.
+ */
+function connectorChecks(
+  proxy: CloudflareProxy,
+  probe: Record<string, string>,
+): ReadonlyArray<Check> {
+  if (proxy.container === undefined) {
+    return [];
+  }
+
+  return [
     {
-      name: 'dns',
-      ok: addresses.length > 0,
-      detail:
-        addresses.length > 0
-          ? `${ingress.domain} resolves through public DNS; the post-deploy HTTP probe verifies service availability`
-          : `Create a proxied CNAME for ${ingress.domain} to ${proxy.tunnelId}.cfargotunnel.com`,
-      fix: 'dns',
+      name: 'cloudflare-connector',
+      ok: probe.cf_connector === 'yes',
+      detail: 'Host connector must be running and healthy',
+      fix: 'setup-proxy',
     },
+    {
+      name: 'cloudflare-network',
+      ok: probe.cf_network === 'yes',
+      detail: 'Shared connector network must exist; the app must join it',
+      fix: 'setup-proxy',
+    },
+  ];
+}
+
+/**
+ * Interprets the API, state and route probe results that only managed routing produces.
+ */
+function managedRoutingChecks(probe: Record<string, string>): ReadonlyArray<Check> {
+  return [
     {
       name: 'cloudflare-tools',
       ok: probe.cf_tools === 'yes',
@@ -204,7 +293,8 @@ function checks(
       name: 'cloudflare-ownership',
       ok: probe.cf_ownership === 'yes',
       detail:
-        "Hostname must be unused or match this deployment's managed route; external edits require reconciliation",
+        "Hostname must be unused or match this deployment's managed route; " +
+        'external edits require reconciliation',
       fix: 'manual',
     },
     {
@@ -217,8 +307,6 @@ function checks(
       fix: 'deploy',
     },
   ];
-
-  return proxy.routing === 'manual' ? [checks[0]!, ...localChecks] : [...checks, ...localChecks];
 }
 
 /**
@@ -228,11 +316,7 @@ function checks(
 export const cloudflareIngress: IngressExtension = {
   id: 'cloudflare-tunnel',
   plan: (app, host) => {
-    const proxy = proxyFor(host);
-    if (proxy === undefined) {
-      throw new Error('cloudflare-tunnel requires a matching host proxy');
-    }
-
+    const proxy = requireProxy(host);
     const ingress = settings(app);
     return {
       description: `${ingress.domain} through Cloudflare Tunnel`,
@@ -248,19 +332,18 @@ export const cloudflareIngress: IngressExtension = {
     };
   },
   setup: (host) => {
-    const proxy = proxyFor(host);
-    if (proxy === undefined) {
-      throw new Error('cloudflare-tunnel requires a matching host proxy');
-    }
-
+    const proxy = requireProxy(host);
     if (proxy.provision !== undefined) {
       const operation = provisionOperation(proxy);
+      const setup = script(proxy, 'setup');
       return {
         ...operation,
+        // Manual routing's setup script is the connector readiness check, so it runs after
+        // provisioning; managed routing prepares route ownership storage first.
         script:
           proxy.routing === 'manual'
-            ? `${operation.script}\n${script(proxy, 'setup')}`
-            : `${script(proxy, 'setup')}\n${operation.script}`,
+            ? `${operation.script}\n${setup}`
+            : `${setup}\n${operation.script}`,
       };
     }
 

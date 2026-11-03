@@ -11,6 +11,26 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 /**
+ * How long `npm install` of the tarball may take: it downloads every dependency on a cold cache.
+ */
+const INSTALL_TIMEOUT_MS = 180_000;
+
+/**
+ * How long one run of the installed CLI, or of Git, may take.
+ */
+const COMMAND_TIMEOUT_MS = 30_000;
+
+/**
+ * The runtime assets the modules read beside themselves, which the package must ship byte for byte.
+ */
+const RUNTIME_ASSET_PATTERN = /\.(sh|jq|tmpl)$/;
+
+/**
+ * TypeScript sources, which must not ship: the package runs the built modules.
+ */
+const TYPESCRIPT_SOURCE_PATTERN = /\.(ts|tsx)$/;
+
+/**
  * The repository whose runtime assets must survive packing without changes.
  */
 const root = resolve(import.meta.dirname, '..');
@@ -33,7 +53,7 @@ execFileSync(
   {
     cwd: consumer,
     stdio: 'inherit',
-    timeout: 180_000,
+    timeout: INSTALL_TIMEOUT_MS,
   },
 );
 
@@ -52,7 +72,7 @@ for (const section of ['dependencies', 'optionalDependencies']) {
 }
 
 for (const name of readdirSync(join(root, 'src'), { recursive: true })) {
-  if (/\.(sh|jq|tmpl)$/.test(name)) {
+  if (RUNTIME_ASSET_PATTERN.test(name)) {
     assert.deepEqual(
       readFileSync(join(installed, 'dist/src', name)),
       readFileSync(join(root, 'src', name)),
@@ -63,12 +83,12 @@ for (const name of readdirSync(join(root, 'src'), { recursive: true })) {
 
 assert.ok(
   !readdirSync(join(installed, 'dist'), { recursive: true }).some((name) =>
-    /\.(ts|tsx)$/.test(name),
+    TYPESCRIPT_SOURCE_PATTERN.test(name),
   ),
 );
 
 const executable = join(consumer, 'node_modules/.bin/compoza');
-const options = { cwd: consumer, encoding: 'utf8', timeout: 30_000 };
+const options = { cwd: consumer, encoding: 'utf8', timeout: COMMAND_TIMEOUT_MS };
 const help = execFileSync(executable, ['--help'], options);
 assert.match(help, /setup-proxy/);
 assert.doesNotMatch(help, /rollback/);
@@ -114,6 +134,7 @@ const preview = execFileSync(
 assert.match(preview, /provision Cloudflare connector/);
 assert.match(preview, /cloudflare\/cloudflared/);
 assert.match(preview, /read_only/);
+
 const caddyPreview = execFileSync(
   executable,
   ['--hosts', hosts, 'setup-proxy', 'fixture', '--ingress', 'caddy', '--dry-run'],
@@ -121,6 +142,7 @@ const caddyPreview = execFileSync(
 );
 assert.match(caddyPreview, /provision Caddy/);
 assert.doesNotMatch(caddyPreview, /provision Cloudflare/);
+
 assert.throws(
   () => execFileSync(executable, ['--hosts', hosts, 'setup-proxy', 'fixture'], options),
   (error) => /select --ingress/.test(error.stderr?.toString() ?? ''),
@@ -132,6 +154,7 @@ const deployment = join(consumer, 'deployments');
 mkdirSync(source);
 mkdirSync(deployment);
 writeFileSync(join(source, 'Dockerfile'), 'FROM scratch AS web\n');
+
 execFileSync('git', ['init', '--quiet', source], options);
 execFileSync('git', ['-C', source, 'add', 'Dockerfile'], options);
 execFileSync(
@@ -152,6 +175,7 @@ execFileSync(
   ],
   options,
 );
+
 writeFileSync(
   join(deployment, 'production.yaml'),
   `name: external
@@ -162,6 +186,7 @@ composeFiles: [compose.yaml]
 `,
 );
 writeFileSync(join(deployment, 'compose.yaml'), 'services: {web: {image: nginx}}\n');
+
 const buildPreview = execFileSync(
   executable,
   ['--hosts', hosts, 'deploy', join(deployment, 'production.yaml'), '--local', '--dry-run'],
@@ -194,5 +219,6 @@ assert.match(flat.script, /\.compoza\.json/);
 assert.doesNotMatch(flat.script, /releases\/|\.activations\/|previous_id|compoza_promote/);
 
 console.log(
-  `Installed compoza ${manifest.version}: CLI, runtime assets and both ingress setup selectors, external source builds and flat SSH planning verified.`,
+  `Installed compoza ${manifest.version}: CLI, runtime assets and both ingress setup selectors, ` +
+    'external source builds and flat SSH planning verified.',
 );

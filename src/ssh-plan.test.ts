@@ -34,6 +34,12 @@ import {
   sshReadinessScript,
 } from './ssh-plan.ts';
 
+/**
+ * Each fixture runs real Bash, jq and a fake Docker CLI several times; the headroom keeps a loaded
+ * machine from turning a slow but passing transaction into a timeout.
+ */
+const FIXTURE_TIMEOUT_MS = 15_000;
+
 const host: HostConfig = {
   ssh: 'fixture',
   platform: 'linux/arm64',
@@ -108,7 +114,7 @@ esac
     spawnSync('/bin/bash', ['-c', script.replaceAll(REMOTE_PATH, path)], {
       input,
       encoding: 'utf8',
-      timeout: 15_000,
+      timeout: FIXTURE_TIMEOUT_MS,
       env: { ...process.env, CALLER_SECRET: 'never-inherit' },
     });
   const deploy = (
@@ -130,7 +136,7 @@ function succeeded(result: ReturnType<typeof spawnSync>): void {
   assert.strictEqual(result.status, 0, String(result.stderr));
 }
 
-describe('flat SSH stack transactions', { timeout: 15_000 }, () => {
+describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
   it.effect('writes only allowlisted provider secrets to the private stack dotenv', () =>
     Effect.gen(function* () {
       const values = yield* readSecrets({

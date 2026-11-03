@@ -84,6 +84,8 @@ export const waitForUrl = Effect.fn('waitForUrl')(function* (url: string, timeou
   }
 
   return yield* new DeployError({
-    message: `${url} did not respond successfully within ${timeoutMillis / 1000} s (last status ${last ?? 'none'})`,
+    message:
+      `${url} did not respond successfully within ${timeoutMillis / 1000} s ` +
+      `(last status ${last ?? 'none'})`,
   });
 });

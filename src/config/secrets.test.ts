@@ -129,6 +129,7 @@ describe('secret sources', () => {
       for (const excluded of ['OTHER', 'SENTINEL_EXCLUDED', 'PATH', 'WEB_IMAGE_SECRET', 'token']) {
         assert.notInclude(uploaded, excluded);
       }
+
       assert.notInclude(plan.script, '$HOME "literal"');
     }).pipe(
       Effect.provide(NodeServices.layer),

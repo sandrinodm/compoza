@@ -1,11 +1,11 @@
-import { Effect, FileSystem, type Option, Path, Schema } from 'effect';
+import { Effect, type Option, Path, Schema } from 'effect';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import type { ProxyConfig as CaddyProxy } from '../extensions/caddy/config.ts';
 import type { DeployConfig } from './deploy.ts';
 
-import { DeployError, platformFailure } from '../errors.ts';
+import { DeployError } from '../errors.ts';
 import {
   ProxyConfig,
   HostIngress,
@@ -13,15 +13,37 @@ import {
   resolveHostIngress,
   loadHostExtensionFiles,
 } from '../extensions/config.ts';
-import { readConfigFile } from './config-file.ts';
+import { fileExists, readConfigFile } from './config-file.ts';
 import { Ipv4, Name, Platform, Registry, SshDestination } from './schema.ts';
-export { ProxyConfig } from '../extensions/config.ts';
 
+export { ProxyConfig } from '../extensions/config.ts';
 export {
   DEFAULT_PROXY_COMPOSE_FILE,
   proxyComposeFile,
   proxyService,
 } from '../extensions/caddy/config.ts';
+
+/**
+ * The environment variable that overrides where the hosts file is read from.
+ */
+export const HOSTS_ENV = 'COMPOZA_HOSTS';
+
+/**
+ * The global hosts file, overlaid by hosts.yaml in the current working directory unless explicitly
+ * overridden.
+ */
+export const DEFAULT_HOSTS_PATH = '~/.config/compoza/hosts.yaml';
+
+/**
+ * The hosts file looked for in the current working directory, whose entries replace the global
+ * file's entries of the same name.
+ */
+const LOCAL_HOSTS_FILE = 'hosts.yaml';
+
+/**
+ * The message for a host that sets both the named `ingress` and the legacy `proxy` field.
+ */
+const MIXED_INGRESS_MESSAGE = 'Use ingress or legacy proxy, never both';
 
 /**
  * Images reach the host through a registry: built with `--push` here, pulled by Compose there. The
@@ -100,7 +122,7 @@ export const HostConfig = Schema.Struct({
   ingress: Schema.optionalKey(HostIngress),
 }).check(
   Schema.makeFilter((host) => host.ingress === undefined || host.proxy === undefined, {
-    message: 'Use ingress or legacy proxy, never both',
+    message: MIXED_INGRESS_MESSAGE,
   }),
 );
 
@@ -141,15 +163,10 @@ export type Transport = typeof Transport.Type;
 export type Hosts = typeof Hosts.Type;
 
 /**
- * The environment variable that overrides where the hosts file is read from.
+ * The entries read from one or more hosts files, each with the file it came from, so a `$ref`
+ * resolves against the folder of the file that contains it.
  */
-export const HOSTS_ENV = 'COMPOZA_HOSTS';
-
-/**
- * The global hosts file, overlaid by hosts.yaml in the current working directory unless explicitly
- * overridden.
- */
-export const DEFAULT_HOSTS_PATH = '~/.config/compoza/hosts.yaml';
+type HostEntries = Record<string, { entry: (typeof HostsFile.Type)[string]; file: string }>;
 
 /**
  * Replaces a leading `~/` with the home folder, as shells would; any other path is returned
@@ -189,9 +206,7 @@ const readHostsFile = Effect.fn('readHostsFile')(function* (file: string) {
  * Resolves only the winning entries, so a local override does not read a superseded global
  * reference.
  */
-const resolveHosts = Effect.fn('resolveHosts')(function* (
-  entries: Record<string, { entry: (typeof HostsFile.Type)[string]; file: string }>,
-) {
+const resolveHosts = Effect.fn('resolveHosts')(function* (entries: HostEntries) {
   const path = yield* Path.Path;
   const hosts: Record<string, HostConfig> = {};
 
@@ -228,15 +243,13 @@ export const loadDefaultHosts = Effect.fn('loadDefaultHosts')(function* (
   globalFile = DEFAULT_HOSTS_PATH,
 ) {
   const path = yield* Path.Path;
-  const fs = yield* FileSystem.FileSystem;
   const files = [
-    ...new Set([path.resolve(expandHome(globalFile)), path.resolve(directory, 'hosts.yaml')]),
+    ...new Set([path.resolve(expandHome(globalFile)), path.resolve(directory, LOCAL_HOSTS_FILE)]),
   ];
-  let entries: Record<string, { entry: (typeof HostsFile.Type)[string]; file: string }> = {};
+  let entries: HostEntries = {};
   let found = false;
-
   for (const file of files) {
-    if (yield* fs.exists(file).pipe(Effect.mapError(platformFailure(`Looking for ${file}`)))) {
+    if (yield* fileExists(file)) {
       entries = { ...entries, ...(yield* readHostsFile(file)) };
       found = true;
     }
@@ -244,7 +257,9 @@ export const loadDefaultHosts = Effect.fn('loadDefaultHosts')(function* (
 
   if (!found) {
     return yield* new DeployError({
-      message: `No hosts file at ${files.join(' or ')}. Create one, or point --hosts or ${HOSTS_ENV} at one.`,
+      message:
+        `No hosts file at ${files.join(' or ')}. ` +
+        `Create one, or point --hosts or ${HOSTS_ENV} at one.`,
     });
   }
 
@@ -296,13 +311,17 @@ export function proxyOf(
   hostName: string,
 ): Effect.Effect<CaddyProxy, DeployError> {
   const proxy = ingressConfigOf(host, 'caddy');
-  return proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy')
-    ? Effect.fail(
-        new DeployError({
-          message: `Host "${hostName}" has no compatible Caddy proxy entry; add one to use caddy ingress`,
-        }),
-      )
-    : Effect.succeed(proxy);
+  if (proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy')) {
+    return Effect.fail(
+      new DeployError({
+        message:
+          `Host "${hostName}" has no compatible Caddy proxy entry; ` +
+          'add one to use caddy ingress',
+      }),
+    );
+  }
+
+  return Effect.succeed(proxy);
 }
 
 /**
@@ -325,7 +344,7 @@ export function registryOf(host: HostConfig): string | undefined {
  */
 export function ingressConfigOf(host: HostConfig, provider?: IngressId): ProxyConfig | undefined {
   if (host.ingress !== undefined && host.proxy !== undefined) {
-    throw new Error('Use ingress or legacy proxy, never both');
+    throw new Error(MIXED_INGRESS_MESSAGE);
   }
 
   if (host.ingress !== undefined) {

@@ -29,7 +29,8 @@ describe('rsyncCommand', () => {
   it('mirrors with rsync, excluding dotfiles and dependencies', () => {
     assert.strictEqual(
       printable(rsyncCommand(host, '/srv/demo/data/demo', '/me/demo', true)),
-      'rsync --archive --delete --itemize-changes --exclude=.* --exclude=node_modules/ -e ssh -o BatchMode=yes --dry-run /me/demo/ deploy@atlas.example.com:/srv/demo/data/demo/',
+      'rsync --archive --delete --itemize-changes --exclude=.* --exclude=node_modules/ ' +
+        '-e ssh -o BatchMode=yes --dry-run /me/demo/ deploy@atlas.example.com:/srv/demo/data/demo/',
     );
   });
 

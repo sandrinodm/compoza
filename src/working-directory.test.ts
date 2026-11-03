@@ -61,17 +61,11 @@ const fixture = Effect.gen(function* () {
         Effect.sync(() => {
           gitCommands.push(command);
           assert.strictEqual(command.program, 'git');
-          const args = command.args.slice(2).join(' ');
-          return args === 'rev-parse --show-toplevel'
-            ? repository
-            : args === 'status --porcelain'
-              ? gitState.dirty
-                ? ' M changed'
-                : ''
-              : '123456789abc';
+          return gitOutput(command.args.slice(2).join(' '), repository, gitState.dirty);
         }),
     }),
   );
+
   const services = Layer.mergeAll(
     NodeServices.layer,
     FetchHttpClient.layer,
@@ -85,6 +79,7 @@ const fixture = Effect.gen(function* () {
       }),
     ),
   );
+
   const config: DeployConfig = {
     name: 'foo',
     host: 'host',
@@ -95,6 +90,7 @@ const fixture = Effect.gen(function* () {
   };
   const writeConfig = (changes: Partial<DeployConfig> = {}) =>
     Effect.promise(() => writeFile(file, YAML.stringify({ ...config, ...changes })));
+
   const options = {
     target: file,
     hosts: Option.some(hosts),
@@ -118,6 +114,22 @@ const fixture = Effect.gen(function* () {
     options,
   };
 });
+
+/**
+ * What the fake Git prints for the arguments after `-C <dir>`: the repository root, the porcelain
+ * status (one changed file when `dirty`), and a fixed short commit for anything else.
+ */
+function gitOutput(args: string, repository: string, dirty: boolean): string {
+  if (args === 'rev-parse --show-toplevel') {
+    return repository;
+  }
+
+  if (args === 'status --porcelain') {
+    return dirty ? ' M changed' : '';
+  }
+
+  return '123456789abc';
+}
 
 describe('separate working directory', () => {
   it.effect.each([undefined, './context'])(

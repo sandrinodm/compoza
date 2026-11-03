@@ -29,6 +29,11 @@ import { provisionOperation } from './provision.ts';
 const hasCompose = spawnSync('docker', ['compose', 'version'], { stdio: 'ignore' }).status === 0;
 
 /**
+ * The per-test limit; tests run the bootstrap script, sometimes twice, against a fake Docker.
+ */
+const PROVISION_TEST_TIMEOUT_MS = 15_000;
+
+/**
  * Runs the real Bash 3.2-compatible bootstrap with synthetic credentials and a fake Docker
  * executable.
  */
@@ -124,7 +129,7 @@ process.exit(94);
   });
 }
 
-describe('Caddy provisioning', { timeout: 15000 }, () => {
+describe('Caddy provisioning', { timeout: PROVISION_TEST_TIMEOUT_MS }, () => {
   it('installs a rendered custom config and refuses subsequent template changes', () =>
     fixture((f) => {
       const selected = {

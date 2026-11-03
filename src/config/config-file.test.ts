@@ -11,6 +11,11 @@ import { parseConfig, readConfigFile } from './config-file.ts';
 const Point = Schema.Struct({ x: Schema.Number, y: Schema.Number });
 
 /**
+ * A document whose 101 aliases exceed the parser's alias limit of 100.
+ */
+const EXCESSIVE_ALIASES = 'x: &a [1, 2]\ny: [' + Array(101).fill('*a').join(', ') + ']\n';
+
+/**
  * Keeps each loader fixture alive for the test's Effect scope, including failure and interruption
  * cleanup.
  */
@@ -71,6 +76,7 @@ describe('readConfigFile', () => {
       assert.isTrue(invalidContents.message.startsWith(`${file}: `));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
   it.effect.each([
     'x: 1\nx: 2\ny: 3\n',
     'x: 1\ny: 2\n---\nx: 3\ny: 4\n',
@@ -79,7 +85,7 @@ describe('readConfigFile', () => {
     'x: 1\ny: "2"\n',
     'null',
     '- 1\n- 2\n',
-    'x: &a [1, 2]\ny: [' + Array(101).fill('*a').join(', ') + ']\n',
+    EXCESSIVE_ALIASES,
   ])('rejects invalid or unsafe YAML: %s', (text) =>
     Effect.gen(function* () {
       const dir = yield* temporaryDirectory;
@@ -99,7 +105,9 @@ describe('readConfigFile', () => {
       for (const text of ['x: [SENTINEL_SECRET', 'x: SENTINEL_SECRET\ny: 2']) {
         yield* Effect.promise(() => writeFile(file, text));
 
-        const error = yield* readConfigFile(file, Point, 'missing', true).pipe(Effect.flip);
+        const error = yield* readConfigFile(file, Point, 'missing', { privateInput: true }).pipe(
+          Effect.flip,
+        );
         assert.include(error.message, file);
         assert.notInclude(error.message, 'SENTINEL_SECRET');
       }
@@ -117,9 +125,6 @@ describe('parseConfig', () => {
 
   it('bounds alias expansion while allowing ordinary anchors', () => {
     assert.deepStrictEqual(parseConfig('x: &value 1\ny: *value\n'), { x: 1, y: 1 });
-    assert.throws(
-      () => parseConfig('x: &a [1, 2]\ny: [' + Array(101).fill('*a').join(', ') + ']\n'),
-      'Excessive alias count',
-    );
+    assert.throws(() => parseConfig(EXCESSIVE_ALIASES), 'Excessive alias count');
   });
 });

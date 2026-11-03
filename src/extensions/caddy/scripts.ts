@@ -95,10 +95,12 @@ interface SetupConditions {
  */
 function setupConditions(proxy: ProxyConfig): SetupConditions {
   const destination = shellQuote(SITES_DESTINATION);
+  const mountsFormat = "'{{range .Mounts}}{{.Destination}} {{end}}'";
+  const mounts = `docker inspect -f ${mountsFormat} ${shellQuote(proxy.container)} 2>/dev/null`;
   return {
     caddyfileImport: `grep -qsxF ${shellQuote(SITES_IMPORT)} Caddyfile`,
     composeMount: `grep -qsF ${destination} ${shellQuote(proxyComposeFile(proxy))}`,
-    runningMount: `docker inspect -f '{{range .Mounts}}{{.Destination}} {{end}}' ${shellQuote(proxy.container)} 2>/dev/null | grep -qF ${destination}`,
+    runningMount: `${mounts} | grep -qF ${destination}`,
   };
 }
 
@@ -128,29 +130,40 @@ export interface ProbeOptions {
  */
 export function checkScript(options: ProbeOptions): string {
   const lines = ['set -u', REMOTE_PATH];
-
   if (options.proxy !== undefined) {
     const proxy = options.proxy;
     const site = shellQuote(`sites/${options.name}.caddy`);
+    const container = shellQuote(proxy.container);
     const conditions = setupConditions(proxy);
+    const siteHash = `{ shasum -a 256 ${site} 2>/dev/null || sha256sum ${site}; } | cut -d' ' -f1`;
+    const runningState = `docker inspect -f '{{.State.Running}}' ${container} 2>/dev/null`;
+    const healthFormat = "'{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}'";
     lines.push(
       `if cd ${shellQuote(proxy.dir)} 2>/dev/null; then`,
       '  echo proxy_dir=present',
-      `  if ${conditions.caddyfileImport}; then echo caddyfile_import=yes; else echo caddyfile_import=no; fi`,
-      `  if ${conditions.composeMount}; then echo compose_mount=yes; else echo compose_mount=no; fi`,
-      `  if [ -f ${site} ]; then echo site_sha256=$({ shasum -a 256 ${site} 2>/dev/null || sha256sum ${site}; } | cut -d' ' -f1); else echo site_sha256=none; fi`,
+      `  ${reportCondition('caddyfile_import', conditions.caddyfileImport)}`,
+      `  ${reportCondition('compose_mount', conditions.composeMount)}`,
+      `  if [ -f ${site} ]; then echo site_sha256=$(${siteHash}); else echo site_sha256=none; fi`,
       'else',
       '  echo proxy_dir=missing',
       'fi',
-      `if ${conditions.runningMount}; then echo running_mount=yes; else echo running_mount=no; fi`,
-      `if [ "$(docker inspect -f '{{.State.Running}}' ${shellQuote(proxy.container)} 2>/dev/null)" = true ]; then echo container_running=yes; else echo container_running=no; fi`,
-      `health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' ${shellQuote(proxy.container)} 2>/dev/null) || health=missing`,
+      reportCondition('running_mount', conditions.runningMount),
+      reportCondition('container_running', `[ "$(${runningState})" = true ]`),
+      `health=$(docker inspect -f ${healthFormat} ${container} 2>/dev/null) || health=missing`,
       'echo container_health="$health"',
-      `docker network inspect ${shellQuote(proxy.network)} >/dev/null 2>&1 && echo network=yes || echo network=no`,
+      `docker network inspect ${shellQuote(proxy.network)} >/dev/null 2>&1 ` +
+        '&& echo network=yes || echo network=no',
     );
   }
 
   return `${lines.join('\n')}\n`;
+}
+
+/**
+ * One probe line printing `<key>=yes` when the shell condition succeeds and `<key>=no` otherwise.
+ */
+function reportCondition(key: string, condition: string): string {
+  return `if ${condition}; then echo ${key}=yes; else echo ${key}=no; fi`;
 }
 
 /**

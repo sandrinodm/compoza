@@ -10,12 +10,28 @@ import { parseConfig } from '../../config/config-file.ts';
 import { loadTemplate, renderTemplate } from '../caddy/templates.ts';
 
 /**
+ * The largest rendered Compose or route template accepted, in bytes. Anything larger is rejected
+ * before it is parsed.
+ */
+export const MAX_RENDERED_TEMPLATE_BYTES = 256 * 1024;
+
+/**
  * The shipped connector Compose template; all dynamic scalars are JSON-quoted before substitution.
  */
 export const defaultComposeTemplate = readFileSync(
   new URL('./templates/compose.yaml.tmpl', import.meta.url),
   'utf8',
 );
+
+/**
+ * The route template used when neither the application nor the host supplies one.
+ */
+const DEFAULT_ROUTE_TEMPLATE = ['hostname: {{domain}}', 'service: {{service}}', ''].join('\n');
+
+/**
+ * The only fields a rendered route may contain; `originRequest` is the one optional addition.
+ */
+const ROUTE_RULE_FIELDS = new Set(['hostname', 'service', 'originRequest']);
 
 /**
  * Resolves host-relative templates and credential file sources before pure operation planning.
@@ -25,24 +41,16 @@ export const loadCloudflareHostFiles = Effect.fn('loadCloudflareHostFiles')(func
   file: string,
 ) {
   const named = host.ingress !== undefined && 'cloudflare-tunnel' in host.ingress;
-  const selected = named
-    ? host.ingress['cloudflare-tunnel']
-    : host.proxy?.provider === 'cloudflare-tunnel'
-      ? host.proxy
-      : undefined;
+  const selected = cloudflareHostSettings(host);
   if (selected === undefined) {
     return host;
   }
 
-  if (
-    selected.templates === undefined &&
-    !(selected.provision?.secrets !== undefined && 'env-file' in selected.provision.secrets)
-  ) {
+  if (selected.templates === undefined && envFileSecret(selected.provision) === undefined) {
     return host;
   }
 
   const templates = { ...selected.templates };
-
   for (const kind of ['compose', 'route'] as const) {
     const source = templates[kind];
     if (source !== undefined) {
@@ -51,19 +59,16 @@ export const loadCloudflareHostFiles = Effect.fn('loadCloudflareHostFiles')(func
   }
 
   let provision = selected.provision;
-  if (provision?.secrets !== undefined && 'env-file' in provision.secrets) {
+  const secret = envFileSecret(provision);
+  if (provision !== undefined && secret !== undefined) {
     const path = yield* Path.Path;
-    const source = provision.secrets['env-file'].path;
+    const source = secret.path;
+    // This repeats `expandHome` from config/hosts.ts, which imports this module through
+    // extensions/config.ts, so importing it here would create an import cycle.
+    const expanded = source.startsWith('~/') ? path.join(homedir(), source.slice(2)) : source;
     provision = {
       ...provision,
-      secrets: {
-        'env-file': {
-          path: path.resolve(
-            path.dirname(file),
-            source.startsWith('~/') ? path.join(homedir(), source.slice(2)) : source,
-          ),
-        },
-      },
+      secrets: { 'env-file': { path: path.resolve(path.dirname(file), expanded) } },
     };
   }
 
@@ -72,6 +77,26 @@ export const loadCloudflareHostFiles = Effect.fn('loadCloudflareHostFiles')(func
     ? { ...host, ingress: { ...host.ingress, 'cloudflare-tunnel': result } }
     : { ...host, proxy: { ...result, provider: 'cloudflare-tunnel' as const } };
 });
+
+/**
+ * Selects Cloudflare host settings from either named or legacy host configuration.
+ */
+function cloudflareHostSettings(host: HostConfig) {
+  if (host.ingress !== undefined && 'cloudflare-tunnel' in host.ingress) {
+    return host.ingress['cloudflare-tunnel'];
+  }
+
+  return host.proxy?.provider === 'cloudflare-tunnel' ? host.proxy : undefined;
+}
+
+/**
+ * The env-file secret source of a provisioned connector, or undefined when the connector is not
+ * provisioned or uses another credential source.
+ */
+function envFileSecret(provision: CloudflareProxy['provision']) {
+  const secrets = provision?.secrets;
+  return secrets !== undefined && 'env-file' in secrets ? secrets['env-file'] : undefined;
+}
 
 /**
  * Selects Cloudflare application settings from either named or legacy ingress configuration.
@@ -134,7 +159,7 @@ export function routeRule(proxy: CloudflareProxy, app: App, name: string) {
 
   const text = renderTemplate(
     selected.routeTemplate ?? proxy.templates?.route,
-    'hostname: {{domain}}\nservice: {{service}}\n',
+    DEFAULT_ROUTE_TEMPLATE,
     {
       name: JSON.stringify(name),
       domain: JSON.stringify(selected.domain),
@@ -142,29 +167,39 @@ export function routeRule(proxy: CloudflareProxy, app: App, name: string) {
     },
     'Cloudflare route template',
   );
-  if (Buffer.byteLength(text) > 256 * 1024) {
+  if (Buffer.byteLength(text) > MAX_RENDERED_TEMPLATE_BYTES) {
     throw new Error('Cloudflare route template is too large');
   }
 
   let rule: unknown;
-
   try {
     rule = parseConfig(text);
   } catch {
     throw new Error('Cloudflare route template must render valid YAML');
   }
 
-  if (
-    !isRecord(rule) ||
-    rule.hostname !== selected.domain ||
-    rule.service !== selected.service ||
-    Object.keys(rule).some((key) => !['hostname', 'service', 'originRequest'].includes(key)) ||
-    (rule.originRequest !== undefined && !isRecord(rule.originRequest))
-  ) {
+  if (!isRecord(rule) || !preservesRoute(rule, selected)) {
     throw new Error(
-      'Cloudflare route template must preserve hostname/service and may add only originRequest settings',
+      'Cloudflare route template must preserve hostname/service ' +
+        'and may add only originRequest settings',
     );
   }
 
   return rule;
+}
+
+/**
+ * Whether a rendered route keeps the application's hostname and service and adds nothing but an
+ * `originRequest` mapping.
+ */
+function preservesRoute(
+  rule: Record<string, unknown>,
+  selected: { readonly domain: string; readonly service: string },
+): boolean {
+  return (
+    rule.hostname === selected.domain &&
+    rule.service === selected.service &&
+    Object.keys(rule).every((key) => ROUTE_RULE_FIELDS.has(key)) &&
+    (rule.originRequest === undefined || isRecord(rule.originRequest))
+  );
 }

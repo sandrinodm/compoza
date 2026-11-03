@@ -6,6 +6,12 @@ import { command } from '../command.ts';
 import { Shell } from './Shell.ts';
 
 /**
+ * How many hexadecimal characters of the commit hash an image tag uses: enough to be unambiguous in
+ * practice while keeping image references short.
+ */
+const SHORT_SHA_LENGTH = 12;
+
+/**
  * The Git facts a deployment needs about the app's repository: where it is, whether it has a commit
  * to tag images with, and whether the checkout is clean.
  *
@@ -31,7 +37,8 @@ export class Git extends Context.Service<
     isDirty(root: string): Effect.Effect<boolean, DeployError>;
 
     /**
-     * The first twelve characters of the current commit, the image tag.
+     * The current commit's abbreviated hash, the image tag: `SHORT_SHA_LENGTH` characters, or more
+     * when Git needs them to keep it unambiguous.
      */
     shortSha(root: string): Effect.Effect<string, DeployError>;
   }
@@ -58,7 +65,7 @@ export class Git extends Context.Service<
           ),
         isDirty: (root) =>
           git(root, 'status', '--porcelain').pipe(Effect.map((output) => output !== '')),
-        shortSha: (root) => git(root, 'rev-parse', '--short=12', 'HEAD'),
+        shortSha: (root) => git(root, 'rev-parse', `--short=${SHORT_SHA_LENGTH}`, 'HEAD'),
       });
     }),
   );

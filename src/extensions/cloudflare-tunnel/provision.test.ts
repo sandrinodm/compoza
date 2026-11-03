@@ -37,6 +37,17 @@ const token = Buffer.from(JSON.stringify({ a: accountId, t: tunnelId, s: secret 
 );
 
 /**
+ * How long one bootstrap run may take against the fake daemon before it counts as hung.
+ */
+const SCRIPT_TIMEOUT_MILLIS = 10_000;
+
+/**
+ * Each test runs the real bootstrap script several times, so it gets more than the default five
+ * seconds.
+ */
+const INTEGRATION_TIMEOUT_MILLIS = 15_000;
+
+/**
  * Compose parser checks need only the installed CLI, never a running Docker daemon.
  */
 const hasCompose = spawnSync('docker', ['compose', 'version'], { stdio: 'ignore' }).status === 0;
@@ -166,7 +177,7 @@ process.exit(95);
             ...(credentials === undefined ? {} : { credentials }),
           }),
           encoding: 'utf8',
-          timeout: 10000,
+          timeout: SCRIPT_TIMEOUT_MILLIS,
         },
       );
     },
@@ -189,7 +200,7 @@ function failed(result: ReturnType<typeof spawnSync>): void {
   assert.notInclude(String(result.stdout) + String(result.stderr), token);
 }
 
-describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
+describe('Cloudflare connector provisioning', { timeout: INTEGRATION_TIMEOUT_MILLIS }, () => {
   it('can retry managed credential setup after Compose validation fails', () =>
     fixture((f) => {
       const proxy = {
@@ -210,7 +221,6 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
       succeeded(f.run());
 
       const compose = YAML.parse(readFileSync(join(f.proxy.dir!, 'compose.yaml'), 'utf8'));
-
       const connector = compose.services.connector;
       assert.strictEqual(connector.image, DEFAULT_CLOUDFLARED_IMAGE);
       assert.strictEqual(connector.user, '65532:65532');
@@ -345,9 +355,7 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
         const result = spawnSync(
           'docker',
           ['compose', '--env-file', '/dev/null', '-f', file, 'config', '--quiet'],
-          {
-            encoding: 'utf8',
-          },
+          { encoding: 'utf8' },
         );
         assert.strictEqual(result.status, 0, result.stderr);
       }),
@@ -427,8 +435,14 @@ describe('Cloudflare connector provisioning', { timeout: 15000 }, () => {
       };
 
       const template = {
-        inline:
-          'hostname: {{domain}}\nservice: {{service}}\noriginRequest:\n  connectTimeout: 20\n  httpHostHeader: origin.example.com\n',
+        inline: [
+          'hostname: {{domain}}',
+          'service: {{service}}',
+          'originRequest:',
+          '  connectTimeout: 20',
+          '  httpHostHeader: origin.example.com',
+          '',
+        ].join('\n'),
       };
       const rule = routeRule({ ...f.proxy, templates: { route: template } }, app, 'app');
       assert.deepStrictEqual(rule.originRequest, {

@@ -172,6 +172,7 @@ describe('loadApp', () => {
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
+
   it.effect('discovers deploy.yml and prefers deploy.yaml when both exist', () =>
     withTempDir((dir) =>
       Effect.gen(function* () {

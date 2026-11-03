@@ -1,7 +1,9 @@
 import { REMOTE_PATH, shellQuote } from './command.ts';
 
 /**
- * Parses the `key=value` output of `checkScript`; lines without `=` are ignored.
+ * Parses the `key=value` lines that host readiness scripts print into a record. Values are trimmed,
+ * a later line wins over an earlier one with the same key, and lines without a key before `=` are
+ * ignored.
  */
 export function parseCheck(output: string): Record<string, string> {
   const values: Record<string, string> = {};
@@ -17,8 +19,19 @@ export function parseCheck(output: string): Record<string, string> {
 }
 
 /**
- * Probes the host's stored registry login independently of its ingress implementation.
+ * A host script that reports whether Docker on the host has a stored login for `registry`, as
+ * `registry_login=yes` or `registry_login=no`, whichever ingress the host uses.
+ *
+ * It looks for the quoted registry name in `~/.docker/config.json`; a missing file counts as no
+ * login.
  */
 export function registryProbe(registry: string): string {
-  return `set -u\n${REMOTE_PATH}\nif grep -q ${shellQuote(`"${registry}"`)} ~/.docker/config.json 2>/dev/null; then echo registry_login=yes; else echo registry_login=no; fi\n`;
+  const quotedRegistry = shellQuote(`"${registry}"`);
+  return [
+    'set -u',
+    REMOTE_PATH,
+    `if grep -q ${quotedRegistry} ~/.docker/config.json 2>/dev/null; then ` +
+      'echo registry_login=yes; else echo registry_login=no; fi',
+    '', // trailing newline
+  ].join('\n');
 }

@@ -1,4 +1,5 @@
 import { isCredentialEnvironment } from './extensions/credentials.ts';
+
 /**
  * One process to run on this machine: a program, its arguments, and the variables added to the
  * environment.
@@ -33,17 +34,17 @@ export interface Command {
   readonly secret?: ReadonlyArray<string>;
 
   /**
-   * The secret-bearing subprocess output suppression flag.
+   * Whether the process's standard output and standard error are discarded instead of shown.
    *
-   * Third-party diagnostics can repeat interpolation values, so Compose deployment output is
-   * discarded.
+   * Set on Compose commands that receive secrets: third-party diagnostics can repeat interpolated
+   * values, so their output is never printed.
    */
   readonly sensitive?: boolean;
 
   /**
-   * The concise display line when arguments contain an internal host script.
+   * A short line printed in place of the command, for arguments that carry a whole host script.
    *
-   * This affects presentation only; the full argument list is still executed.
+   * It changes only what is printed; the full argument list is still executed.
    */
   readonly label?: string;
 }
@@ -94,8 +95,7 @@ export function printable(command: Command): string {
   }
 
   const env = Object.entries(command.env ?? {}).map(
-    ([key, value]) =>
-      `${key}=${command.secret?.includes(key) || isCredentialEnvironment(key) ? '***' : value}`,
+    ([key, value]) => `${key}=${isSecretVariable(command, key) ? '***' : value}`,
   );
   return [...env, command.program, ...command.args].join(' ');
 }
@@ -130,4 +130,12 @@ export const REMOTE_PATH = 'export PATH=/usr/local/bin:/opt/homebrew/bin:$PATH';
  */
 export function mkdirScript(directories: ReadonlyArray<string>): string {
   return `mkdir -p ${directories.map(shellQuote).join(' ')}`;
+}
+
+/**
+ * Whether a variable's value is masked when the command is printed: it is listed in `secret`, or
+ * its name marks it as a credential for a secret provider.
+ */
+function isSecretVariable(command: Command, key: string): boolean {
+  return command.secret?.includes(key) || isCredentialEnvironment(key);
 }

@@ -21,7 +21,8 @@ export const Target = Schema.String.pipe(
   Schema.check(
     Schema.isPattern(/^[a-z0-9][a-z0-9_-]*$/, {
       message:
-        'expected lowercase letters, digits, dashes and underscores, starting with a letter or digit',
+        'expected lowercase letters, digits, dashes and underscores, ' +
+        'starting with a letter or digit',
     }),
   ),
 );

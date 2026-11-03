@@ -12,12 +12,24 @@ import { ingressConfigOf, loadHosts, proxyOf } from './config/hosts.ts';
 import { defaultConfigTemplate, defaultSiteTemplate } from './extensions/caddy/templates.ts';
 import { defaultComposeTemplate } from './extensions/cloudflare-tunnel/templates.ts';
 
+/**
+ * A Cloudflare route template small enough to compare after loading.
+ */
+const ROUTE_TEMPLATE = 'hostname: {{domain}}\nservice: {{service}}\n';
+
+/**
+ * How long one CLI run may take: starting Node and loading the CLI under full-suite load can take
+ * seconds, and the run never contacts a host.
+ */
+const CLI_TIMEOUT_MS = 10_000;
+
 const caddy = {
   dir: '/srv/caddy',
   container: 'caddy',
   network: 'caddy-edge',
   provision: { image: 'caddy:2' },
 };
+
 const cloudflare = {
   accountId: 'a'.repeat(32),
   tunnelId: '12345678-1234-1234-1234-123456789abc',
@@ -27,6 +39,7 @@ const cloudflare = {
   network: 'cloudflare-edge',
   provision: { secrets: { 'env-file': { path: './missing-credentials.env' } } },
 };
+
 const host = {
   ssh: 'never-contact.invalid',
   platform: 'linux/arm64',
@@ -53,7 +66,7 @@ const loadedFixture = Effect.gen(function* () {
   writeFileSync(join(hostDirectory, 'site.tmpl'), defaultSiteTemplate);
   writeFileSync(join(hostDirectory, 'Caddyfile.tmpl'), defaultConfigTemplate);
   writeFileSync(join(hostDirectory, 'compose.tmpl'), defaultComposeTemplate);
-  writeFileSync(join(hostDirectory, 'route.tmpl'), 'hostname: {{domain}}\nservice: {{service}}\n');
+  writeFileSync(join(hostDirectory, 'route.tmpl'), ROUTE_TEMPLATE);
   writeFileSync(
     join(hostDirectory, 'host.yaml'),
     YAML.stringify({
@@ -73,6 +86,7 @@ const loadedFixture = Effect.gen(function* () {
   const caddySettings = yield* proxyOf(selected, 'macmini-server');
   assert.deepStrictEqual(caddySettings.templates?.site, { inline: defaultSiteTemplate });
   assert.deepStrictEqual(caddySettings.templates?.config, { inline: defaultConfigTemplate });
+
   const tunnel = ingressConfigOf(selected, 'cloudflare-tunnel');
   assert.strictEqual(tunnel?.provider, 'cloudflare-tunnel');
   if (tunnel?.provider !== 'cloudflare-tunnel') {
@@ -80,9 +94,7 @@ const loadedFixture = Effect.gen(function* () {
   }
 
   assert.deepStrictEqual(tunnel.templates?.compose, { inline: defaultComposeTemplate });
-  assert.deepStrictEqual(tunnel.templates?.route, {
-    inline: 'hostname: {{domain}}\nservice: {{service}}\n',
-  });
+  assert.deepStrictEqual(tunnel.templates?.route, { inline: ROUTE_TEMPLATE });
   assert.deepStrictEqual(tunnel.provision?.secrets, {
     'env-file': { path: join(hostDirectory, 'missing-credentials.env') },
   });
@@ -111,18 +123,20 @@ describe('multiple host ingress providers', () => {
     mkdirSync(bin);
     writeFileSync(hosts, YAML.stringify({ server: host }));
     writeFileSync(join(bin, 'ssh'), '#!/bin/sh\ntouch "$SSH_MARKER"\nexit 99\n', { mode: 0o700 });
+
     const result = spawnSync(
       process.execPath,
       [resolve('bin/compoza.ts'), '--hosts', hosts, 'setup-proxy', 'server', ...selector],
       {
         encoding: 'utf8',
-        timeout: 10_000,
+        timeout: CLI_TIMEOUT_MS,
         env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SSH_MARKER: marker },
       },
     );
     assert.strictEqual(result.status === 0, success, result.stderr);
     assert.include(result.stdout + result.stderr, expected);
     assert.isFalse(existsSync(marker));
+
     if (success) {
       assert.notInclude(
         result.stdout,

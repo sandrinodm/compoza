@@ -1,20 +1,68 @@
-import { Effect, FileSystem, Path, Schema } from 'effect';
+import { Effect, Path, Schema } from 'effect';
 import { resolve } from 'node:path';
 
-import { DeployError, platformFailure } from '../errors.ts';
-import { readConfigFile } from './config-file.ts';
-import { expandHome } from './hosts.ts';
-import { AbsolutePath, Name, Target } from './schema.ts';
-
-export { HealthPath, CaddyIngress, NoIngress } from '../extensions/config.ts';
-
-export { Ingress, SecretsConfig } from '../extensions/config.ts';
+import { DeployError } from '../errors.ts';
 import {
   Ingress,
   SecretsConfig,
   resolveIngress,
   type ResolvedIngress,
 } from '../extensions/config.ts';
+import { fileExists, readConfigFile } from './config-file.ts';
+import { expandHome } from './hosts.ts';
+import { AbsolutePath, Name, Target } from './schema.ts';
+
+export { HealthPath, CaddyIngress, NoIngress } from '../extensions/config.ts';
+export { Ingress, SecretsConfig } from '../extensions/config.ts';
+
+/**
+ * The file name that marks a deploy folder.
+ */
+export const DEPLOY_FILE = 'deploy.yaml';
+
+/**
+ * The file name looked for when a folder has no `DEPLOY_FILE`, for repositories that spell YAML
+ * with three letters.
+ */
+const ALTERNATE_DEPLOY_FILE = 'deploy.yml';
+
+/**
+ * The path probed after a deploy when the ingress names none.
+ */
+export const DEFAULT_HEALTH_PATH = '/';
+
+/**
+ * A target that already names a YAML file rather than a folder.
+ */
+const YAML_FILE_PATTERN = /\.ya?ml$/;
+
+/**
+ * The longest readiness or probe timeout a configuration may set, in seconds (one hour).
+ */
+const MAX_TIMEOUT_SECONDS = 3600;
+
+/**
+ * A timeout in whole seconds, from one second up to `MAX_TIMEOUT_SECONDS`.
+ */
+const TimeoutSeconds = Schema.Int.pipe(
+  Schema.check(Schema.isBetween({ minimum: 1, maximum: MAX_TIMEOUT_SECONDS })),
+);
+
+/**
+ * An HTTP or HTTPS URL without whitespace or an `@`, so it can carry no user credentials.
+ */
+const HEALTH_URL_PATTERN = /^https?:\/\/[^\s@]+$/;
+
+/**
+ * A directory path that is not blank and holds no control characters, such as newlines or tabs.
+ */
+const DIRECTORY_PATH_PATTERN = /^(?=.*\S)[^\p{Cc}]+$/u;
+
+/**
+ * The message for a configuration that declares more than one secret source at the same level.
+ */
+const AMBIGUOUS_SECRET_SOURCES =
+  'Ambiguous secret sources: use secrets, envFile, or remote.envFile, never a combination';
 
 /**
  * Settings that replace the deployment's for `--local` runs against this machine's Docker.
@@ -62,9 +110,7 @@ export const RemoteConfig = Schema.Struct({
   /**
    * The Compose readiness timeout in seconds, defaulting to 180.
    */
-  waitTimeoutSeconds: Schema.optionalKey(
-    Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 3600 }))),
-  ),
+  waitTimeoutSeconds: Schema.optionalKey(TimeoutSeconds),
 });
 
 /**
@@ -76,14 +122,12 @@ export const HealthConfig = Schema.Struct({
   /**
    * The HTTP or HTTPS URL to probe from the host, without credentials.
    */
-  url: Schema.String.pipe(Schema.check(Schema.isPattern(/^https?:\/\/[^\s@]+$/))),
+  url: Schema.String.pipe(Schema.check(Schema.isPattern(HEALTH_URL_PATTERN))),
 
   /**
    * The total probe timeout in seconds, defaulting to 180.
    */
-  timeoutSeconds: Schema.optionalKey(
-    Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 3600 }))),
-  ),
+  timeoutSeconds: Schema.optionalKey(TimeoutSeconds),
 });
 
 /**
@@ -132,6 +176,7 @@ export const Destination = Schema.Struct({
    * The non-secret variables merged over app defaults.
    */
   environment: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+
   /**
    * The ingress replacing the app default, including `none` for private destinations.
    */
@@ -183,7 +228,7 @@ export const DeployConfig = Schema.Struct({
   workingDirectory: Schema.optionalKey(
     Schema.String.pipe(
       Schema.check(
-        Schema.isPattern(/^(?=.*\S)[^\p{Cc}]+$/u, {
+        Schema.isPattern(DIRECTORY_PATH_PATTERN, {
           message: 'expected a nonempty directory path without control characters',
         }),
       ),
@@ -246,7 +291,8 @@ export const DeployConfig = Schema.Struct({
   local: Schema.optionalKey(LocalOverrides),
 
   /**
-   * The Compose execution location; defaults to the original client-side Docker SSH execution.
+   * Where Compose runs: `client` (the default) runs it on this machine against the host's Docker
+   * over SSH, `ssh` runs it on the host itself.
    */
   execution: Schema.optionalKey(Schema.Literals(['client', 'ssh'])),
 
@@ -316,16 +362,6 @@ export function workingDirectoryOf(app: App): string {
 }
 
 /**
- * The file name that marks a deploy folder.
- */
-export const DEPLOY_FILE = 'deploy.yaml';
-
-/**
- * The path probed after a deploy when the ingress names none.
- */
-export const DEFAULT_HEALTH_PATH = '/';
-
-/**
  * The app's ingress, `none` when the configuration leaves it out.
  */
 export function ingressOf(config: DeployConfig): ResolvedIngress {
@@ -374,38 +410,43 @@ export function environmentOf(
  */
 export const loadApp = Effect.fn('loadApp')(function* (target: string) {
   const path = yield* Path.Path;
-  const resolved = path.resolve(target);
-  const fs = yield* FileSystem.FileSystem;
-  let file = /\.ya?ml$/.test(resolved) ? resolved : path.join(resolved, DEPLOY_FILE);
-  if (
-    file !== resolved &&
-    !(yield* fs.exists(file).pipe(Effect.mapError(platformFailure(`Looking for ${file}`))))
-  ) {
-    const alternate = path.join(resolved, 'deploy.yml');
-    if (
-      yield* fs.exists(alternate).pipe(Effect.mapError(platformFailure(`Looking for ${alternate}`)))
-    ) {
-      file = alternate;
-    }
-  }
-
+  const file = yield* deployFileFor(target);
   const config = yield* readConfigFile(
     file,
     DeployConfig,
     `No ${file}. Point compoza at a folder holding a ${DEPLOY_FILE}.`,
-    true,
+    { privateInput: true },
   );
   const app: App = { dir: path.dirname(file), file, config };
   yield* Effect.try({
     try: () => validateSecretSettings(config),
-    catch: () =>
-      new DeployError({
-        message:
-          'Ambiguous secret sources: use secrets, envFile, or remote.envFile, never a combination',
-      }),
+    catch: () => new DeployError({ message: AMBIGUOUS_SECRET_SOURCES }),
   });
 
   return app;
+});
+
+/**
+ * The deploy file a `loadApp` target names: the target itself when it ends in `.yaml` or `.yml`,
+ * otherwise the folder's `DEPLOY_FILE`, or its `ALTERNATE_DEPLOY_FILE` when only that one exists.
+ *
+ * A folder with neither file still yields the `DEPLOY_FILE` path, so the missing-file message names
+ * the preferred spelling.
+ */
+const deployFileFor = Effect.fn('deployFileFor')(function* (target: string) {
+  const path = yield* Path.Path;
+  const resolved = path.resolve(target);
+  if (YAML_FILE_PATTERN.test(resolved)) {
+    return resolved;
+  }
+
+  const preferred = path.join(resolved, DEPLOY_FILE);
+  if (yield* fileExists(preferred)) {
+    return preferred;
+  }
+
+  const alternate = path.join(resolved, ALTERNATE_DEPLOY_FILE);
+  return (yield* fileExists(alternate)) ? alternate : preferred;
 });
 
 /**
@@ -420,9 +461,8 @@ export function selectDestination(app: App, name?: string): App {
 
   const selected = app.config.destinations?.[name];
   if (selected === undefined) {
-    throw new Error(
-      `Unknown destination "${name}"; choices: ${Object.keys(app.config.destinations ?? {}).join(', ') || 'none'}`,
-    );
+    const choices = Object.keys(app.config.destinations ?? {}).join(', ') || 'none';
+    throw new Error(`Unknown destination "${name}"; choices: ${choices}`);
   }
 
   const config = {
@@ -470,12 +510,8 @@ export function validateSecretSettings(config: DeployConfig): void {
  * callers.
  */
 export function secretSettingsIssue(config: DeployConfig): string | undefined {
-  if (
-    [config.secrets, config.envFile, config.remote?.envFile].filter(
-      (source) => source !== undefined,
-    ).length > 1
-  ) {
-    return 'Ambiguous secret sources: use secrets, envFile, or remote.envFile, never a combination';
+  if (declaredSecretSources(config).length > 1) {
+    return AMBIGUOUS_SECRET_SOURCES;
   }
 
   for (const destination of Object.values(config.destinations ?? {})) {
@@ -485,4 +521,14 @@ export function secretSettingsIssue(config: DeployConfig): string | undefined {
   }
 
   return undefined;
+}
+
+/**
+ * The secret sources a configuration declares at its top level, out of `secrets`, `envFile` and
+ * `remote.envFile`; empty when it declares none. Destination sources are not included.
+ */
+export function declaredSecretSources(config: DeployConfig): ReadonlyArray<unknown> {
+  return [config.secrets, config.envFile, config.remote?.envFile].filter(
+    (source) => source !== undefined,
+  );
 }

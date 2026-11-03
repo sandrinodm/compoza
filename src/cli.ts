@@ -1,12 +1,14 @@
 import { Console, Effect, Option } from 'effect';
 import { Argument, Command, Flag } from 'effect/cli';
 
+import type { App } from './config/deploy.ts';
+import type { Resolved } from './deploy.ts';
+
 import { blocking, type Check, formatChecks, runChecks } from './checks.ts';
 import { command } from './command.ts';
 import { hostNamed, loadHostsForRun } from './config/hosts.ts';
 import { readSecrets } from './config/secrets.ts';
-import { deploy, resolve } from './deploy.ts';
-import { DeployError } from './errors.ts';
+import { deploy, resolve, tryIngressPlan } from './deploy.ts';
 import { hostIngress } from './extensions/ingress.ts';
 import { setupOperationInput } from './ingress-setup.ts';
 import { lifecycle, projectArgs, remove } from './lifecycle.ts';
@@ -14,6 +16,12 @@ import { publish } from './publish.ts';
 import { Remote } from './services/Remote.ts';
 import { DryRun, Shell } from './services/Shell.ts';
 import { inspectSsh } from './ssh-deploy.ts';
+
+/**
+ * The detail of a passing `secrets` check when the source holds no variables: an app on legacy host
+ * dotenv keeps its secrets on the host, which the host readiness checks cover.
+ */
+const NO_SECRET_NAMES = '(no variables; legacy host dotenv uses host readiness)';
 
 /**
  * The deploy folder argument shared by the app commands: a folder holding `deploy.yaml`, or the
@@ -38,7 +46,20 @@ const requiredFolder = Argument.String('folder').pipe(
 );
 
 /**
- * The root command: it carries the `--hosts` flag every subcommand reads.
+ * An on/off flag, off unless given.
+ */
+function switchFlag(name: string, description: string): Flag.Flag<boolean> {
+  return Flag.Boolean(name).pipe(Flag.withDescription(description), Flag.withDefault(false));
+}
+
+/**
+ * The `--dry-run` flag of `deploy` and of the commands that change a host: print every command
+ * instead of running it.
+ */
+const dryRunFlag = switchFlag('dry-run', 'Print every command instead of running it');
+
+/**
+ * The root command: it carries the `--destination` and `--hosts` flags every subcommand reads.
  */
 const root = Command.make('compoza').pipe(
   Command.withSharedFlags({
@@ -76,8 +97,40 @@ const exitCode2 = Effect.sync(() => {
 function checkSummary(checks: ReadonlyArray<Check>): string {
   const failing = checks.filter((check) => !check.ok).length;
   const blocked = blocking(checks).length;
-  const summary = `${checks.length} ${checks.length === 1 ? 'check' : 'checks'}, ${failing} failing`;
+  const noun = checks.length === 1 ? 'check' : 'checks';
+  const summary = `${checks.length} ${noun}, ${failing} failing`;
   return blocked === failing ? summary : `${summary} (${blocked} blocking a deploy)`;
+}
+
+/**
+ * Resolves the app in `folder` with the `--hosts` and `--destination` flags of the root command.
+ */
+function resolveFolder(folder: string) {
+  return Effect.gen(function* () {
+    const { hosts, destination } = yield* root;
+    return yield* resolve(folder, hosts, Option.getOrUndefined(destination));
+  });
+}
+
+/**
+ * The `secrets` check of `check --secrets`: whether the app's secret source can be read, naming its
+ * variables but never printing their values.
+ */
+function secretsCheck(app: App, local: boolean) {
+  return readSecrets(app, local).pipe(
+    Effect.map((values): Check => {
+      const names = Object.keys(values).sort().join(', ') || NO_SECRET_NAMES;
+      return {
+        name: 'secrets',
+        ok: true,
+        detail: `Secret source accessible; names: ${names}`,
+        fix: 'manual',
+      };
+    }),
+    Effect.catchTag('DeployError', (error): Effect.Effect<Check> =>
+      Effect.succeed({ name: 'secrets', ok: false, detail: error.message, fix: 'manual' }),
+    ),
+  );
 }
 
 /**
@@ -88,42 +141,16 @@ const check = Command.make(
   'check',
   {
     folder,
-    secrets: Flag.Boolean('secrets').pipe(
-      Flag.withDescription('Explicitly read secret source access; report names only'),
-      Flag.withDefault(false),
-    ),
-    local: Flag.Boolean('local').pipe(
-      Flag.withDescription('Skip remote readiness; with --secrets, check the local source'),
-      Flag.withDefault(false),
-    ),
-    json: Flag.Boolean('json').pipe(
-      Flag.withDescription('Print the checks as JSON'),
-      Flag.withDefault(false),
-    ),
+    secrets: switchFlag('secrets', 'Explicitly read secret source access; report names only'),
+    local: switchFlag('local', 'Skip remote readiness; with --secrets, check the local source'),
+    json: switchFlag('json', 'Print the checks as JSON'),
   },
   Effect.fn(function* ({ folder, json, secrets, local }) {
-    const { hosts, destination } = yield* root;
-    const { app, host } = yield* resolve(folder, hosts, Option.getOrUndefined(destination));
+    const { app, host } = yield* resolveFolder(folder);
     const checks: Array<Check> = [...(local ? [] : yield* runChecks(app, host))];
 
     if (secrets) {
-      const access = yield* readSecrets(app, local).pipe(
-        Effect.map((values): Check => ({
-          name: 'secrets',
-          ok: true,
-          detail: `Secret source accessible; names: ${Object.keys(values).sort().join(', ') || '(no variables; legacy host dotenv uses host readiness)'}`,
-          fix: 'manual',
-        })),
-        Effect.catchTag('DeployError', (error) =>
-          Effect.succeed({
-            name: 'secrets',
-            ok: false,
-            detail: error.message,
-            fix: 'manual',
-          } as Check),
-        ),
-      );
-      checks.push(access);
+      checks.push(yield* secretsCheck(app, local));
     }
 
     if (json) {
@@ -155,17 +182,14 @@ const deployCommand = Command.make(
   'deploy',
   {
     folder,
-    dryRun: Flag.Boolean('dry-run').pipe(
-      Flag.withDescription('Print every command instead of running it'),
-      Flag.withDefault(false),
+    dryRun: dryRunFlag,
+    local: switchFlag(
+      'local',
+      "Build and run the stack on this machine's Docker instead of the host",
     ),
-    local: Flag.Boolean('local').pipe(
-      Flag.withDescription("Build and run the stack on this machine's Docker instead of the host"),
-      Flag.withDefault(false),
-    ),
-    allowDirty: Flag.Boolean('allow-dirty').pipe(
-      Flag.withDescription('Deploy a checkout with uncommitted changes, tagged <commit>-dirty'),
-      Flag.withDefault(false),
+    allowDirty: switchFlag(
+      'allow-dirty',
+      'Deploy a checkout with uncommitted changes, tagged <commit>-dirty',
     ),
     tag: Flag.String('tag').pipe(
       Flag.withDescription('Reuse images with this tag with the current local config'),
@@ -211,22 +235,15 @@ const setupProxy = Command.make(
       ),
       Flag.optional,
     ),
-    dryRun: Flag.Boolean('dry-run').pipe(
-      Flag.withDescription('Preview ingress setup without connecting to the host'),
-      Flag.withDefault(false),
-    ),
+    dryRun: switchFlag('dry-run', 'Preview ingress setup without connecting to the host'),
   },
   Effect.fn(function* ({ host: name, ingress, dryRun }) {
     const { hosts } = yield* root;
     const remote = yield* Remote;
     const host = yield* hostNamed(name, yield* loadHostsForRun(hosts));
-    const operation = yield* Effect.try({
-      try: () => hostIngress(host, Option.getOrUndefined(ingress)).setup(host),
-      catch: (cause) =>
-        new DeployError({
-          message: cause instanceof Error ? cause.message : 'Invalid ingress configuration',
-        }),
-    });
+    const operation = yield* tryIngressPlan(() =>
+      hostIngress(host, Option.getOrUndefined(ingress)).setup(host),
+    );
 
     if (dryRun) {
       yield* Console.log(operation.label);
@@ -260,14 +277,10 @@ const publishCommand = Command.make(
       Argument.withDescription('Content section named in deploy.yaml'),
     ),
     source: Argument.String('source').pipe(Argument.withDescription('Local folder to mirror')),
-    dryRun: Flag.Boolean('dry-run').pipe(
-      Flag.withDescription('List the changes rsync would make'),
-      Flag.withDefault(false),
-    ),
+    dryRun: switchFlag('dry-run', 'List the changes rsync would make'),
   },
   Effect.fn(function* ({ folder, section, source, dryRun }) {
-    const { hosts, destination } = yield* root;
-    const { app, host } = yield* resolve(folder, hosts, Option.getOrUndefined(destination));
+    const { app, host } = yield* resolveFolder(folder);
     yield* publish(app, host, section, source, dryRun).pipe(Effect.provideService(DryRun, dryRun));
   }),
 ).pipe(
@@ -277,6 +290,21 @@ const publishCommand = Command.make(
 );
 
 /**
+ * Runs a read-only `docker compose` subcommand (`ps`, `logs`) for the app on its host: through the
+ * host's own script for `execution: ssh`, else through `docker --host` from this machine.
+ */
+function inspect(resolved: Resolved, args: ReadonlyArray<string>) {
+  return Effect.gen(function* () {
+    if (resolved.app.config.execution === 'ssh') {
+      return yield* inspectSsh(resolved.app, resolved.host, args);
+    }
+
+    const shell = yield* Shell;
+    yield* shell.run(command('docker', [...projectArgs(resolved), ...args]));
+  });
+}
+
+/**
  * `status`: `docker compose ps --all` for the app on its host; `--all` so a stopped stack is listed
  * as stopped rather than appearing absent.
  */
@@ -284,14 +312,7 @@ const status = Command.make(
   'status',
   { folder },
   Effect.fn(function* ({ folder }) {
-    const { hosts, destination } = yield* root;
-    const shell = yield* Shell;
-    const resolved = yield* resolve(folder, hosts, Option.getOrUndefined(destination));
-    if (resolved.app.config.execution === 'ssh') {
-      yield* inspectSsh(resolved.app, resolved.host, ['ps', '--all']);
-    } else {
-      yield* shell.run(command('docker', [...projectArgs(resolved), 'ps', '--all']));
-    }
+    yield* inspect(yield* resolveFolder(folder), ['ps', '--all']);
   }),
 ).pipe(Command.withDescription("Lists the app's containers on its host"));
 
@@ -314,42 +335,15 @@ const logs = Command.make(
     ),
   },
   Effect.fn(function* ({ folder, service, tail, follow }) {
-    const { hosts, destination } = yield* root;
-    const shell = yield* Shell;
-    const resolved = yield* resolve(folder, hosts, Option.getOrUndefined(destination));
-    if (resolved.app.config.execution === 'ssh') {
-      yield* inspectSsh(resolved.app, resolved.host, [
-        'logs',
-        '--tail',
-        String(tail),
-        ...(follow ? ['--follow'] : []),
-        ...Option.match(service, { onNone: () => [], onSome: (name) => [name] }),
-      ]);
-
-      return;
-    }
-
-    yield* shell.run(
-      command('docker', [
-        ...projectArgs(resolved),
-        'logs',
-        '--tail',
-        String(tail),
-        ...(follow ? ['--follow'] : []),
-        ...Option.match(service, { onNone: () => [], onSome: (name) => [name] }),
-      ]),
-    );
+    yield* inspect(yield* resolveFolder(folder), [
+      'logs',
+      '--tail',
+      String(tail),
+      ...(follow ? ['--follow'] : []),
+      ...Option.match(service, { onNone: () => [], onSome: (name) => [name] }),
+    ]);
   }),
 ).pipe(Command.withDescription("Shows the app's container logs from its host"));
-
-/**
- * The `--dry-run` flag of the commands that change a host: print every command instead of running
- * it.
- */
-const dryRunFlag = Flag.Boolean('dry-run').pipe(
-  Flag.withDescription('Print every command instead of running it'),
-  Flag.withDefault(false),
-);
 
 /**
  * `stop`: halts the app's containers on its host; networks, volumes and images stay, so `start`
@@ -359,8 +353,7 @@ const stop = Command.make(
   'stop',
   { folder, dryRun: dryRunFlag },
   Effect.fn(function* ({ folder, dryRun }) {
-    const { hosts, destination } = yield* root;
-    const resolved = yield* resolve(folder, hosts, Option.getOrUndefined(destination));
+    const resolved = yield* resolveFolder(folder);
     yield* lifecycle(resolved, 'stop').pipe(Effect.provideService(DryRun, dryRun));
   }),
 ).pipe(
@@ -376,8 +369,7 @@ const start = Command.make(
   'start',
   { folder, dryRun: dryRunFlag },
   Effect.fn(function* ({ folder, dryRun }) {
-    const { hosts, destination } = yield* root;
-    const resolved = yield* resolve(folder, hosts, Option.getOrUndefined(destination));
+    const resolved = yield* resolveFolder(folder);
     yield* lifecycle(resolved, 'start').pipe(Effect.provideService(DryRun, dryRun));
   }),
 ).pipe(Command.withDescription("Starts the app's stopped containers on its host"));
@@ -391,17 +383,14 @@ const deleteCommand = Command.make(
   'delete',
   {
     folder,
-    volumes: Flag.Boolean('volumes').pipe(
-      Flag.withDescription(
-        "Also remove the project's named volumes (bind-mounted host folders always stay)",
-      ),
-      Flag.withDefault(false),
+    volumes: switchFlag(
+      'volumes',
+      "Also remove the project's named volumes (bind-mounted host folders always stay)",
     ),
     dryRun: dryRunFlag,
   },
   Effect.fn(function* ({ folder, volumes, dryRun }) {
-    const { hosts, destination } = yield* root;
-    const resolved = yield* resolve(folder, hosts, Option.getOrUndefined(destination));
+    const resolved = yield* resolveFolder(folder);
     yield* remove(resolved, volumes).pipe(Effect.provideService(DryRun, dryRun));
   }),
 ).pipe(
