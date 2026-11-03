@@ -151,7 +151,7 @@ export function composePrefix(app: App, host?: HostConfig): ReadonlyArray<string
  */
 export function planDeployment(options: PlanOptions): ReadonlyArray<Step> {
   const { app, host, tag, local } = options;
-  validateSecrets(app, options.secrets, local);
+  validateSecrets(app, options.secrets, { local });
 
   const steps: Array<Step> = [];
   const images: Record<string, string> = {};
@@ -237,13 +237,16 @@ function composeUpCommand(options: PlanOptions, images: Readonly<Record<string, 
   const { app, host, local } = options;
   const pull = !local && host.transport.mode === 'registry' ? 'always' : 'missing';
   const replacesDotenv =
-    secretSource(app, local) !== undefined || Object.keys(options.secrets).length > 0;
+    secretSource(app, { local }) !== undefined || Object.keys(options.secrets).length > 0;
   return command(
     'docker',
     [
       ...composePrefix(app, local ? undefined : host),
       ...(replacesDotenv ? ['--env-file', devNull] : []),
-      ...composeFilesOf(app.config, local).flatMap((file) => ['--file', resolve(app.dir, file)]),
+      ...composeFilesOf(app.config, { local }).flatMap((file) => [
+        '--file',
+        resolve(app.dir, file),
+      ]),
       ...(app.config.profiles ?? []).flatMap((profile) => ['--profile', profile]),
       'up',
       '--detach',
@@ -254,7 +257,7 @@ function composeUpCommand(options: PlanOptions, images: Readonly<Record<string, 
     ],
     {
       cwd: app.dir,
-      env: { ...environmentOf(app.config, local), ...options.secrets, ...images },
+      env: { ...environmentOf(app.config, { local }), ...options.secrets, ...images },
       secret: Object.keys(options.secrets),
       sensitive: true,
     },

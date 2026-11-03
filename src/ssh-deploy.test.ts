@@ -142,7 +142,7 @@ describe('SSH deployment selection and transports', () => {
         Layer.succeed(
           Remote,
           Remote.of({
-            run: (_host, _script, _input, label) =>
+            run: (_host, _script, { label } = {}) =>
               Effect.gen(function* () {
                 assert.isTrue(yield* DryRun);
                 assert.include(label, 'stage');

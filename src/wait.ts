@@ -57,7 +57,10 @@ function probe(url: string): Effect.Effect<number | undefined, never, HttpClient
  * with the elapsed time and the last status seen shows that the wait is alive. Time comes from
  * `Clock`, so tests can drive it with `TestClock`.
  */
-export const waitForUrl = Effect.fn('waitForUrl')(function* (url: string, timeoutMillis: number) {
+export const waitForUrl = Effect.fn('waitForUrl')(function* (
+  url: string,
+  timeoutMillis: number,
+): Effect.fn.Return<number, DeployError, HttpClient.HttpClient> {
   const start = yield* Clock.currentTimeMillis;
   const deadline = start + timeoutMillis;
   let noticed = start;

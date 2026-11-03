@@ -1,4 +1,4 @@
-import { Console, Effect } from 'effect';
+import { Console, Effect, type FileSystem, type Path } from 'effect';
 
 import type { App } from './config/deploy.ts';
 import type { HostConfig } from './config/hosts.ts';
@@ -48,7 +48,7 @@ export const deploySsh = Effect.fn('deploySsh')(function* (
   host: HostConfig,
   options: DeployOptions,
   source: { readonly tag: string; readonly context: string },
-) {
+): Effect.fn.Return<void, DeployError, FileSystem.FileSystem | Path.Path | Remote | Shell> {
   const shell = yield* Shell;
   const remote = yield* Remote;
 
@@ -98,13 +98,11 @@ export const deploySsh = Effect.fn('deploySsh')(function* (
   );
 
   const stackUpdate = remote
-    .run(
-      host,
-      deployment.script,
-      deployment.input,
-      `<stage ${bundle.length} declared files; ${STACK_UPDATE_SUMMARY}>`,
-      true,
-    )
+    .run(host, deployment.script, {
+      input: deployment.input,
+      label: `<stage ${bundle.length} declared files; ${STACK_UPDATE_SUMMARY}>`,
+      stream: true,
+    })
     .pipe(
       Effect.flatMap((output) => (output === '' ? Effect.void : Console.log(output.trimEnd()))),
     );
@@ -134,7 +132,7 @@ export const inspectSsh = Effect.fn('inspectSsh')(function* (
   app: App,
   host: HostConfig,
   args: ReadonlyArray<string>,
-) {
+): Effect.fn.Return<void, DeployError, Shell> {
   const shell = yield* Shell;
   const script = yield* planned(() => deployedScript(app, args, false));
   yield* shell.run(

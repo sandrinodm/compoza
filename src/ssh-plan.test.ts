@@ -594,6 +594,47 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
     );
   });
 
+  it('names the first requirement a configured environment variable fails', () => {
+    const withEnvironment = (environment: Record<string, string>): App => ({
+      dir: '/app',
+      config: {
+        name: 'app',
+        host: 'host',
+        targets: ['web'],
+        composeFiles: ['compose.yaml'],
+        environment,
+      },
+    });
+    const cases: ReadonlyArray<readonly [Record<string, string>, string]> = [
+      [{ '1TOKEN': 'value' }, 'Environment variable name 1TOKEN is not portable; use a letter'],
+      [{ 'BAD-NAME': 'value' }, 'Environment variable name BAD-NAME is not portable'],
+      [{ WEB_IMAGE: 'value' }, "Environment variable WEB_IMAGE is reserved for a target's image"],
+      [{ PATH: '/bin' }, 'Environment variable PATH is reserved by Compose, Docker or the shell'],
+      [{ COMPOSE_FILE: 'x.yaml' }, 'COMPOSE_FILE is reserved by Compose, Docker or the shell'],
+      [{ DOCKER_HOST: 'tcp://x' }, 'DOCKER_HOST is reserved by Compose, Docker or the shell'],
+      [
+        { TOKEN: 'SENTINEL_VALUE\nsecond' },
+        'Environment variable TOKEN has a multi-line value; it must',
+      ],
+      [{ TOKEN: 'SENTINEL_VALUE\0' }, 'without line breaks or NUL'],
+      [
+        { OK: 'a', 'BAD NAME': 'b', PATH: '/bin' },
+        'Environment variable name BAD NAME is not portable',
+      ],
+    ];
+
+    for (const [environment, message] of cases) {
+      assert.throws(() => generatedEnvironment(withEnvironment(environment)), message);
+    }
+
+    try {
+      generatedEnvironment(withEnvironment({ TOKEN: 'SENTINEL_VALUE\r' }));
+      assert.fail('Expected a multi-line value to be rejected');
+    } catch (error) {
+      assert.notInclude((error as Error).message, 'SENTINEL_VALUE');
+    }
+  });
+
   it('accepts only absolute stack roots below the filesystem root', () => {
     const withStackDir = (stackDir: string): App => ({
       dir: '/app',
@@ -605,10 +646,28 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
         remote: { stackDir },
       },
     });
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ['stacks/app', 'remote.stackDir must be an absolute path'],
+      ['./app', 'remote.stackDir must be an absolute path'],
+      ['/', 'remote.stackDir must not be the filesystem root'],
+      ['/srv/../etc', 'remote.stackDir must not contain . or .. components'],
+      ['/srv/./app', 'remote.stackDir must not contain . or .. components'],
+      ['/srv/app\nx', 'remote.stackDir must not contain line breaks or NUL'],
+      ['/srv/app\0', 'remote.stackDir must not contain line breaks or NUL'],
+    ];
 
     assert.strictEqual(stackRoot(withStackDir('/srv/app/')), '/srv/app');
-    for (const stackDir of ['stacks/app', './app', '/', '/srv/../etc', '/srv/app\nx']) {
-      assert.throws(() => stackRoot(withStackDir(stackDir)), 'remote.stackDir');
+    for (const [stackDir, message] of cases) {
+      assert.throws(() => stackRoot(withStackDir(stackDir)), message);
     }
+  });
+
+  it('requires remote.stackDir for SSH execution', () => {
+    const app: App = {
+      dir: '/app',
+      config: { name: 'app', host: 'host', targets: [], composeFiles: ['compose.yaml'] },
+    };
+
+    assert.throws(() => stackRoot(app), 'SSH execution requires remote.stackDir; set it');
   });
 });

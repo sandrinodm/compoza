@@ -1,6 +1,6 @@
-import { Effect, Result } from 'effect';
+import { Effect, type FileSystem, type Path, Result } from 'effect';
 
-import type { App } from './deploy.ts';
+import type { App, RunOptions } from './deploy.ts';
 
 import { DeployError } from '../errors.ts';
 import { resolveSecrets, type ResolvedSecretsConfig } from '../extensions/config.ts';
@@ -50,7 +50,7 @@ const UNSUPPORTED_VALUE_PATTERN = /[\r\n\0]/;
  */
 export function selectSecretSource(
   app: App,
-  local = false,
+  { local = false }: RunOptions = {},
 ): Result.Result<ResolvedSecretsConfig | undefined, DeployError> {
   const issue = secretSettingsIssue(app.config);
   if (issue !== undefined) {
@@ -82,8 +82,11 @@ export function selectSecretSource(
  * Keeps the synchronous planner contract; Effect callers convert `selectSecretSource` with
  * `Effect.fromResult`.
  */
-export function secretSource(app: App, local = false): ResolvedSecretsConfig | undefined {
-  const selected = selectSecretSource(app, local);
+export function secretSource(
+  app: App,
+  options: RunOptions = {},
+): ResolvedSecretsConfig | undefined {
+  const selected = selectSecretSource(app, options);
   if (Result.isFailure(selected)) {
     throw new Error(selected.failure.message);
   }
@@ -101,10 +104,10 @@ export function secretSource(app: App, local = false): ResolvedSecretsConfig | u
 export function validateSecrets(
   app: App,
   values: Readonly<Record<string, string>>,
-  local = false,
+  { local = false }: RunOptions = {},
 ): void {
   const imageVariables = new Set(app.config.targets.map(imageVariable));
-  const environment = environmentOf(app.config, local);
+  const environment = environmentOf(app.config, { local });
 
   if (imageVariables.size !== app.config.targets.length) {
     throw new Error('Targets must map to distinct image variables');
@@ -148,8 +151,11 @@ export function secretEnvironment(values: Readonly<Record<string, string>>): str
  * check command does not call this function; explicit access checks do, including before a first
  * SSH deployment.
  */
-export const readSecrets = Effect.fn('readSecrets')(function* (app: App, local = false) {
-  const source = yield* Effect.fromResult(selectSecretSource(app, local));
+export const readSecrets = Effect.fn('readSecrets')(function* (
+  app: App,
+  options: RunOptions = {},
+): Effect.fn.Return<Record<string, string>, DeployError, FileSystem.FileSystem | Path.Path> {
+  const source = yield* Effect.fromResult(selectSecretSource(app, options));
   if (source === undefined || source.provider === 'none' || (yield* DryRun)) {
     return {} as Record<string, string>;
   }
@@ -160,7 +166,7 @@ export const readSecrets = Effect.fn('readSecrets')(function* (app: App, local =
   });
   const values = yield* provider.read(source, app.dir);
   yield* Effect.try({
-    try: () => validateSecrets(app, values, local),
+    try: () => validateSecrets(app, values, options),
     catch: (cause) => new DeployError({ message: (cause as Error).message }),
   });
 

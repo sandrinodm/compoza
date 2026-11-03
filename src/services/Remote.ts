@@ -21,6 +21,30 @@ export function scriptLabel(script: string): string {
 }
 
 /**
+ * How `Remote.run` feeds, prints and collects one script.
+ */
+export interface RemoteRunOptions {
+  /**
+   * Text fed to the script's standard input. When left out, standard input is closed (`ignore`), so
+   * a script that reads it sees end of file at once.
+   */
+  readonly input?: string | undefined;
+
+  /**
+   * The text printed after `$ ssh <host>`. Defaults to `scriptLabel(script)`, the script's first
+   * non-empty line.
+   */
+  readonly label?: string | undefined;
+
+  /**
+   * Whether standard output goes to the terminal as it arrives instead of being captured; the
+   * result is then `''`, and a failure does not print the output a second time. `false` when left
+   * out.
+   */
+  readonly stream?: boolean;
+}
+
+/**
  * Runs scripts on a Docker host over SSH.
  *
  * Every script runs under `bash -c` on the host, whatever the login shell there is: a host that
@@ -42,18 +66,18 @@ export class Remote extends Context.Service<
   {
     /**
      * Prints `$ ssh <host> <label>`, then runs `script` on `host` under `bash -c` unless `DryRun`
-     * is set, feeding `input` to its standard input when given, and returns its standard output.
+     * is set, feeding `options.input` to its standard input when given, and returns its standard
+     * output.
      *
-     * Under `DryRun` nothing runs and the output is `''`. `label` defaults to the script's first
-     * line (see `scriptLabel`). When the script exits non-zero its output is printed first, so a
-     * failing step is never silent.
+     * Under `DryRun` nothing runs and the output is `''`. `options.label` defaults to the script's
+     * first line (see `scriptLabel`). With `options.stream` the output goes to the terminal as it
+     * arrives and the result is `''`. When the script exits non-zero its captured output is printed
+     * first, so a failing step is never silent.
      */
     run(
       host: HostConfig,
       script: string,
-      input?: string,
-      label?: string,
-      stream?: boolean,
+      options?: RemoteRunOptions,
     ): Effect.Effect<string, DeployError>;
 
     /**
@@ -111,9 +135,7 @@ export class Remote extends Context.Service<
         const run = Effect.fn('Remote.run')(function* (
           host: HostConfig,
           script: string,
-          input?: string,
-          label?: string,
-          stream = false,
+          { input, label, stream = false }: RemoteRunOptions = {},
         ) {
           yield* Console.log(`$ ssh ${host.ssh} ${label ?? scriptLabel(script)}`);
 

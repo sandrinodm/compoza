@@ -73,7 +73,7 @@ export const publish = Effect.fn('publish')(function* (
   section: string,
   folder: string,
   dryRun: boolean,
-) {
+): Effect.fn.Return<void, DeployError, FileSystem.FileSystem | Path.Path | Remote | Shell> {
   const shell = yield* Shell;
   const remote = yield* Remote;
   const fs = yield* FileSystem.FileSystem;

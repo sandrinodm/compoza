@@ -1,3 +1,4 @@
+import { Schema } from 'effect';
 import { readFileSync } from 'node:fs';
 import YAML from 'yaml';
 
@@ -44,33 +45,244 @@ const DEFAULT_WAIT_TIMEOUT_SECONDS = 120;
 const METRICS_ADDRESS = '127.0.0.1:20241';
 
 /**
- * The only top-level Compose settings a custom connector template may use.
+ * A setting whose value the requirement checks inspect themselves. Any value passes the shape
+ * check, so a wrong value fails with the requirement it breaks rather than a generic shape error.
  */
-const ALLOWED_TOP_LEVEL_SETTINGS = new Set(['name', 'services', 'networks']);
+const Setting = Schema.optionalKey(Schema.Unknown);
+
+/**
+ * A YAML mapping with string keys and values of any type; scalars, null and sequences don't match.
+ */
+const Mapping = Schema.Record(Schema.String, Schema.Unknown);
+
+/**
+ * The only top-level Compose settings a custom connector template may use. Only `services` has a
+ * fixed shape here; the project name and networks are checked later with their own requirements.
+ */
+const ComposeDocument = Schema.Struct({
+  /**
+   * The Compose project name, which must stay `<container>-ingress`.
+   */
+  name: Setting,
+
+  /**
+   * The services by name, which must hold only the connector.
+   */
+  services: Mapping,
+
+  /**
+   * The stack networks, which must be the shared edge network and the private egress network.
+   */
+  networks: Setting,
+});
+
+/**
+ * A parsed Compose document with a services mapping and only unchecked top-level values.
+ */
+type ComposeDocument = typeof ComposeDocument.Type;
 
 /**
  * The only connector service settings a custom template may use. Leaving out ports, volumes, builds
  * and namespace or privilege overrides is what keeps the connector isolated.
  */
-const ALLOWED_CONNECTOR_SETTINGS = new Set([
-  'image',
-  'container_name',
-  'user',
-  'restart',
-  'entrypoint',
-  'command',
-  'read_only',
-  'cap_drop',
-  'security_opt',
-  'stop_grace_period',
-  'mem_limit',
-  'pids_limit',
-  'cpus',
-  'logging',
-  'env_file',
-  'networks',
-  'healthcheck',
-]);
+const ConnectorService = Schema.Struct({
+  /**
+   * The connector image, which must be the configured one.
+   */
+  image: Setting,
+
+  /**
+   * The container name, which must be the configured connector container.
+   */
+  container_name: Setting,
+
+  /**
+   * The UID:GID the connector runs as, which must be the configured user.
+   */
+  user: Setting,
+
+  /**
+   * The restart policy, which must be `unless-stopped`.
+   */
+  restart: Setting,
+
+  /**
+   * The entrypoint, which must be exactly `cloudflared`.
+   */
+  entrypoint: Setting,
+
+  /**
+   * The cloudflared argument list, checked by `checkConnectorCommand`.
+   */
+  command: Setting,
+
+  /**
+   * Whether the root filesystem is read-only, which it must be.
+   */
+  read_only: Setting,
+
+  /**
+   * The dropped capabilities, which must include `ALL`.
+   */
+  cap_drop: Setting,
+
+  /**
+   * The security options, which must include `no-new-privileges:true`.
+   */
+  security_opt: Setting,
+
+  /**
+   * How long Docker waits before killing the connector, which must be the drain deadline plus
+   * headroom.
+   */
+  stop_grace_period: Setting,
+
+  /**
+   * The memory limit, which must be a positive byte size.
+   */
+  mem_limit: Setting,
+
+  /**
+   * The process limit, which must be a positive integer.
+   */
+  pids_limit: Setting,
+
+  /**
+   * The CPU limit, which is free to tune.
+   */
+  cpus: Setting,
+
+  /**
+   * The log driver and rotation options, which must rotate with positive limits.
+   */
+  logging: Setting,
+
+  /**
+   * The env-file sources, which must be only the selected raw credential file.
+   */
+  env_file: Setting,
+
+  /**
+   * The networks the connector joins, which must be exactly edge and egress.
+   */
+  networks: Setting,
+
+  /**
+   * The readiness check, which must be the native connector readiness command and stay enabled.
+   */
+  healthcheck: Setting,
+});
+
+/**
+ * A connector service mapping with only supported settings, each value still unchecked.
+ */
+type ConnectorService = typeof ConnectorService.Type;
+
+/**
+ * The `healthcheck` settings the readiness requirements read.
+ */
+const Healthcheck = Schema.Struct({
+  /**
+   * The readiness command.
+   */
+  test: Setting,
+
+  /**
+   * Whether the check is turned off.
+   */
+  disable: Setting,
+});
+
+/**
+ * The `logging` settings the rotation requirements read.
+ */
+const Logging = Schema.Struct({
+  /**
+   * The Docker log driver.
+   */
+  driver: Setting,
+
+  /**
+   * The driver options, read as `LoggingOptions`.
+   */
+  options: Setting,
+});
+
+/**
+ * The log driver options the rotation requirements read.
+ */
+const LoggingOptions = Schema.Struct({
+  /**
+   * The largest log file before rotation, as a Compose byte size.
+   */
+  'max-size': Setting,
+
+  /**
+   * How many rotated log files to keep.
+   */
+  'max-file': Setting,
+});
+
+/**
+ * A setting that `includes` can search for a required entry: a list, or a single string, which is
+ * searched as a substring.
+ */
+const SearchableSetting = Schema.Union([Schema.String, Schema.Array(Schema.Unknown)]);
+
+/**
+ * A command given as a YAML sequence, before its arguments are checked.
+ */
+const ArgumentList = Schema.Array(Schema.Unknown);
+
+/**
+ * A command whose arguments are all literal single-line strings, so none can expand or inject
+ * another line.
+ */
+const LiteralArguments = Schema.Array(
+  Schema.String.check(
+    Schema.makeFilter((argument: string) => !NON_LITERAL_ARGUMENT_PATTERN.test(argument)),
+  ),
+);
+
+/**
+ * The only networks the connector stack may define.
+ */
+const Networks = Schema.Struct({
+  /**
+   * The shared external network that origins join.
+   */
+  edge: Setting,
+
+  /**
+   * The private network only the connector joins, which must be an empty mapping.
+   */
+  egress: Setting,
+});
+
+/**
+ * The only settings the shared edge network may use.
+ */
+const EdgeNetwork = Schema.Struct({
+  /**
+   * The Docker network name, which must be the configured shared network.
+   */
+  name: Setting,
+
+  /**
+   * Whether Compose uses an existing network, which it must.
+   */
+  external: Setting,
+});
+
+/**
+ * The top-level settings names from `ComposeDocument`.
+ */
+const ALLOWED_TOP_LEVEL_SETTINGS = new Set(Object.keys(ComposeDocument.fields));
+
+/**
+ * The connector setting names from `ConnectorService`.
+ */
+const ALLOWED_CONNECTOR_SETTINGS = new Set(Object.keys(ConnectorService.fields));
 
 /**
  * The cloudflared options that would supply credentials or configuration outside the selected env
@@ -91,14 +303,14 @@ const CREDENTIAL_OPTIONS = [
 const ROTATING_LOG_DRIVERS = new Set(['local', 'json-file']);
 
 /**
- * The only networks the connector stack may define.
+ * The network names from `Networks`.
  */
-const ALLOWED_NETWORKS = new Set(['edge', 'egress']);
+const ALLOWED_NETWORKS = new Set(Object.keys(Networks.fields));
 
 /**
- * The only settings the shared edge network may use.
+ * The edge network setting names from `EdgeNetwork`.
  */
-const ALLOWED_EDGE_NETWORK_SETTINGS = new Set(['name', 'external']);
+const ALLOWED_EDGE_NETWORK_SETTINGS = new Set(Object.keys(EdgeNetwork.fields));
 
 /**
  * A positive Compose byte size such as `128m` or `10mb`.
@@ -130,16 +342,6 @@ function requireCondition(condition: unknown, requirement: string): asserts cond
 }
 
 /**
- * Distinguishes YAML mappings from scalars, null and sequences.
- *
- * It returns a plain boolean rather than a type predicate so the parsed model stays untyped and its
- * fields can be read without further narrowing.
- */
-function isMapping(value: unknown): boolean {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-/**
  * Checks custom Compose output before planning host operations, preserving connector identity and
  * runtime guarantees.
  */
@@ -149,7 +351,7 @@ function validateCompose(
   service: string,
   envFile: string,
 ): void {
-  const model = parseCompose(compose);
+  const model = composeDocument(parseCompose(compose));
   const connector = connectorService(model, service);
   checkConnectorIdentity(model, connector, proxy);
   checkConnectorIsolation(connector, envFile);
@@ -163,7 +365,7 @@ function validateCompose(
 /**
  * Parses rendered Compose text, rejecting oversized output, duplicate keys and aliases.
  */
-function parseCompose(compose: string): any {
+function parseCompose(compose: string): unknown {
   if (Buffer.byteLength(compose) > MAX_RENDERED_TEMPLATE_BYTES) {
     throw new Error('Cloudflare Compose template is too large');
   }
@@ -176,19 +378,28 @@ function parseCompose(compose: string): any {
 }
 
 /**
- * Checks the model's shape and returns its single connector service, rejecting settings outside the
- * allowlists.
+ * Checks that the parsed output is a mapping with a services mapping.
  */
-function connectorService(model: any, service: string): any {
-  requireCondition(isMapping(model), 'render a Compose mapping');
-  requireCondition(isMapping(model.services), 'define a services mapping');
+function composeDocument(model: unknown): ComposeDocument {
+  requireCondition(Schema.is(Mapping)(model), 'render a Compose mapping');
+  requireCondition(Schema.is(ComposeDocument)(model), 'define a services mapping');
+  return model;
+}
+
+/**
+ * Returns the document's single connector service, rejecting settings outside the allowlists.
+ */
+function connectorService(model: ComposeDocument, service: string): ConnectorService {
   requireCondition(
     Object.keys(model.services).length === 1,
     'define exactly one connector service',
   );
 
   const connector = model.services[service];
-  requireCondition(isMapping(connector), `define the connector service "${service}"`);
+  requireCondition(
+    Schema.is(ConnectorService)(connector),
+    `define the connector service "${service}"`,
+  );
   requireCondition(
     Object.keys(model).every((key) => ALLOWED_TOP_LEVEL_SETTINGS.has(key)),
     'use only the supported top-level settings',
@@ -203,7 +414,11 @@ function connectorService(model: any, service: string): any {
 /**
  * Keeps the stack identity fixed while allowing supported runtime tuning.
  */
-function checkConnectorIdentity(model: any, connector: any, proxy: CloudflareProxy): void {
+function checkConnectorIdentity(
+  model: ComposeDocument,
+  connector: ConnectorService,
+  proxy: CloudflareProxy,
+): void {
   requireCondition(model.name === `${proxy.container}-ingress`, 'preserve the stack project name');
   requireCondition(
     connector.container_name === proxy.container,
@@ -223,12 +438,16 @@ function checkConnectorIdentity(model: any, connector: any, proxy: CloudflarePro
 /**
  * Checks the connector's privilege restrictions and credential source.
  */
-function checkConnectorIsolation(connector: any, envFile: string): void {
+function checkConnectorIsolation(connector: ConnectorService, envFile: string): void {
   // The allowed settings exclude ports, volumes, builds and namespace or privilege overrides.
   requireCondition(connector.read_only === true, 'keep the connector filesystem read-only');
-  requireCondition(connector.cap_drop?.includes('ALL'), 'drop all connector capabilities');
   requireCondition(
-    connector.security_opt?.includes('no-new-privileges:true'),
+    Schema.is(SearchableSetting)(connector.cap_drop) && connector.cap_drop.includes('ALL'),
+    'drop all connector capabilities',
+  );
+  requireCondition(
+    Schema.is(SearchableSetting)(connector.security_opt) &&
+      connector.security_opt.includes('no-new-privileges:true'),
     'prevent privilege escalation',
   );
 
@@ -250,49 +469,50 @@ function checkConnectorIsolation(connector: any, envFile: string): void {
  * options, with private metrics and the configured drain deadline.
  */
 function checkConnectorCommand(command: unknown, gracePeriodSeconds: number): void {
-  requireCondition(Array.isArray(command), 'define the connector command as an argument list');
   requireCondition(
-    command.every(
-      (argument: unknown) =>
-        typeof argument === 'string' && !NON_LITERAL_ARGUMENT_PATTERN.test(argument),
-    ),
-    'use literal single-line command arguments',
+    Schema.is(ArgumentList)(command),
+    'define the connector command as an argument list',
   );
   requireCondition(
-    command[0] === 'tunnel' && command.at(-1) === 'run',
+    Schema.is(LiteralArguments)(command),
+    'use literal single-line command arguments',
+  );
+
+  // The guard intersects with the argument list type above; this restates it as plain strings.
+  const args: ReadonlyArray<string> = command;
+  requireCondition(
+    args[0] === 'tunnel' && args.at(-1) === 'run',
     'run the cloudflared tunnel command',
   );
 
   for (const option of CREDENTIAL_OPTIONS) {
     requireCondition(
-      command.every(
-        (argument: string) => argument !== option && !argument.startsWith(option + '='),
-      ),
+      args.every((argument) => argument !== option && !argument.startsWith(option + '=')),
       `omit the ${option} command option`,
     );
   }
 
-  requireCondition(command.includes('--no-autoupdate'), 'disable connector autoupdates');
+  requireCondition(args.includes('--no-autoupdate'), 'disable connector autoupdates');
 
   // Metrics stay private and the command uses the configured drain deadline.
   requireCondition(
-    command.filter((argument) => argument === '--metrics').length === 1,
+    args.filter((argument) => argument === '--metrics').length === 1,
     'set metrics exactly once',
   );
   requireCondition(
-    command.every((argument: string) => !argument.startsWith('--metrics=')),
+    args.every((argument) => !argument.startsWith('--metrics=')),
     'use a separate metrics address argument',
   );
   requireCondition(
-    command[command.indexOf('--metrics') + 1] === METRICS_ADDRESS,
+    args[args.indexOf('--metrics') + 1] === METRICS_ADDRESS,
     'bind metrics to the private listener',
   );
   requireCondition(
-    command.filter((argument) => argument === '--grace-period').length === 1,
+    args.filter((argument) => argument === '--grace-period').length === 1,
     'set the drain deadline exactly once',
   );
   requireCondition(
-    command[command.indexOf('--grace-period') + 1] === `${gracePeriodSeconds}s`,
+    args[args.indexOf('--grace-period') + 1] === `${gracePeriodSeconds}s`,
     'preserve the configured drain deadline',
   );
 }
@@ -300,23 +520,36 @@ function checkConnectorCommand(command: unknown, gracePeriodSeconds: number): vo
 /**
  * Keeps readiness, bounded resources and shutdown budgets mandatory.
  */
-function checkConnectorRuntime(connector: any, gracePeriodSeconds: number): void {
+function checkConnectorRuntime(connector: ConnectorService, gracePeriodSeconds: number): void {
+  // A healthcheck or logging value that isn't a mapping reads as one without settings, so each
+  // requirement below fails on its own missing setting.
+  const healthcheck: typeof Healthcheck.Type = Schema.is(Healthcheck)(connector.healthcheck)
+    ? connector.healthcheck
+    : {};
   const readinessTest = ['CMD', 'cloudflared', 'tunnel', '--metrics', METRICS_ADDRESS, 'ready'];
   requireCondition(
-    JSON.stringify(connector.healthcheck?.test) === JSON.stringify(readinessTest),
+    JSON.stringify(healthcheck.test) === JSON.stringify(readinessTest),
     'use the native connector readiness check',
   );
-  requireCondition(!connector.healthcheck?.disable, 'keep the readiness check enabled');
+  requireCondition(!healthcheck.disable, 'keep the readiness check enabled');
+
+  const logging: typeof Logging.Type = Schema.is(Logging)(connector.logging)
+    ? connector.logging
+    : {};
   requireCondition(
-    ROTATING_LOG_DRIVERS.has(connector.logging?.driver),
+    typeof logging.driver === 'string' && ROTATING_LOG_DRIVERS.has(logging.driver),
     'use a supported rotating log driver',
   );
+
+  const options: typeof LoggingOptions.Type = Schema.is(LoggingOptions)(logging.options)
+    ? logging.options
+    : {};
   requireCondition(
-    BYTE_SIZE_PATTERN.test(String(connector.logging?.options?.['max-size'])),
+    BYTE_SIZE_PATTERN.test(String(options['max-size'])),
     'set a positive log file size limit',
   );
   requireCondition(
-    POSITIVE_INTEGER_PATTERN.test(String(connector.logging?.options?.['max-file'])),
+    POSITIVE_INTEGER_PATTERN.test(String(options['max-file'])),
     'set a positive log file retention count',
   );
   requireCondition(
@@ -324,7 +557,9 @@ function checkConnectorRuntime(connector: any, gracePeriodSeconds: number): void
     'set a positive memory limit',
   );
   requireCondition(
-    Number.isInteger(connector.pids_limit) && connector.pids_limit >= 1,
+    typeof connector.pids_limit === 'number' &&
+      Number.isInteger(connector.pids_limit) &&
+      connector.pids_limit >= 1,
     'set a positive PID limit',
   );
   requireCondition(
@@ -336,19 +571,21 @@ function checkConnectorRuntime(connector: any, gracePeriodSeconds: number): void
 /**
  * Origins share one external network; only the connector joins the separate egress network.
  */
-function checkNetworks(model: any, connector: any, proxy: CloudflareProxy): void {
-  requireCondition(isMapping(model.networks), 'define a networks mapping');
+function checkNetworks(
+  model: ComposeDocument,
+  connector: ConnectorService,
+  proxy: CloudflareProxy,
+): void {
+  const networks = model.networks;
+  requireCondition(Schema.is(Networks)(networks), 'define a networks mapping');
   requireCondition(
-    Object.keys(model.networks).every((key) => ALLOWED_NETWORKS.has(key)),
+    Object.keys(networks).every((key) => ALLOWED_NETWORKS.has(key)),
     'define only the edge and egress networks',
   );
-  requireCondition(
-    JSON.stringify(model.networks.egress) === '{}',
-    'keep the egress network private',
-  );
+  requireCondition(JSON.stringify(networks.egress) === '{}', 'keep the egress network private');
 
-  const edge = model.networks.edge;
-  requireCondition(isMapping(edge), 'define the shared edge network');
+  const edge = networks.edge;
+  requireCondition(Schema.is(EdgeNetwork)(edge), 'define the shared edge network');
   requireCondition(
     Object.keys(edge).every((key) => ALLOWED_EDGE_NETWORK_SETTINGS.has(key)),
     'use only the supported edge network settings',

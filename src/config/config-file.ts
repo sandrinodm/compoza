@@ -45,7 +45,7 @@ export const readConfigFile = Effect.fn('readConfigFile')(function* <T>(
   schema: Schema.Decoder<T>,
   missingMessage: string,
   { privateInput = false }: ReadConfigOptions = {},
-) {
+): Effect.fn.Return<T, DeployError, FileSystem.FileSystem> {
   if (!(yield* fileExists(file))) {
     return yield* new DeployError({ message: missingMessage });
   }

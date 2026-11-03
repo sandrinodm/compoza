@@ -1,4 +1,4 @@
-import { Effect, type Option, Path, Schema } from 'effect';
+import { Effect, type FileSystem, type Option, Path, Schema } from 'effect';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -230,7 +230,9 @@ const resolveHosts = Effect.fn('resolveHosts')(function* (entries: HostEntries) 
 /**
  * Reads and validates one explicitly selected hosts file, including its external host references.
  */
-export const loadHosts = Effect.fn('loadHosts')(function* (file: string) {
+export const loadHosts = Effect.fn('loadHosts')(function* (
+  file: string,
+): Effect.fn.Return<Record<string, HostConfig>, DeployError, FileSystem.FileSystem | Path.Path> {
   return yield* resolveHosts(yield* readHostsFile(expandHome(file)));
 });
 
@@ -239,9 +241,9 @@ export const loadHosts = Effect.fn('loadHosts')(function* (file: string) {
  * both.
  */
 export const loadDefaultHosts = Effect.fn('loadDefaultHosts')(function* (
-  directory = process.cwd(),
-  globalFile = DEFAULT_HOSTS_PATH,
-) {
+  directory: string = process.cwd(),
+  globalFile: string = DEFAULT_HOSTS_PATH,
+): Effect.fn.Return<Record<string, HostConfig>, DeployError, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
   const files = [
     ...new Set([path.resolve(expandHome(globalFile)), path.resolve(directory, LOCAL_HOSTS_FILE)]),
@@ -272,7 +274,7 @@ export const loadDefaultHosts = Effect.fn('loadDefaultHosts')(function* (
  */
 export const loadHostsForRun = Effect.fn('loadHostsForRun')(function* (
   override: Option.Option<string>,
-) {
+): Effect.fn.Return<Record<string, HostConfig>, DeployError, FileSystem.FileSystem | Path.Path> {
   return yield* override._tag === 'Some' || process.env[HOSTS_ENV] !== undefined
     ? loadHosts(hostsPath(override))
     : loadDefaultHosts();

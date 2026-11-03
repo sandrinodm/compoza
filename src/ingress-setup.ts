@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, type FileSystem, type Path } from 'effect';
 
 import type { IngressOperation } from './extensions/ingress.ts';
 
@@ -27,7 +27,7 @@ const CONNECTOR_TOKEN_PATTERN = /^[A-Za-z0-9+/=_-]+$/;
  */
 export const setupOperationInput = Effect.fn('setupOperationInput')(function* (
   operation: IngressOperation,
-) {
+): Effect.fn.Return<string | undefined, DeployError, FileSystem.FileSystem | Path.Path> {
   if (operation.secrets === undefined) {
     return operation.input;
   }

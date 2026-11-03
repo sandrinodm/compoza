@@ -53,12 +53,9 @@ describe('DeployConfig', () => {
       const config = yield* Schema.decodeUnknownEffect(DeployConfig)(valid);
       assert.strictEqual(config.name, 'demo');
       assert.deepStrictEqual(directoriesOf(config), ['/srv/demo/data', '/srv/demo/data/demo']);
-      assert.deepStrictEqual(composeFilesOf(config, false), [
-        'compose.yaml',
-        'compose.production.yaml',
-      ]);
-      assert.deepStrictEqual(composeFilesOf(config, true), ['compose.yaml']);
-      assert.deepStrictEqual(environmentOf(config, true), {
+      assert.deepStrictEqual(composeFilesOf(config), ['compose.yaml', 'compose.production.yaml']);
+      assert.deepStrictEqual(composeFilesOf(config, { local: true }), ['compose.yaml']);
+      assert.deepStrictEqual(environmentOf(config, { local: true }), {
         DEMO_PORT: '8090',
         DEMO_SOURCES_PATH: '../sources',
       });

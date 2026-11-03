@@ -4,7 +4,7 @@ import { Resolver } from 'node:dns/promises';
 import type { App } from './config/deploy.ts';
 
 import { type HostConfig, registryOf } from './config/hosts.ts';
-import { tryPlan } from './errors.ts';
+import { type DeployError, tryPlan } from './errors.ts';
 import { ingressFor, tryIngressFor } from './extensions/ingress.ts';
 import { parseCheck, registryProbe } from './probe.ts';
 import { Remote } from './services/Remote.ts';
@@ -130,7 +130,10 @@ export function formatChecks(checks: ReadonlyArray<Check>): string {
  * Extensions supply an optional domain and read-only probe. Registry readiness remains independent
  * of ingress, and no SSH probe runs when neither integration needs one.
  */
-export const runChecks = Effect.fn('runChecks')(function* (app: App, host: HostConfig) {
+export const runChecks = Effect.fn('runChecks')(function* (
+  app: App,
+  host: HostConfig,
+): Effect.fn.Return<Array<Check>, DeployError, Remote> {
   const remote = yield* Remote;
   const ingress = yield* tryIngressFor(app);
   const domain = ingress?.domain(app, host);

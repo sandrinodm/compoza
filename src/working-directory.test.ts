@@ -212,7 +212,9 @@ describe('separate working directory', () => {
       assert.strictEqual(app.file, f.file);
       assert.strictEqual(app.dir, f.directory);
       assert.strictEqual(workingDirectoryOf(app), f.source);
-      assert.deepStrictEqual(yield* readSecrets(app, false), { TOKEN: 'deployment-secret' });
+      assert.deepStrictEqual(yield* readSecrets(app, { local: false }), {
+        TOKEN: 'deployment-secret',
+      });
       const files = yield* readBundle(app);
       assert.deepStrictEqual(
         files.map((file) => file.path),

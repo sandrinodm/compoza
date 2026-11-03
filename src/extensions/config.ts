@@ -1,7 +1,8 @@
-import { Effect, Schema } from 'effect';
+import { Effect, type FileSystem, type Path, Schema } from 'effect';
 
 import type { App } from '../config/deploy.ts';
 import type { HostConfig } from '../config/hosts.ts';
+import type { DeployError } from '../errors.ts';
 
 import { OnePasswordConfig, OnePasswordSelection } from './1password/config.ts';
 import {
@@ -139,7 +140,10 @@ export type ResolvedSecretsConfig = typeof ResolvedSecretsConfig.Type;
 /**
  * Loads extension-owned host files relative to the winning host definition before pure planning.
  */
-export function loadHostExtensionFiles(host: HostConfig, file: string) {
+export function loadHostExtensionFiles(
+  host: HostConfig,
+  file: string,
+): Effect.Effect<HostConfig, DeployError, FileSystem.FileSystem | Path.Path> {
   return loadHostTemplates(host, file).pipe(
     Effect.flatMap((selected) => loadCloudflareHostFiles(selected, file)),
   );
@@ -148,7 +152,9 @@ export function loadHostExtensionFiles(host: HostConfig, file: string) {
 /**
  * Loads extension-owned app files after destination selection, leaving unselected sources unread.
  */
-export function loadAppExtensionFiles(app: App) {
+export function loadAppExtensionFiles(
+  app: App,
+): Effect.Effect<App, DeployError, FileSystem.FileSystem | Path.Path> {
   return loadAppTemplates(app).pipe(Effect.flatMap(loadCloudflareAppFiles));
 }
 

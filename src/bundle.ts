@@ -81,7 +81,9 @@ export function composeBundlePath(file: string): string {
  * Dotfiles are excluded so a declared asset cannot overwrite .env, .compoza.json or .deploy-lock,
  * or upload dotenv secrets.
  */
-export const bundlePath = Effect.fn('bundlePath')(function* (path: string) {
+export const bundlePath = Effect.fn('bundlePath')(function* (
+  path: string,
+): Effect.fn.Return<string, DeployError> {
   const hasEmptyOrDotComponent = path
     .split('/')
     .some((part) => part === '' || part.startsWith('.'));
@@ -108,7 +110,7 @@ export const validateComposeAssets = Effect.fn('validateComposeAssets')(function
   text: string,
   file: string,
   declared: ReadonlySet<string>,
-) {
+): Effect.fn.Return<void, DeployError> {
   const model = yield* parseComposeModel(text, file);
   yield* validateFileReferences(model, file, declared);
   yield* validateServices(model.services, file, declared);
@@ -123,7 +125,9 @@ export const validateComposeAssets = Effect.fn('validateComposeAssets')(function
  * use the typed channel; defects remain defects.
  */
 export const readBundle = Effect.fn('readBundle')(
-  function* (app: App) {
+  function* (
+    app: App,
+  ): Effect.fn.Return<Array<BundleFile>, DeployError | PlatformError, FileSystem.FileSystem> {
     const fs = yield* FileSystem.FileSystem;
     const paths = [...new Set([...app.config.composeFiles, ...(app.config.assets ?? [])])];
     if (paths.length > MAX_BUNDLE_FILES) {

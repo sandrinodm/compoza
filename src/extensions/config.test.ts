@@ -321,7 +321,7 @@ describe('named extension configuration', () => {
         environmentId: 'prod',
         variables: ['TOKEN'],
       });
-      assert.deepStrictEqual(secretSource(selected, true), {
+      assert.deepStrictEqual(secretSource(selected, { local: true }), {
         provider: '1password',
         environmentId: 'dev',
         variables: ['LOCAL_TOKEN'],
@@ -396,10 +396,13 @@ describe('named extension configuration', () => {
         assert.strictEqual(calls, 0);
         assert.deepStrictEqual(yield* read, { TOKEN: 'fake' });
         assert.strictEqual(calls, 1);
-        assert.deepStrictEqual(yield* readSecrets(selected, true), {});
+        assert.deepStrictEqual(yield* readSecrets(selected, { local: true }), {});
 
         const { local: _local, ...config } = selected.config;
-        assert.throws(() => secretSource({ ...selected, config }, true), 'local.secrets');
+        assert.throws(
+          () => secretSource({ ...selected, config }, { local: true }),
+          'local.secrets',
+        );
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 

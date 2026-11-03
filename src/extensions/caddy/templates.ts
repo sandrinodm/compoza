@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 
 import type { App } from '../../config/deploy.ts';
 import type { HostConfig } from '../../config/hosts.ts';
-import type { CaddyTemplate, ProxyConfig } from './config.ts';
+import type { CaddyTemplate } from './config.ts';
 
 import { DeployError } from '../../errors.ts';
 
@@ -136,7 +136,7 @@ export const loadTemplate = Effect.fn('loadTemplate')(function* (
   source: CaddyTemplate,
   file: string,
   label = 'Caddy template',
-) {
+): Effect.fn.Return<{ readonly inline: string }, DeployError, FileSystem.FileSystem | Path.Path> {
   if (typeof source !== 'string') {
     return source;
   }
@@ -220,19 +220,20 @@ const loadCheckedTemplate = Effect.fn('loadCheckedCaddyTemplate')(function* (
 export const loadHostTemplates = Effect.fn('loadCaddyHostTemplates')(function* (
   host: HostConfig,
   file: string,
-) {
+): Effect.fn.Return<HostConfig, DeployError, FileSystem.FileSystem | Path.Path> {
   const named = host.ingress !== undefined && 'caddy' in host.ingress;
-  const proxy = named ? host.ingress.caddy : host.proxy;
-  if (proxy === undefined || ('provider' in proxy && proxy.provider === 'cloudflare-tunnel')) {
+  // A named Caddy entry has the legacy proxy shape without `provider`, so typing it as the legacy
+  // union lets the `provider` check rule out a legacy Cloudflare Tunnel entry.
+  const proxy: HostConfig['proxy'] = named ? host.ingress.caddy : host.proxy;
+  if (proxy === undefined || proxy.provider === 'cloudflare-tunnel') {
     return host;
   }
 
-  const caddy = proxy as ProxyConfig;
-  if (caddy.templates === undefined) {
+  if (proxy.templates === undefined) {
     return host;
   }
 
-  const templates = { ...caddy.templates };
+  const templates = { ...proxy.templates };
   if (templates.site !== undefined) {
     templates.site = yield* loadCheckedTemplate(templates.site, file, 'site');
   }
@@ -243,13 +244,15 @@ export const loadHostTemplates = Effect.fn('loadCaddyHostTemplates')(function* (
 
   return named
     ? { ...host, ingress: { ...host.ingress, caddy: { ...host.ingress.caddy, templates } } }
-    : { ...host, proxy: { ...caddy, templates } };
+    : { ...host, proxy: { ...proxy, templates } };
 });
 
 /**
  * Loads an app override after destination selection, avoiding reads from unselected destinations.
  */
-export const loadAppTemplates = Effect.fn('loadCaddyAppTemplates')(function* (app: App) {
+export const loadAppTemplates = Effect.fn('loadCaddyAppTemplates')(function* (
+  app: App,
+): Effect.fn.Return<App, DeployError, FileSystem.FileSystem | Path.Path> {
   const ingress = app.config.ingress;
   if (ingress === undefined) {
     return app;

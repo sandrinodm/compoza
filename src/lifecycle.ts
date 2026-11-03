@@ -73,17 +73,14 @@ export function downCommand(resolved: Resolved, volumes: boolean): Command {
 export const lifecycle = Effect.fn('lifecycle')(function* (
   resolved: Resolved,
   action: LifecycleAction,
-) {
+): Effect.fn.Return<void, DeployError, Remote | Shell> {
   const shell = yield* Shell;
 
   if (resolved.app.config.execution === 'ssh') {
     const remote = yield* Remote;
-    const output = yield* remote.run(
-      resolved.host,
-      deployedScript(resolved.app, [action], true),
-      undefined,
-      `<${action} deployed stack>`,
-    );
+    const output = yield* remote.run(resolved.host, deployedScript(resolved.app, [action], true), {
+      label: `<${action} deployed stack>`,
+    });
     yield* printOutput(output);
   } else {
     yield* shell.run(lifecycleCommand(resolved, action));
@@ -103,7 +100,10 @@ export const lifecycle = Effect.fn('lifecycle')(function* (
  * Both steps print as numbered phases like a deploy, and both go through `Remote.run` and
  * `Shell.run`, so `--dry-run` shows exactly what would be removed without removing anything.
  */
-export const remove = Effect.fn('remove')(function* (resolved: Resolved, volumes: boolean) {
+export const remove = Effect.fn('remove')(function* (
+  resolved: Resolved,
+  volumes: boolean,
+): Effect.fn.Return<void, DeployError, Remote | Shell> {
   const shell = yield* Shell;
   const remote = yield* Remote;
   const { app, host } = resolved;
@@ -162,8 +162,7 @@ const removeDeployedStack = Effect.fn('removeDeployedStack')(function* (
   const output = yield* remote.run(
     resolved.host,
     deployedScript(resolved.app, downArgs(volumes), true),
-    undefined,
-    '<delete deployed stack; keep stack files, secrets and data>',
+    { label: '<delete deployed stack; keep stack files, secrets and data>' },
   );
   yield* printOutput(output);
 
@@ -186,6 +185,6 @@ function unroutePhase(
   return phase(
     'unroute',
     `Removing the route for ${routing.description}`,
-    remote.run(host, script, input, label).pipe(Effect.flatMap(printOutput)),
+    remote.run(host, script, { input, label }).pipe(Effect.flatMap(printOutput)),
   );
 }

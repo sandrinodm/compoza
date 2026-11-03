@@ -102,7 +102,7 @@ export const resolve = Effect.fn('resolve')(function* (
   target: string,
   hosts: Option.Option<string>,
   destination?: string,
-) {
+): Effect.fn.Return<Resolved, DeployError, FileSystem.FileSystem | Path.Path> {
   const loaded = yield* loadApp(target);
   const selected = yield* tryPlan(
     () => selectDestination(loaded, destination),
@@ -353,7 +353,7 @@ const planSteps = Effect.fn('planSteps')(function* (
   options: DeployOptions,
   source: Source,
 ) {
-  const secrets = yield* readSecrets(app, options.local);
+  const secrets = yield* readSecrets(app, { local: options.local });
   const steps = yield* tryPlan(
     () =>
       planDeployment({
@@ -444,7 +444,7 @@ function routePhase(
         yield* Effect.logDebug(`route configuration:\n${input}`);
       }
 
-      const output = yield* remote.run(host, script, input, label);
+      const output = yield* remote.run(host, script, { input, label });
       if (!dryRun && output.trim() !== '') {
         yield* Console.log(output.trimEnd());
       }
@@ -467,7 +467,13 @@ function routePhase(
  * follow the run and see where it stopped; the plan, the scripts sent to the host and the resolved
  * tag are logged at debug level. A missing secrets file fails before anything runs.
  */
-export const deploy = Effect.fn('deploy')(function* (options: DeployOptions) {
+export const deploy = Effect.fn('deploy')(function* (
+  options: DeployOptions,
+): Effect.fn.Return<
+  void,
+  DeployError,
+  FileSystem.FileSystem | Git | HttpClient.HttpClient | Path.Path | Remote | Shell
+> {
   const { app, host } = yield* resolve(options.target, options.hosts, options.destination);
   if (!options.local && host.transport.mode === 'remote-build' && app.config.execution !== 'ssh') {
     return yield* new DeployError({ message: 'remote-build transport requires execution: ssh' });

@@ -86,7 +86,7 @@ it.effect(
       Layer.succeed(
         Remote,
         Remote.of({
-          run: (_host, script, input, label) =>
+          run: (_host, script, { input, label } = {}) =>
             Effect.sync(() => {
               scripts.push({ script, input, label });
 

@@ -1,4 +1,4 @@
-import { Effect, Path, Schema } from 'effect';
+import { Effect, type FileSystem, Path, Schema } from 'effect';
 import { resolve } from 'node:path';
 
 import { DeployError } from '../errors.ts';
@@ -383,20 +383,34 @@ export function directoriesOf(config: DeployConfig): ReadonlyArray<string> {
 }
 
 /**
- * The Compose files for a run: the local overrides when `local` is set and they exist, the
+ * Which run a setting is resolved for, as taken by the functions that read `local` overrides.
+ */
+export interface RunOptions {
+  /**
+   * Whether this is a local run (`--local`), which reads the `local` overrides (Compose files,
+   * environment, secrets) instead of the deployment's. `false` when left out.
+   */
+  readonly local?: boolean;
+}
+
+/**
+ * The Compose files for a run: the local overrides for a local run when they exist, the
  * deployment's otherwise.
  */
-export function composeFilesOf(config: DeployConfig, local: boolean): ReadonlyArray<string> {
+export function composeFilesOf(
+  config: DeployConfig,
+  { local = false }: RunOptions = {},
+): ReadonlyArray<string> {
   return (local ? config.local?.composeFiles : undefined) ?? config.composeFiles;
 }
 
 /**
- * The non-secret Compose variables for a run, with the local overrides merged over them when
- * `local` is set.
+ * The non-secret Compose variables for a run, with the local overrides merged over them for a local
+ * run.
  */
 export function environmentOf(
   config: DeployConfig,
-  local: boolean,
+  { local = false }: RunOptions = {},
 ): Readonly<Record<string, string>> {
   return { ...config.environment, ...(local ? config.local?.environment : undefined) };
 }
@@ -408,7 +422,9 @@ export function environmentOf(
  * repository root and `compoza deploy .` from the folder itself. A missing file is reported as such
  * rather than as a parse error, because it is the usual first mistake.
  */
-export const loadApp = Effect.fn('loadApp')(function* (target: string) {
+export const loadApp = Effect.fn('loadApp')(function* (
+  target: string,
+): Effect.fn.Return<App, DeployError, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
   const file = yield* deployFileFor(target);
   const config = yield* readConfigFile(
@@ -422,8 +438,7 @@ export const loadApp = Effect.fn('loadApp')(function* (target: string) {
     return yield* new DeployError({ message: issue });
   }
 
-  const app: App = { dir: path.dirname(file), file, config };
-  return app;
+  return { dir: path.dirname(file), file, config };
 });
 
 /**

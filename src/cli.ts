@@ -117,7 +117,7 @@ function resolveFolder(folder: string) {
  * variables but never printing their values.
  */
 function secretsCheck(app: App, local: boolean) {
-  return readSecrets(app, local).pipe(
+  return readSecrets(app, { local }).pipe(
     Effect.map((values): Check => {
       const names = Object.keys(values).sort().join(', ') || NO_SECRET_NAMES;
       return {
@@ -257,7 +257,7 @@ const setupProxy = Command.make(
     }
 
     const input = yield* setupOperationInput(operation);
-    const output = yield* remote.run(host, operation.script, input, operation.label);
+    const output = yield* remote.run(host, operation.script, { input, label: operation.label });
     yield* Console.log(output.trimEnd());
   }),
 ).pipe(

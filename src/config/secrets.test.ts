@@ -78,11 +78,11 @@ describe('secret sources', () => {
         }),
       'Ambiguous',
     );
-    assert.throws(() => secretSource(app, true), 'local.secrets');
+    assert.throws(() => secretSource(app, { local: true }), 'local.secrets');
     assert.deepStrictEqual(
       secretSource(
         { ...app, config: { ...app.config, local: { secrets: { provider: 'none' } } } },
-        true,
+        { local: true },
       ),
       { provider: 'none' },
     );

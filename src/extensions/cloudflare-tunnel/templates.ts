@@ -1,9 +1,10 @@
-import { Effect, Path } from 'effect';
+import { Effect, type FileSystem, Path } from 'effect';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 import type { App } from '../../config/deploy.ts';
 import type { HostConfig } from '../../config/hosts.ts';
+import type { DeployError } from '../../errors.ts';
 import type { CloudflareProxy } from './config.ts';
 
 import { parseConfig } from '../../config/config-file.ts';
@@ -39,7 +40,7 @@ const ROUTE_RULE_FIELDS = new Set(['hostname', 'service', 'originRequest']);
 export const loadCloudflareHostFiles = Effect.fn('loadCloudflareHostFiles')(function* (
   host: HostConfig,
   file: string,
-) {
+): Effect.fn.Return<HostConfig, DeployError, FileSystem.FileSystem | Path.Path> {
   const named = host.ingress !== undefined && 'cloudflare-tunnel' in host.ingress;
   const selected = cloudflareHostSettings(host);
   if (selected === undefined) {
@@ -123,7 +124,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Loads only the selected application's override; unselected destination files are never accessed.
  */
-export const loadCloudflareAppFiles = Effect.fn('loadCloudflareAppFiles')(function* (app: App) {
+export const loadCloudflareAppFiles = Effect.fn('loadCloudflareAppFiles')(function* (
+  app: App,
+): Effect.fn.Return<App, DeployError, FileSystem.FileSystem | Path.Path> {
   const ingress = app.config.ingress;
   const selected = cloudflareAppSettings(ingress);
   if (ingress === undefined || selected?.routeTemplate === undefined) {
@@ -151,7 +154,7 @@ export const loadCloudflareAppFiles = Effect.fn('loadCloudflareAppFiles')(functi
  * Renders one YAML route while preserving ownership identity and rejecting credential-bearing
  * top-level fields.
  */
-export function routeRule(proxy: CloudflareProxy, app: App, name: string) {
+export function routeRule(proxy: CloudflareProxy, app: App, name: string): Record<string, unknown> {
   const selected = cloudflareAppSettings(app.config.ingress);
   if (selected === undefined) {
     throw new Error('Cloudflare route settings are missing');

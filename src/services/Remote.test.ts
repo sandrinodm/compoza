@@ -65,7 +65,7 @@ describe('Remote', () => {
     const spawned: Array<ChildProcess.Command> = [];
     return Effect.gen(function* () {
       const remote = yield* Remote;
-      const output = yield* remote.run(host, 'set -eu\ntrue', 'input', '<do it>');
+      const output = yield* remote.run(host, 'set -eu\ntrue', { input: 'input', label: '<do it>' });
       assert.strictEqual(output, 'ok=yes\n');
       assert.lengthOf(spawned, 1);
       assert.deepStrictEqual(yield* TestConsole.logLines, [
@@ -78,7 +78,7 @@ describe('Remote', () => {
     const spawned: Array<ChildProcess.Command> = [];
     return Effect.gen(function* () {
       const remote = yield* Remote;
-      const output = yield* remote.run(host, 'echo ok=yes', undefined, '<stream>', true);
+      const output = yield* remote.run(host, 'echo ok=yes', { label: '<stream>', stream: true });
       assert.strictEqual(output, '');
       assert.deepStrictEqual(yield* TestConsole.logLines, [
         '$ ssh deploy@atlas.example.com <stream>',

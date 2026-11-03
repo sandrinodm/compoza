@@ -113,18 +113,23 @@ interface TransactionScriptParts {
 }
 
 /**
- * The required SSH stack root, rejecting a filesystem root or shell-control characters.
+ * The required SSH stack root without a trailing slash. Throws when `remote.stackDir` is missing,
+ * and otherwise with the first requirement it fails (see `stackRootIssue`).
  *
  * Only tool-owned stack files are replaced; operator data, overlays and host env files are never
  * removed.
  */
 export function stackRoot(app: App): string {
   const root = app.config.remote?.stackDir;
-  if (root === undefined || !isSafeStackRoot(root)) {
+  if (root === undefined) {
     throw new Error(
-      'SSH execution requires remote.stackDir: ' +
-        'a non-root absolute host directory without dot components',
+      'SSH execution requires remote.stackDir; set it to the host directory for the stack files',
     );
+  }
+
+  const issue = stackRootIssue(root);
+  if (issue !== undefined) {
+    throw new Error(issue);
   }
 
   return root.replace(TRAILING_SLASH, '');
@@ -145,8 +150,9 @@ export function generatedEnvironment(app: App): string {
 
   const environment = app.config.environment ?? {};
   for (const [key, value] of Object.entries(environment)) {
-    if (!isConfigurableVariable(key, value, imageVariables)) {
-      throw new Error(`Invalid or reserved Compose environment key/value: ${key}`);
+    const issue = environmentVariableIssue(key, value, imageVariables);
+    if (issue !== undefined) {
+      throw new Error(issue);
     }
   }
 
@@ -304,31 +310,76 @@ printf 'buildkit='; if ${buildkitCheck}; then echo yes; else echo no; fi
 }
 
 /**
- * Whether a configured stack root is safe to embed and operate on: an absolute path that is not the
- * filesystem root, with no `.` or `..` components and no line breaks or NUL.
+ * Why a configured stack root is not safe to embed and operate on, or `undefined` when it is: it
+ * must be absolute, not the filesystem root, without `.` or `..` components, and without line
+ * breaks or NUL. The requirements are checked in that order and the first one that fails is
+ * reported; the message never repeats the configured path.
  *
  * The config schema already requires an absolute path; checking it here as well keeps a relative
  * root from resolving against the SSH user's working folder when an app is built without decoding.
  */
-function isSafeStackRoot(root: string): boolean {
-  const hasDotComponent = root.split('/').some((part) => part === '.' || part === '..');
-  return root.startsWith('/') && root !== '/' && !hasDotComponent && !LINE_BREAK_OR_NUL.test(root);
+function stackRootIssue(root: string): string | undefined {
+  if (!root.startsWith('/')) {
+    return 'remote.stackDir must be an absolute path; start it with /';
+  }
+
+  if (root === '/') {
+    return 'remote.stackDir must not be the filesystem root; choose a directory below /';
+  }
+
+  if (root.split('/').some((part) => part === '.' || part === '..')) {
+    return 'remote.stackDir must not contain . or .. components; write the path without them';
+  }
+
+  if (LINE_BREAK_OR_NUL.test(root)) {
+    return 'remote.stackDir must not contain line breaks or NUL; remove them from the path';
+  }
+
+  return undefined;
 }
 
 /**
- * Whether a configured variable may be written into the generated dotenv: a portable name that is
- * not an image variable or reserved by the shell, Compose or Docker, with a single-line value.
+ * Why a configured variable may not be written into the generated dotenv, or `undefined` when it
+ * may: its name must be portable, must not be an image variable, must not be reserved by Compose,
+ * Docker or the shell, and its value must be a single line without NUL. The requirements are
+ * checked in that order and the first one that fails is reported.
+ *
+ * Messages name the variable but never include its value.
  */
-function isConfigurableVariable(
+function environmentVariableIssue(
   key: string,
   value: string,
   imageVariables: ReadonlySet<string>,
-): boolean {
-  const reserved =
-    imageVariables.has(key) ||
+): string | undefined {
+  if (!ENVIRONMENT_KEY.test(key)) {
+    return (
+      `Environment variable name ${key} is not portable; ` +
+      'use a letter or underscore, then letters, digits and underscores'
+    );
+  }
+
+  if (imageVariables.has(key)) {
+    return `Environment variable ${key} is reserved for a target's image; rename it in environment`;
+  }
+
+  if (
     RESERVED_ENVIRONMENT_KEYS.has(key) ||
-    RESERVED_ENVIRONMENT_PREFIXES.some((prefix) => key.startsWith(prefix));
-  return ENVIRONMENT_KEY.test(key) && !reserved && !LINE_BREAK_OR_NUL.test(value);
+    RESERVED_ENVIRONMENT_PREFIXES.some((prefix) => key.startsWith(prefix))
+  ) {
+    return (
+      `Environment variable ${key} is reserved by Compose, Docker or the shell; ` +
+      'rename it in environment'
+    );
+  }
+
+  if (LINE_BREAK_OR_NUL.test(value)) {
+    return (
+      `Environment variable ${key} has a multi-line value; ` +
+      'it must be a single line without line breaks or NUL'
+    );
+  }
+
+  return undefined;
 }
 
 /**
