@@ -7,7 +7,7 @@ import { resolveSecrets, type ResolvedSecretsConfig } from '../extensions/config
 import { credentialProvider, isCredentialEnvironment } from '../extensions/credentials.ts';
 import { imageVariable } from '../plan.ts';
 import { DryRun } from '../services/Shell.ts';
-import { declaredSecretSources, environmentOf, secretSettingsIssue } from './deploy.ts';
+import { environmentOf } from './deploy.ts';
 import { VARIABLE_NAME_PATTERN } from './env-file.ts';
 
 /**
@@ -42,24 +42,19 @@ const RESERVED_VARIABLES = new Set([
 const UNSUPPORTED_VALUE_PATTERN = /[\r\n\0]/;
 
 /**
- * Selects a complete source, preserving the legacy client dotenv alias.
+ * Selects the run's secret source: `secrets` for a deployment, `local.secrets` for a local run, and
+ * `undefined` when the run declares none.
  *
- * A local run with any production source requires its own explicit source, including `none`, to
- * prevent accidental production credential use. Host-owned legacy dotenv remains a separate SSH
- * compatibility mode.
+ * A local run of an app with a production `secrets` source fails unless `local.secrets` names its
+ * own source, including `none`, to prevent accidental production credential use.
  */
 export function selectSecretSource(
   app: App,
   { local = false }: RunOptions = {},
 ): Result.Result<ResolvedSecretsConfig | undefined, DeployError> {
-  const issue = secretSettingsIssue(app.config);
-  if (issue !== undefined) {
-    return Result.fail(new DeployError({ message: issue }));
-  }
-
   if (local) {
     const source = app.config.local?.secrets;
-    if (source === undefined && declaredSecretSources(app.config).length > 0) {
+    if (source === undefined && app.config.secrets !== undefined) {
       return Result.fail(
         new DeployError({
           message: 'Local runs require local.secrets; select a development source or {none:{}}',
@@ -70,12 +65,8 @@ export function selectSecretSource(
     return Result.succeed(source === undefined ? undefined : resolveSecrets(source));
   }
 
-  if (app.config.secrets !== undefined) {
-    return Result.succeed(resolveSecrets(app.config.secrets));
-  }
-
-  const path = app.config.envFile;
-  return Result.succeed(path === undefined ? undefined : { provider: 'env-file', path });
+  const source = app.config.secrets;
+  return Result.succeed(source === undefined ? undefined : resolveSecrets(source));
 }
 
 /**

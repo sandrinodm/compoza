@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import type { App } from '../../config/deploy.ts';
 import type { HostConfig } from '../../config/hosts.ts';
+import type { CloudflareProxy } from './config.ts';
 
 import { blocking } from '../../checks.ts';
 import { REMOTE_PATH, shellQuote } from '../../command.ts';
@@ -66,6 +67,7 @@ function fixture(
     dir: string;
     app: App;
     host: HostConfig;
+    tunnel: CloudflareProxy;
     root: string;
     run: (script: string) => ReturnType<typeof spawnSync>;
     state: () => any;
@@ -121,17 +123,17 @@ if (!url.endsWith('/configurations')) {
     { mode: 0o700 },
   );
 
+  const tunnel: CloudflareProxy = {
+    accountId,
+    tunnelId,
+    apiTokenFile: join(dir, 'token'),
+    stateDir: join(dir, 'state'),
+  };
   const host: HostConfig = {
     ssh: 'fixture',
     platform: 'linux/arm64',
     transport: { mode: 'ssh-load' },
-    proxy: {
-      provider: 'cloudflare-tunnel',
-      accountId,
-      tunnelId,
-      apiTokenFile: join(dir, 'token'),
-      stateDir: join(dir, 'state'),
-    },
+    ingress: { 'cloudflare-tunnel': tunnel },
   };
   const app: App = {
     dir,
@@ -143,7 +145,9 @@ if (!url.endsWith('/configurations')) {
       composeFiles: ['compose.yaml'],
       execution: 'ssh',
       remote: { stackDir: join(dir, 'stack') },
-      ingress: { mode: 'cloudflare-tunnel', domain: 'app.example.com', service: 'http://web:8080' },
+      ingress: {
+        'cloudflare-tunnel': { domain: 'app.example.com', service: 'http://web:8080' },
+      },
     },
   };
 
@@ -157,6 +161,7 @@ if (!url.endsWith('/configurations')) {
   use({
     dir,
     host,
+    tunnel,
     app,
     root: join(dir, 'state', `${accountId}-${tunnelId}`),
     run,
@@ -183,16 +188,14 @@ function failed(result: ReturnType<typeof spawnSync>) {
 
 describe('Cloudflare Tunnel extension', { timeout: INTEGRATION_TIMEOUT_MILLIS }, () => {
   it('applies templated origin settings through the real merge and rejects subsequent external edits', () =>
-    fixture(({ app, host, run, state, setState }) => {
-      if (host.proxy?.provider !== 'cloudflare-tunnel') {
-        throw new Error('Invalid fixture host');
-      }
-
+    fixture(({ app, host, tunnel, run, state, setState }) => {
       const selected: HostConfig = {
         ...host,
-        proxy: {
-          ...host.proxy,
-          templates: { route: { inline: ORIGIN_ROUTE_TEMPLATE } },
+        ingress: {
+          'cloudflare-tunnel': {
+            ...tunnel,
+            templates: { route: { inline: ORIGIN_ROUTE_TEMPLATE } },
+          },
         },
       };
       succeeded(run(cloudflareIngress.setup(selected).script));
@@ -216,7 +219,7 @@ describe('Cloudflare Tunnel extension', { timeout: INTEGRATION_TIMEOUT_MILLIS },
     }));
 
   it('decodes without a public origin address and rejects invalid identifiers and credential-bearing URLs', () =>
-    fixture(({ app, host }) => {
+    fixture(({ app, host, tunnel }) => {
       assert.deepStrictEqual(Schema.decodeUnknownSync(Hosts)({ fixture: host }), { fixture: host });
       assert.strictEqual(ingressFor(app), cloudflareIngress);
       assert.strictEqual(hostIngress(host), cloudflareIngress);
@@ -231,20 +234,25 @@ describe('Cloudflare Tunnel extension', { timeout: INTEGRATION_TIMEOUT_MILLIS },
         assert.throws(() =>
           Schema.decodeUnknownSync(DeployConfig)({
             ...app.config,
-            ingress: { ...app.config.ingress, service },
+            ingress: {
+              'cloudflare-tunnel': { domain: 'app.example.com', service },
+            },
           }),
         );
       }
 
       assert.throws(() =>
         Schema.decodeUnknownSync(Hosts)({
-          fixture: { ...host, proxy: { ...host.proxy, accountId: '../other' } },
+          fixture: {
+            ...host,
+            ingress: { 'cloudflare-tunnel': { ...tunnel, accountId: '../other' } },
+          },
         }),
       );
     }));
 
   it('probes without creating files, prepares private storage, and distinguishes edge DNS from the host IP', () =>
-    fixture(({ app, host, root, run, dir }) => {
+    fixture(({ app, host, tunnel, root, run, dir }) => {
       const probe = cloudflareIngress.probe(app, host)!;
       assert.notInclude(probe, sentinel);
 
@@ -260,9 +268,15 @@ describe('Cloudflare Tunnel extension', { timeout: INTEGRATION_TIMEOUT_MILLIS },
       const result = run(probe);
       succeeded(result);
 
+      const caddy = {
+        address: '192.0.2.1',
+        dir: '/srv/caddy',
+        container: 'caddy',
+        network: 'edge',
+      };
       const checks = cloudflareIngress.checks(
         app,
-        { ...host, address: '192.0.2.1' },
+        { ...host, ingress: { caddy, 'cloudflare-tunnel': tunnel } },
         ['198.51.100.10'],
         parseCheck(String(result.stdout)),
       );
@@ -303,9 +317,7 @@ describe('Cloudflare Tunnel extension', { timeout: INTEGRATION_TIMEOUT_MILLIS },
         config: {
           ...app.config,
           ingress: {
-            mode: 'cloudflare-tunnel',
-            domain: 'new.example.com',
-            service: 'https://new:443',
+            'cloudflare-tunnel': { domain: 'new.example.com', service: 'https://new:443' },
           },
         },
       };
@@ -411,7 +423,7 @@ describe('Cloudflare Tunnel extension', { timeout: INTEGRATION_TIMEOUT_MILLIS },
     fixture(({ app, host }) => {
       const caddyHost: HostConfig = {
         ...host,
-        proxy: { provider: 'caddy', dir: '/srv/caddy', container: 'caddy', network: 'edge' },
+        ingress: { caddy: { dir: '/srv/caddy', container: 'caddy', network: 'edge' } },
       };
       assert.isUndefined(cloudflareIngress.probe(app, caddyHost));
       assert.isAbove(blocking(cloudflareIngress.checks(app, caddyHost, [], {})).length, 0);
@@ -421,7 +433,7 @@ describe('Cloudflare Tunnel extension', { timeout: INTEGRATION_TIMEOUT_MILLIS },
         ...app,
         config: {
           ...app.config,
-          ingress: { mode: 'caddy', domain: 'app.example.com', upstream: 'web:80' },
+          ingress: { caddy: { domain: 'app.example.com', upstream: 'web:80' } },
         },
       };
       const caddy = ingressFor(caddyApp)!;

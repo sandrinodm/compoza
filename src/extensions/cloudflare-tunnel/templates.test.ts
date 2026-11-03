@@ -6,7 +6,6 @@ import type { CloudflareProxy } from './config.ts';
 import { routeRule } from './templates.ts';
 
 const proxy: CloudflareProxy = {
-  provider: 'cloudflare-tunnel',
   accountId: 'a'.repeat(32),
   tunnelId: '12345678-1234-1234-1234-123456789abc',
   apiTokenFile: '/private/api-token',
@@ -25,18 +24,12 @@ const namedApp: App = {
 };
 
 describe('Cloudflare route templates', () => {
-  it.each([{ 'cloudflare-tunnel': settings }, { mode: 'cloudflare-tunnel' as const, ...settings }])(
-    'renders named and legacy application settings: %s',
-    (ingress) => {
-      assert.deepStrictEqual(
-        routeRule(proxy, { ...app, config: { ...app.config, ingress } }, 'app'),
-        {
-          hostname: settings.domain,
-          service: settings.service,
-        },
-      );
-    },
-  );
+  it('renders the application settings', () => {
+    assert.deepStrictEqual(routeRule(proxy, namedApp, 'app'), {
+      hostname: settings.domain,
+      service: settings.service,
+    });
+  });
 
   it('reports missing route settings without dereferencing absent ingress', () => {
     assert.throws(() => routeRule(proxy, app, 'app'), 'Cloudflare route settings are missing');

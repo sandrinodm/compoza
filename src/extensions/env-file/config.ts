@@ -11,17 +11,6 @@ export const EnvFileSettings = Schema.Struct({
 });
 
 /**
- * The legacy flat dotenv file source and normalized provider input.
- */
-export const EnvFileConfig = Schema.Struct({
-  /**
-   * The legacy credential provider selector.
-   */
-  provider: Schema.Literal('env-file'),
-  ...EnvFileSettings.fields,
-});
-
-/**
  * The named dotenv file source configuration.
  */
 export const EnvFileSelection = Schema.Struct({
@@ -30,3 +19,8 @@ export const EnvFileSelection = Schema.Struct({
    */
   'env-file': EnvFileSettings,
 });
+
+/**
+ * A dotenv file source as credential providers receive it, tagged with `provider: 'env-file'`.
+ */
+export type EnvFileConfig = { readonly provider: 'env-file' } & typeof EnvFileSettings.Type;

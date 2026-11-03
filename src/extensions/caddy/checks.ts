@@ -23,15 +23,12 @@ export function caddyChecks(
   probe: Record<string, string>,
 ): ReadonlyArray<Check> {
   const ingress = ingressOf(app.config);
-  // Resolved before the mode check so a host entry setting both ingress and proxy is rejected
-  // whatever the app's mode.
-  const selected = ingressConfigOf(host, 'caddy');
   if (ingress.mode !== 'caddy') {
     return [];
   }
 
-  const proxy =
-    selected?.provider === undefined || selected.provider === 'caddy' ? selected : undefined;
+  const selected = ingressConfigOf(host, 'caddy');
+  const proxy = selected?.provider === 'caddy' ? selected : undefined;
   if (proxy === undefined) {
     return [
       {
@@ -48,7 +45,7 @@ export function caddyChecks(
   const name = projectNameOf(app);
   const expectedSite = sha256(siteFile(name, ingress, proxy));
   return [
-    dnsCheck(ingress.domain, addresses, proxy.address ?? host.address),
+    dnsCheck(ingress.domain, addresses, proxy.address),
     proxyCheck(proxy, probe),
     networkCheck(proxy, probe),
     routeCheck(name, proxy, probe, expectedSite),

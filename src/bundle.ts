@@ -435,8 +435,7 @@ function isReadOnlyVolume(volume: string | Record<string, unknown>): boolean {
 
 /**
  * Resolves the canonical path of an `env-file` secret source, so the bundle can refuse to upload it
- * under any name. Fails when the secret settings are ambiguous; a path that cannot be resolved is
- * compared as written.
+ * under any name. A path that cannot be resolved is compared as written.
  */
 function secretSourceRealPath(
   fs: FileSystem.FileSystem,

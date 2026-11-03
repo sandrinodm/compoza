@@ -26,7 +26,6 @@ const app: App = {
 
 const registryHost: HostConfig = {
   ssh: 'deploy@atlas.example.com',
-  address: '192.0.2.42',
   platform: 'linux/arm64',
   transport: { mode: 'registry', registry: 'registry.example.com' },
 };

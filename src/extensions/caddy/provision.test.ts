@@ -440,8 +440,7 @@ describe('Caddy provisioning', { timeout: PROVISION_TEST_TIMEOUT_MS }, () => {
       assert.isDefined(caddyIngress.setup(decoded).input);
 
       const { provision: _provision, ...existing } = f.proxy;
-      const { ingress: _ingress, ...baseHost } = decoded;
-      assert.isUndefined(caddyIngress.setup({ ...baseHost, proxy: existing }).input);
+      assert.isUndefined(caddyIngress.setup({ ...decoded, ingress: { caddy: existing } }).input);
 
       for (const provision of [
         {},
@@ -470,7 +469,7 @@ describe('Caddy provisioning', { timeout: PROVISION_TEST_TIMEOUT_MS }, () => {
             ssh: 'never-contact.invalid',
             platform: 'linux/arm64',
             transport: { mode: 'ssh-load' },
-            proxy: f.proxy,
+            ingress: { caddy: f.proxy },
           },
         }),
       );

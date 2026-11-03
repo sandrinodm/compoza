@@ -4,7 +4,6 @@ import { execFileSync } from 'node:child_process';
 
 import type { App } from '../config/deploy.ts';
 import type { HostConfig } from '../config/hosts.ts';
-import type { ProxyConfig as CaddyProxy } from './caddy/config.ts';
 
 import { DeployConfig } from '../config/deploy.ts';
 import { Hosts } from '../config/hosts.ts';
@@ -26,20 +25,18 @@ const app: App = {
     targets: [],
     composeFiles: ['compose.yaml'],
     ingress: {
-      mode: 'caddy',
-      domain: 'demo.example.com',
-      upstream: 'demo:80',
-      healthPath: '/ready',
+      caddy: { domain: 'demo.example.com', upstream: 'demo:80', healthPath: '/ready' },
     },
   },
 };
 
-const host: HostConfig & { proxy: CaddyProxy } = {
+const proxy = { address: '192.0.2.42', dir: '/srv/proxy', container: 'caddy', network: 'edge' };
+
+const host: HostConfig = {
   ssh: 'deploy@atlas.example.com',
-  address: '192.0.2.42',
   platform: 'linux/amd64',
   transport: { mode: 'ssh-load' },
-  proxy: { dir: '/srv/proxy', container: 'caddy', network: 'edge' },
+  ingress: { caddy: proxy },
 };
 
 describe('bundled extensions', () => {
@@ -59,28 +56,24 @@ describe('bundled extensions', () => {
     assert.throws(() =>
       Schema.decodeUnknownSync(DeployConfig)({
         ...app.config,
-        secrets: { provider: 'unsupported' },
+        secrets: { unsupported: {} },
       }),
     );
     assert.throws(() =>
-      Schema.decodeUnknownSync(DeployConfig)({ ...app.config, ingress: { mode: 'unsupported' } }),
+      Schema.decodeUnknownSync(DeployConfig)({ ...app.config, ingress: { unsupported: {} } }),
     );
     assert.throws(() =>
       Schema.decodeUnknownSync(Hosts)({
-        atlas: { ...host, proxy: { ...host.proxy, provider: 'unsupported' } },
+        atlas: { ...host, ingress: { unsupported: proxy } },
       }),
     );
   });
 
-  it('keeps legacy Caddy selection and explicit host selection equivalent', () => {
-    const explicit: HostConfig = { ...host, proxy: { ...host.proxy!, provider: 'caddy' } };
+  it('plans the Caddy route of an app on a host with Caddy ingress', () => {
     const extension = ingressFor(app)!;
     assert.strictEqual(hostIngress(host), extension);
-    assert.strictEqual(hostIngress(explicit), extension);
-    assert.deepStrictEqual(extension.setup(host), extension.setup(explicit));
 
     const plan = extension.plan(app, host);
-    assert.deepStrictEqual(plan, extension.plan(app, explicit));
     assert.strictEqual(plan.healthUrl, 'https://demo.example.com/ready');
     assert.include(plan.route.script, "file='demo-staging.caddy'");
     assert.include(plan.unroute.script, "file='demo-staging.caddy'");
@@ -90,9 +83,9 @@ describe('bundled extensions', () => {
   it('skips ingress for omitted and explicit none settings without requiring a host proxy', () => {
     const { ingress: _ingress, ...config } = app.config;
     assert.isUndefined(ingressFor({ ...app, config }));
-    assert.isUndefined(ingressFor({ ...app, config: { ...config, ingress: { mode: 'none' } } }));
+    assert.isUndefined(ingressFor({ ...app, config: { ...config, ingress: { none: {} } } }));
 
-    const { proxy: _proxy, ...bareHost } = host;
+    const { ingress: _hostIngress, ...bareHost } = host;
     assert.throws(() => hostIngress(bareHost), 'Host has no proxy entry');
 
     const extension = ingressFor(app)!;

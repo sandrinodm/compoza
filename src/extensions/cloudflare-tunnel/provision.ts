@@ -224,10 +224,16 @@ const LoggingOptions = Schema.Struct({
 });
 
 /**
- * A setting that `includes` can search for a required entry: a list, or a single string, which is
- * searched as a substring.
+ * A Compose setting written as a list of strings, such as `cap_drop` or `security_opt`. A single
+ * string is not accepted: checking it for a required entry would match substrings.
  */
-const SearchableSetting = Schema.Union([Schema.String, Schema.Array(Schema.Unknown)]);
+const StringList = Schema.Array(Schema.String);
+
+/**
+ * A Compose scalar that may be written as a string or a number, such as `mem_limit` or a log driver
+ * option.
+ */
+const ScalarSetting = Schema.Union([Schema.String, Schema.Finite]);
 
 /**
  * A command given as a YAML sequence, before its arguments are checked.
@@ -442,11 +448,11 @@ function checkConnectorIsolation(connector: ConnectorService, envFile: string): 
   // The allowed settings exclude ports, volumes, builds and namespace or privilege overrides.
   requireCondition(connector.read_only === true, 'keep the connector filesystem read-only');
   requireCondition(
-    Schema.is(SearchableSetting)(connector.cap_drop) && connector.cap_drop.includes('ALL'),
+    Schema.is(StringList)(connector.cap_drop) && connector.cap_drop.includes('ALL'),
     'drop all connector capabilities',
   );
   requireCondition(
-    Schema.is(SearchableSetting)(connector.security_opt) &&
+    Schema.is(StringList)(connector.security_opt) &&
       connector.security_opt.includes('no-new-privileges:true'),
     'prevent privilege escalation',
   );
@@ -545,15 +551,15 @@ function checkConnectorRuntime(connector: ConnectorService, gracePeriodSeconds: 
     ? logging.options
     : {};
   requireCondition(
-    BYTE_SIZE_PATTERN.test(String(options['max-size'])),
+    matchesScalar(options['max-size'], BYTE_SIZE_PATTERN),
     'set a positive log file size limit',
   );
   requireCondition(
-    POSITIVE_INTEGER_PATTERN.test(String(options['max-file'])),
+    matchesScalar(options['max-file'], POSITIVE_INTEGER_PATTERN),
     'set a positive log file retention count',
   );
   requireCondition(
-    BYTE_SIZE_PATTERN.test(String(connector.mem_limit)),
+    matchesScalar(connector.mem_limit, BYTE_SIZE_PATTERN),
     'set a positive memory limit',
   );
   requireCondition(
@@ -686,4 +692,13 @@ export function provisionOperation(proxy: CloudflareProxy): IngressOperation {
       '',
     ].join('\n'),
   };
+}
+
+/**
+ * Whether a Compose scalar, written as a string or a number, matches `pattern`. Lists, mappings,
+ * booleans and missing values never match, so they fail the requirement instead of being converted
+ * to text.
+ */
+function matchesScalar(value: unknown, pattern: RegExp): boolean {
+  return Schema.is(ScalarSetting)(value) && pattern.test(String(value));
 }

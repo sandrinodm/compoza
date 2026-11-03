@@ -40,8 +40,8 @@ function planned<A>(build: () => A): Effect.Effect<A, DeployError> {
  * Deploys a bounded Compose stack and executes Compose through the host's own CLI.
  *
  * BuildKit transfers sources independently of the stack bundle; managed providers resolve on this
- * machine, while legacy host dotenv stays on the host. Readiness and planning precede builds, and
- * dry runs do not stage stack files, acquire locks or build images.
+ * machine, while host-only dotenv files stay on the host. Readiness and planning precede builds,
+ * and dry runs do not stage stack files, acquire locks or build images.
  */
 export const deploySsh = Effect.fn('deploySsh')(function* (
   app: App,
@@ -122,22 +122,76 @@ export const deploySsh = Effect.fn('deploySsh')(function* (
 });
 
 /**
+ * How `inspectSsh` runs a read-only Compose command.
+ */
+export interface InspectOptions {
+  /**
+   * The command keeps streaming until interrupted (`logs --follow`).
+   */
+  readonly follow?: boolean;
+
+  /**
+   * The Compose service the command names, checked against the deployed stack first.
+   */
+  readonly service?: string | undefined;
+
+  /**
+   * Whether this process's output is a terminal; defaults to `process.stdout.isTTY`.
+   */
+  readonly outputIsTerminal?: boolean;
+}
+
+/**
+ * The `ssh` options that end a followed command on the host when the connection does.
+ *
+ * Without a terminal, sshd never signals the remote command when the client goes away, so a
+ * followed `docker compose logs` would keep running on the host until its next write failed. A
+ * forced pseudo-terminal (`-tt`) makes sshd hang it up instead, and Ctrl-C reaches it as an
+ * interrupt. `LogLevel=ERROR` drops ssh's "Connection closed" notice and keeps real errors.
+ */
+const FOLLOW_SSH_OPTIONS = ['-tt', '-o', 'LogLevel=ERROR'];
+
+/**
+ * Turns off the pseudo-terminal's newline translation, so output piped from a followed command
+ * keeps plain `\n` line endings.
+ */
+const PLAIN_NEWLINES = 'stty -onlcr 2>/dev/null || true\n';
+
+/**
  * Streams deployed stack inspection through SSH, including follow-mode logs.
  *
  * The shell inherits stdout, so logs appear immediately and are not buffered until SSH exits.
  * Inspection reads only the deployed host configuration, ignoring local Compose edits and
- * production dotenv contents.
+ * production dotenv contents. A named `service` is checked against the deployed stack first, so a
+ * misspelling is reported even when Compose's own diagnostics are suppressed. With `follow`, the
+ * command runs under a pseudo-terminal and ends when the connection or Ctrl-C ends it; when this
+ * process's output is not a terminal, colors and newline translation are turned off on the host.
  */
 export const inspectSsh = Effect.fn('inspectSsh')(function* (
   app: App,
   host: HostConfig,
   args: ReadonlyArray<string>,
+  {
+    follow = false,
+    service,
+    outputIsTerminal = process.stdout.isTTY === true,
+  }: InspectOptions = {},
 ): Effect.fn.Return<void, DeployError, Shell> {
   const shell = yield* Shell;
-  const script = yield* planned(() => deployedScript(app, args, false));
+  const piped = follow && !outputIsTerminal;
+  const composeArgs = piped ? [args[0] ?? '', '--no-color', ...args.slice(1)] : args;
+  const deployed = yield* planned(() =>
+    deployedScript(app, composeArgs, false, { service, interruptible: follow }),
+  );
+  const script = piped ? PLAIN_NEWLINES + deployed : deployed;
+  const sshOptions = follow ? FOLLOW_SSH_OPTIONS : [];
   yield* shell.run(
-    command('ssh', ['-o', 'BatchMode=yes', host.ssh, `bash -c ${shellQuote(script)}`], {
-      label: `ssh ${host.ssh} <${args[0]} deployed stack>`,
-    }),
+    command(
+      'ssh',
+      [...sshOptions, '-o', 'BatchMode=yes', host.ssh, `bash -c ${shellQuote(script)}`],
+      {
+        label: `ssh ${host.ssh} <${args[0]} deployed stack>`,
+      },
+    ),
   );
 });

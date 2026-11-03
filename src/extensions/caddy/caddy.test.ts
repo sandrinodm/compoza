@@ -1,7 +1,7 @@
 import { assert, describe, it } from '@effect/vitest';
 
 import type { CaddyIngress } from '../../config/deploy.ts';
-import type { ProxyConfig } from '../../config/hosts.ts';
+import type { ProxyConfig } from './config.ts';
 
 import { mkdirScript } from '../../command.ts';
 import { registryProbe } from '../../probe.ts';

@@ -323,35 +323,27 @@ describe('bounded Compose bundle', () => {
       ),
   );
 
-  it.effect(
-    'excludes a canonical secret source and rejects ambiguous sources without exposing contents',
-    () =>
-      withBundle((app) =>
-        Effect.gen(function* () {
-          yield* Effect.promise(() => writeFile(join(app.dir, 'compose.yaml'), 'services: {}'));
-          yield* Effect.promise(() =>
-            writeFile(join(app.dir, 'settings.txt'), 'TOKEN=PRIVATE_CONTENT'),
-          );
-          yield* Effect.promise(() => symlink('settings.txt', join(app.dir, 'secrets.env')));
+  it.effect('excludes a canonical secret source without exposing its contents', () =>
+    withBundle((app) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() => writeFile(join(app.dir, 'compose.yaml'), 'services: {}'));
+        yield* Effect.promise(() =>
+          writeFile(join(app.dir, 'settings.txt'), 'TOKEN=PRIVATE_CONTENT'),
+        );
+        yield* Effect.promise(() => symlink('settings.txt', join(app.dir, 'secrets.env')));
 
-          const selected: App = {
-            ...app,
-            config: { ...app.config, secrets: { 'env-file': { path: 'secrets.env' } } },
-          };
-          const secret = yield* readBundle(selected).pipe(Effect.flip);
-          assert.strictEqual(
-            secret.message,
-            'Compose bundle: Secret source files cannot be included in stack assets',
-          );
-          assert.notInclude(secret.message, 'PRIVATE_CONTENT');
-
-          const ambiguous = yield* readBundle({
-            ...selected,
-            config: { ...selected.config, envFile: 'legacy.env' },
-          }).pipe(Effect.flip);
-          assert.include(ambiguous.message, 'Compose bundle: Ambiguous secret sources');
-        }),
-      ),
+        const selected: App = {
+          ...app,
+          config: { ...app.config, secrets: { 'env-file': { path: 'secrets.env' } } },
+        };
+        const secret = yield* readBundle(selected).pipe(Effect.flip);
+        assert.strictEqual(
+          secret.message,
+          'Compose bundle: Secret source files cannot be included in stack assets',
+        );
+        assert.notInclude(secret.message, 'PRIVATE_CONTENT');
+      }),
+    ),
   );
 
   it.effect('keeps unexpected filesystem and validation bugs as defects', () =>

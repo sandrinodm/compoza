@@ -176,7 +176,8 @@ export function tryIngressPlan<A>(plan: () => A): Effect.Effect<A, DeployError> 
 }
 
 /**
- * Selects one host setup operation; legacy proxy entries without a provider still select Caddy.
+ * The extension serving the host's ingress, or the one named by `provider` when the host has both.
+ * Throws when the host has no matching ingress, or has both and `provider` does not pick one.
  */
 export function hostIngress(host: HostConfig, provider?: IngressId): IngressExtension {
   const proxy = ingressConfigOf(host, provider);
@@ -188,7 +189,7 @@ export function hostIngress(host: HostConfig, provider?: IngressId): IngressExte
     );
   }
 
-  return ingressExtension(proxy.provider ?? 'caddy');
+  return ingressExtension(proxy.provider);
 }
 
 /**

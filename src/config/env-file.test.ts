@@ -41,7 +41,7 @@ EQUALS=a=b
 
 describe('readSecrets', () => {
   it.effect(
-    'resolves a relative envFile against the deploy folder, not the working directory',
+    'resolves a relative env-file path against the deploy folder, not the working directory',
     () =>
       Effect.acquireUseRelease(
         Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'compoza-'))),
@@ -56,7 +56,7 @@ describe('readSecrets', () => {
               host: 'atlas',
               targets: ['web'],
               composeFiles: ['compose.yaml'],
-              envFile: 'secrets.env',
+              secrets: { 'env-file': { path: 'secrets.env' } },
             });
 
             assert.notStrictEqual(process.cwd(), dir);
@@ -66,7 +66,7 @@ describe('readSecrets', () => {
       ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect('reads nothing when the app has no envFile', () =>
+  it.effect('reads nothing when the app has no secret source', () =>
     Effect.gen(function* () {
       const config = yield* Schema.decodeUnknownEffect(DeployConfig)({
         name: 'demo',

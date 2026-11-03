@@ -145,7 +145,6 @@ process.exit(95);
   );
 
   const proxy: CloudflareProxy = {
-    provider: 'cloudflare-tunnel',
     accountId,
     tunnelId,
     routing: 'manual',
@@ -340,6 +339,38 @@ describe('Cloudflare connector provisioning', { timeout: INTEGRATION_TIMEOUT_MIL
           provisionOperation({ ...f.proxy, templates: { compose: { inline: text } } }),
         );
       }
+
+      // Settings must have their Compose shape: a single string is not a list to search, and a
+      // list is not a size or count.
+      for (const [text, requirement] of [
+        [custom.replace('cap_drop: [ALL]', 'cap_drop: ALL'), 'drop all connector capabilities'],
+        [
+          custom.replace(
+            'security_opt: [no-new-privileges:true]',
+            'security_opt: no-new-privileges:true',
+          ),
+          'prevent privilege escalation',
+        ],
+        [custom.replace('max-size: 10m', 'max-size: [10m]'), 'set a positive log file size limit'],
+        [
+          custom.replace("max-file: '3'", 'max-file: [3]'),
+          'set a positive log file retention count',
+        ],
+        [custom.replace('mem_limit: 256m', 'mem_limit: [256m]'), 'set a positive memory limit'],
+      ]) {
+        assert.throws(
+          () => provisionOperation({ ...f.proxy, templates: { compose: { inline: text! } } }),
+          requirement!,
+        );
+      }
+
+      // Compose also accepts numbers for these scalars.
+      const numeric = custom
+        .replace("max-file: '3'", 'max-file: 3')
+        .replace('mem_limit: 256m', 'mem_limit: 268435456');
+      assert.doesNotThrow(() =>
+        provisionOperation({ ...f.proxy, templates: { compose: { inline: numeric } } }),
+      );
     }));
 
   it.skipIf(!hasCompose)(
@@ -363,12 +394,11 @@ describe('Cloudflare connector provisioning', { timeout: INTEGRATION_TIMEOUT_MIL
 
   it('validates new settings while preserving existing managed host configuration', () =>
     fixture((f) => {
-      const { provider: _provider, ...settings } = f.proxy;
       const host = {
         ssh: 'fixture',
         platform: 'linux/arm64',
         transport: { mode: 'ssh-load' },
-        ingress: { 'cloudflare-tunnel': settings },
+        ingress: { 'cloudflare-tunnel': f.proxy },
       };
       assert.isDefined(
         Schema.decodeUnknownSync(Hosts, { onExcessProperty: 'error' })({ fixture: host }),
@@ -405,7 +435,7 @@ describe('Cloudflare connector provisioning', { timeout: INTEGRATION_TIMEOUT_MIL
         ssh: 'fixture',
         platform: 'linux/arm64',
         transport: { mode: 'ssh-load' as const },
-        proxy: f.proxy,
+        ingress: { 'cloudflare-tunnel': f.proxy },
       };
       const plan = cloudflareIngress.plan(app, host);
       assert.notInclude(plan.route.script, 'curl');
@@ -546,9 +576,11 @@ describe('Cloudflare connector provisioning', { timeout: INTEGRATION_TIMEOUT_MIL
             ssh: 'never-contact.invalid',
             platform: 'linux/arm64',
             transport: { mode: 'ssh-load' },
-            proxy: {
-              ...f.proxy,
-              provision: { secrets: { '1password': { environmentId: 'must-not-fetch' } } },
+            ingress: {
+              'cloudflare-tunnel': {
+                ...f.proxy,
+                provision: { secrets: { '1password': { environmentId: 'must-not-fetch' } } },
+              },
             },
           },
         }),

@@ -82,18 +82,6 @@ export const CaddySettings = Schema.Struct({
 });
 
 /**
- * The legacy flat Caddy app selection, retained for existing deploy files and normalized runtime
- * plans.
- */
-export const CaddyIngress = Schema.Struct({
-  /**
-   * The legacy mode selector.
-   */
-  mode: Schema.Literal('caddy'),
-  ...CaddySettings.fields,
-});
-
-/**
  * The named Caddy application configuration with settings scoped to the extension.
  */
 export const CaddySelection = Schema.Struct({
@@ -104,9 +92,10 @@ export const CaddySelection = Schema.Struct({
 });
 
 /**
- * The decoded Caddy routing settings.
+ * An app's Caddy routing settings as planners see them, tagged with `mode: 'caddy'` so they can be
+ * told apart from other extensions' settings.
  */
-export type CaddyIngress = typeof CaddyIngress.Type;
+export type CaddyIngress = { readonly mode: 'caddy' } & typeof CaddySettings.Type;
 
 /**
  * Opt-in creation of a shared Caddy stack; credentials remain in an operator-provided file on the
@@ -220,16 +209,11 @@ export const CaddyHostSettings = Schema.Struct({
 });
 
 /**
- * The legacy flat Caddy host configuration used internally after resolving named ingress settings.
+ * The shared Caddy host settings together with the optional expected DNS address.
  */
-export const ProxyConfig = Schema.Struct({
+const CaddyHostIngress = Schema.Struct({
   /**
-   * The legacy extension selector, optional for older host entries.
-   */
-  provider: Schema.optionalKey(Schema.Literal('caddy')),
-
-  /**
-   * The Caddy DNS address, falling back to the legacy host address when omitted.
+   * An optional IPv4 or IPv6 address that public app DNS answers must include.
    */
   address: Schema.optionalKey(DnsAddress),
   ...CaddyHostSettings.fields,
@@ -242,19 +226,13 @@ export const CaddyHostSelection = Schema.Struct({
   /**
    * The selected extension's shared proxy and DNS settings.
    */
-  caddy: Schema.Struct({
-    /**
-     * An optional IPv4 or IPv6 address that public app DNS answers must include.
-     */
-    address: Schema.optionalKey(DnsAddress),
-    ...CaddyHostSettings.fields,
-  }),
+  caddy: CaddyHostIngress,
 });
 
 /**
- * The decoded shared Caddy host settings.
+ * The decoded shared Caddy host settings, as `ingress.caddy` holds them.
  */
-export type ProxyConfig = typeof ProxyConfig.Type;
+export type ProxyConfig = typeof CaddyHostIngress.Type;
 
 /**
  * The proxy's Compose file name when the host entry leaves it out.

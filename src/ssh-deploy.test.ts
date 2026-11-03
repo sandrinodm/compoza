@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as YAML from 'yaml';
 
+import type { Command } from './command.ts';
 import type { App } from './config/deploy.ts';
 import type { HostConfig } from './config/hosts.ts';
 
@@ -16,6 +17,7 @@ import { planDeployment } from './plan.ts';
 import { Git } from './services/Git.ts';
 import { Remote } from './services/Remote.ts';
 import { DryRun, Shell } from './services/Shell.ts';
+import { inspectSsh } from './ssh-deploy.ts';
 
 const app: App = {
   dir: '/app',
@@ -33,7 +35,7 @@ const app: App = {
         host: 'borealis',
         projectName: 'app-dev',
         profiles: ['dev'],
-        ingress: { mode: 'none' },
+        ingress: { none: {} },
         remote: { stackDir: '/home/deploy/stacks/app' },
         environment: { DATA_PATH: '/home/deploy/data' },
       },
@@ -43,7 +45,6 @@ const app: App = {
 
 const host: HostConfig = {
   ssh: 'host',
-  address: '192.0.2.1',
   platform: 'linux/arm64',
   transport: { mode: 'registry', registry: 'registry.test' },
 };
@@ -56,8 +57,12 @@ describe('SSH deployment selection and transports', () => {
     assert.strictEqual(selected.config.projectName, 'app-dev');
     assert.deepStrictEqual(selected.config.profiles, ['dev']);
     assert.deepStrictEqual(selected.config.remote, { stackDir: '/home/deploy/stacks/app' });
-    assert.deepStrictEqual(selected.config.ingress, { mode: 'none' });
+    assert.deepStrictEqual(selected.config.ingress, { none: {} });
     assert.throws(() => selectDestination(app, 'unknown'), 'Unknown destination');
+
+    for (const name of ['constructor', 'toString']) {
+      assert.throws(() => selectDestination(app, name), `Unknown destination "${name}"`);
+    }
   });
 
   it.each(['registry', 'ssh-load', 'remote-build'] as const)(
@@ -153,7 +158,7 @@ describe('SSH deployment selection and transports', () => {
               Effect.sync(() => {
                 probes.push(script);
 
-                return 'docker=yes\ncompose=yes\njq=yes\nstack_path=yes\nhost_env=yes\nhost_overlay=yes\ncurl=yes\nbuildkit=yes\n';
+                return 'docker=yes\ncompose=yes\njq=yes\nstack_path=yes\nhost_overlay=yes\ncurl=yes\nbuildkit=yes\n';
               }),
           }),
         ),
@@ -163,7 +168,10 @@ describe('SSH deployment selection and transports', () => {
         ({ path: dir }) =>
           Effect.gen(function* () {
             yield* Effect.promise(() =>
-              writeFile(join(dir, 'compose.yaml'), 'services: {web: {image: nginx}}'),
+              writeFile(
+                join(dir, 'compose.yaml'),
+                'services: {web: {image: nginx, env_file: [/host/secrets/never-local.env]}}',
+              ),
             );
             yield* Effect.promise(() =>
               writeFile(
@@ -174,10 +182,7 @@ describe('SSH deployment selection and transports', () => {
                   host: 'host',
                   targets: [],
                   execution: 'ssh',
-                  remote: {
-                    stackDir: '/srv/third-party',
-                    envFile: '/host/secrets/never-local.env',
-                  },
+                  remote: { stackDir: '/srv/third-party' },
                   composeFiles: ['compose.yaml'],
                 }),
               ),
@@ -203,5 +208,65 @@ describe('SSH deployment selection and transports', () => {
         (directory) => Effect.promise(() => directory.remove()),
       );
     },
+  );
+});
+
+describe('inspectSsh', () => {
+  /**
+   * Runs `inspectSsh` against a shell that records the SSH command instead of running it.
+   */
+  const inspected = (args: ReadonlyArray<string>, options: Parameters<typeof inspectSsh>[3]) => {
+    const steps: Array<Command> = [];
+    const shell = Shell.of({
+      run: (step) =>
+        Effect.sync(() => {
+          steps.push(step as Command);
+        }),
+      capture: () => Effect.die('inspection captures nothing'),
+    });
+    return inspectSsh(app, host, args, options).pipe(
+      Effect.provideService(Shell, shell),
+      Effect.as(steps),
+    );
+  };
+
+  /**
+   * The host script of a recorded `ssh ... bash -c '<script>'` command, with its quoting undone.
+   */
+  const remoteScript = (step: Command) =>
+    step.args
+      .at(-1)!
+      .replace(/^bash -c '/, '')
+      .replace(/'$/, '')
+      .replaceAll("'\\''", "'");
+
+  it.effect('checks a named service before reading logs, without a terminal', () =>
+    Effect.gen(function* () {
+      const [step] = yield* inspected(['logs', '--tail', '5', 'web'], { service: 'web' });
+      const script = remoteScript(step!);
+
+      assert.deepStrictEqual(step!.args.slice(0, 2), ['-o', 'BatchMode=yes']);
+      assert.include(script, "compoza_require_service 'web'");
+      assert.notInclude(script, "trap 'exit 0' INT");
+    }),
+  );
+
+  it.effect('follows under a pseudo-terminal that ends with the connection or Ctrl-C', () =>
+    Effect.gen(function* () {
+      const args = ['logs', '--tail', '5', '--follow'];
+      const [terminal] = yield* inspected(args, { follow: true, outputIsTerminal: true });
+      const [piped] = yield* inspected(args, { follow: true, outputIsTerminal: false });
+
+      for (const step of [terminal!, piped!]) {
+        assert.deepStrictEqual(step.args.slice(0, 3), ['-tt', '-o', 'LogLevel=ERROR']);
+        assert.include(remoteScript(step), "trap 'exit 0' INT");
+      }
+
+      // Output piped to another program keeps plain newlines and no colors.
+      assert.notInclude(remoteScript(terminal!), 'stty -onlcr');
+      assert.notInclude(remoteScript(terminal!), '--no-color');
+      assert.include(remoteScript(piped!), 'stty -onlcr');
+      assert.include(remoteScript(piped!), "'logs' '--no-color' '--tail'");
+    }),
   );
 });

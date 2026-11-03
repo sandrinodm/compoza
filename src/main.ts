@@ -1,10 +1,11 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { Console, Effect, Layer, Logger } from 'effect';
-import { Command } from 'effect/cli';
+import { CliOutput, Command } from 'effect/cli';
 import { FetchHttpClient } from 'effect/http';
 
 import packageJson from '../package.json' with { type: 'json' };
 import { cli } from './cli.ts';
+import { helpFormatter } from './help.ts';
 import { humanLogger } from './progress.ts';
 import { Git } from './services/Git.ts';
 import { Remote } from './services/Remote.ts';
@@ -19,11 +20,14 @@ import { Shell } from './services/Shell.ts';
  * `--log-level` flag lowers it: `Command.run` provides `References.MinimumLogLevel` to the handler
  * when the flag is given (`effect/cli` `Command.js`, "Apply built-in setting behavior"), so
  * `--log-level debug` shows the plan, the host scripts and the wait probes.
+ *
+ * `helpFormatter` renders `--help` and `compoza help`.
  */
 const Services = Layer.mergeAll(
   Git.layer.pipe(Layer.provideMerge(Shell.layer)),
   Remote.layer,
   Logger.layer([humanLogger]),
+  CliOutput.layer(helpFormatter()),
 ).pipe(Layer.provideMerge(FetchHttpClient.layer), Layer.provideMerge(NodeServices.layer));
 
 /**

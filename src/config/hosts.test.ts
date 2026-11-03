@@ -11,6 +11,7 @@ import {
   dockerHost,
   expandHome,
   hostFor,
+  hostNamed,
   Hosts,
   hostsPath,
   loadDefaultHosts,
@@ -25,25 +26,28 @@ import {
 const valid = {
   atlas: {
     ssh: 'deploy@atlas.example.com',
-    address: '192.0.2.42',
     platform: 'linux/arm64',
     transport: { mode: 'registry', registry: 'registry.example.com' },
-    proxy: {
-      dir: '/srv/proxy',
-      container: 'proxy-caddy-1',
-      service: 'caddy',
-      network: 'edge_network',
-      tls: 'dns cloudflare {env.CLOUDFLARE_API_TOKEN}',
-      logSnippet: 'request_log',
+    ingress: {
+      caddy: {
+        address: '192.0.2.42',
+        dir: '/srv/proxy',
+        container: 'proxy-caddy-1',
+        service: 'caddy',
+        network: 'edge_network',
+        tls: 'dns cloudflare {env.CLOUDFLARE_API_TOKEN}',
+        logSnippet: 'request_log',
+      },
     },
   },
   cedar: {
     ssh: 'deploy@cedar.example.com',
-    address: '203.0.113.86',
     platform: 'linux/amd64',
     transport: { mode: 'ssh-load' },
   },
 } as const;
+
+const caddy = valid.atlas.ingress.caddy;
 
 describe('Hosts', () => {
   it.effect('accepts both transports and an optional proxy', () =>
@@ -68,9 +72,9 @@ describe('Hosts', () => {
 
   it.effect('accepts a bare SSH config alias and defaults the service to the container', () =>
     Effect.gen(function* () {
-      const { service: _service, ...proxy } = valid.atlas.proxy;
+      const { service: _service, ...caddy } = valid.atlas.ingress.caddy;
       const hosts = yield* Schema.decodeUnknownEffect(Hosts)({
-        nas: { ...valid.atlas, ssh: 'nas', proxy },
+        nas: { ...valid.atlas, ssh: 'nas', ingress: { caddy } },
       });
       const nas = yield* hostFor({ host: 'nas' } as never, hosts);
       assert.strictEqual(dockerHost(nas), 'ssh://nas');
@@ -86,13 +90,26 @@ describe('Hosts', () => {
     }),
   );
 
+  it.effect.each(['constructor', 'toString', 'hasOwnProperty'])(
+    'treats %s as an unknown host rather than an Object method',
+    (name) =>
+      Effect.gen(function* () {
+        const hosts = yield* Schema.decodeUnknownEffect(Hosts)(valid);
+        const error = yield* hostNamed(name, hosts).pipe(Effect.flip);
+        assert.strictEqual(
+          error.message,
+          `Unknown host "${name}" (hosts file defines: atlas, cedar)`,
+        );
+      }),
+  );
+
   it.effect.each([
-    ['proxy folder', { atlas: { ...valid.atlas, proxy: { ...valid.atlas.proxy, dir: 'proxy' } } }],
+    ['proxy folder', { atlas: { ...valid.atlas, ingress: { caddy: { ...caddy, dir: 'proxy' } } } }],
     ['ssh', { atlas: { ...valid.atlas, ssh: 'deploy@atlas server.example.com' } }],
     ['empty ssh', { atlas: { ...valid.atlas, ssh: '' } }],
     [
       'proxy service',
-      { atlas: { ...valid.atlas, proxy: { ...valid.atlas.proxy, service: '-caddy' } } },
+      { atlas: { ...valid.atlas, ingress: { caddy: { ...caddy, service: '-caddy' } } } },
     ],
     ['platform', { atlas: { ...valid.atlas, platform: 'arm64' } }],
     ['transport', { atlas: { ...valid.atlas, transport: { mode: 'ftp' } } }],
@@ -163,10 +180,13 @@ describe('host file loading', () => {
       yield* yamlFile(f.global, valid);
       yield* yamlFile(f.local, { atlas: valid.cedar });
 
-      assert.deepStrictEqual(yield* loadDefaultHosts(f.directory, f.global), {
-        atlas: valid.cedar,
-        cedar: valid.cedar,
-      });
+      assert.deepStrictEqual(
+        yield* loadDefaultHosts({ directory: f.directory, globalFile: f.global }),
+        {
+          atlas: valid.cedar,
+          cedar: valid.cedar,
+        },
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -175,18 +195,27 @@ describe('host file loading', () => {
     () =>
       Effect.gen(function* () {
         const f = yield* fixture;
-        const error = yield* loadDefaultHosts(f.directory, f.global).pipe(Effect.flip);
+        const error = yield* loadDefaultHosts({
+          directory: f.directory,
+          globalFile: f.global,
+        }).pipe(Effect.flip);
         assert.include(error.message, f.local);
         assert.include(error.message, f.global);
 
         yield* yamlFile(f.local, valid);
 
-        assert.deepStrictEqual(yield* loadDefaultHosts(f.directory, f.global), valid);
+        assert.deepStrictEqual(
+          yield* loadDefaultHosts({ directory: f.directory, globalFile: f.global }),
+          valid,
+        );
 
         yield* Effect.promise(() => rm(f.local));
         yield* yamlFile(f.global, valid);
 
-        assert.deepStrictEqual(yield* loadDefaultHosts(f.directory, f.global), valid);
+        assert.deepStrictEqual(
+          yield* loadDefaultHosts({ directory: f.directory, globalFile: f.global }),
+          valid,
+        );
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -203,10 +232,13 @@ describe('host file loading', () => {
           other: { $ref: join(f.dir, 'global', 'host.yaml') },
         });
 
-        assert.deepStrictEqual(yield* loadDefaultHosts(f.directory, f.global), {
-          ...valid,
-          other: valid.atlas,
-        });
+        assert.deepStrictEqual(
+          yield* loadDefaultHosts({ directory: f.directory, globalFile: f.global }),
+          {
+            ...valid,
+            other: valid.atlas,
+          },
+        );
         assert.deepStrictEqual(yield* loadHosts(f.global), { atlas: valid.atlas });
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -217,9 +249,12 @@ describe('host file loading', () => {
       yield* yamlFile(f.global, { atlas: { $ref: './missing.yaml' } });
       yield* yamlFile(f.local, { atlas: valid.cedar });
 
-      assert.deepStrictEqual(yield* loadDefaultHosts(f.directory, f.global), {
-        atlas: valid.cedar,
-      });
+      assert.deepStrictEqual(
+        yield* loadDefaultHosts({ directory: f.directory, globalFile: f.global }),
+        {
+          atlas: valid.cedar,
+        },
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
@@ -234,13 +269,18 @@ describe('host file loading', () => {
       ]) {
         yield* yamlFile(f.local, value);
 
-        const error = yield* loadDefaultHosts(f.directory, f.global).pipe(Effect.flip);
+        const error = yield* loadDefaultHosts({
+          directory: f.directory,
+          globalFile: f.global,
+        }).pipe(Effect.flip);
         assert.include(error.message, f.local);
       }
 
       yield* Effect.promise(() => writeFile(f.local, '{'));
 
-      const error = yield* loadDefaultHosts(f.directory, f.global).pipe(Effect.flip);
+      const error = yield* loadDefaultHosts({ directory: f.directory, globalFile: f.global }).pipe(
+        Effect.flip,
+      );
       assert.include(error.message, 'not valid YAML');
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

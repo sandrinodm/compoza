@@ -29,6 +29,37 @@ export function projectArgs({ app, host }: Resolved): ReadonlyArray<string> {
 }
 
 /**
+ * Fails unless the app's running project has containers for `service`, naming the services it does
+ * have. `docker compose logs` prints nothing and exits 0 for a service it does not know, so a
+ * misspelled `--service` would otherwise look like an empty log.
+ *
+ * The project is addressed by name, like every inspection, so the list comes from its containers
+ * (`ps --all --services`): stopped ones and those of profiles a deploy did not select are included,
+ * and a service that never had a container has no logs to show. A project with no containers
+ * reports `services: none`.
+ */
+export const requireProjectService = Effect.fn('requireProjectService')(function* (
+  resolved: Resolved,
+  service: string,
+): Effect.fn.Return<void, DeployError, Shell> {
+  const shell = yield* Shell;
+  const output = yield* shell.capture(
+    command('docker', [...projectArgs(resolved), 'ps', '--all', '--services']),
+  );
+  const services = output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+  if (!services.includes(service)) {
+    return yield* new DeployError({
+      message:
+        `No service "${service}" in the running project; ` +
+        `services: ${services.join(', ') || 'none'}`,
+    });
+  }
+});
+
+/**
  * The container actions that keep the stack in place: `stop` halts the containers and `start`
  * resumes them, with their networks, volumes and images untouched, so a stopped stack comes back
  * exactly as it was.

@@ -15,17 +15,27 @@ const app: App = {
     host: 'atlas',
     targets: ['web'],
     composeFiles: ['compose.yaml'],
-    ingress: { mode: 'caddy', domain: 'demo.example.com', upstream: 'demo-web:80' },
+    ingress: { caddy: { domain: 'demo.example.com', upstream: 'demo-web:80' } },
   },
 };
 
-const host: HostConfig & { proxy: ProxyConfig } = {
-  ssh: 'deploy@atlas.example.com',
-  address: '192.0.2.42',
-  platform: 'linux/arm64',
-  transport: { mode: 'registry', registry: 'registry.example.com' },
-  proxy: { dir: '/srv/proxy', container: 'caddy', network: 'edge' },
-};
+const address = '192.0.2.42';
+
+const proxy: ProxyConfig = { address, dir: '/srv/proxy', container: 'caddy', network: 'edge' };
+
+/**
+ * The fixture host with `caddy` as its Caddy ingress.
+ */
+function hostWith(caddy: ProxyConfig): HostConfig {
+  return {
+    ssh: 'deploy@atlas.example.com',
+    platform: 'linux/arm64',
+    transport: { mode: 'registry', registry: 'registry.example.com' },
+    ingress: { caddy },
+  };
+}
+
+const host = hostWith(proxy);
 
 const ready = {
   proxy_dir: 'present',
@@ -36,22 +46,18 @@ const ready = {
   container_health: 'none',
   network: 'yes',
   site_sha256: sha256(
-    siteFile(
-      'demo',
-      { mode: 'caddy', domain: 'demo.example.com', upstream: 'demo-web:80' },
-      host.proxy!,
-    ),
+    siteFile('demo', { mode: 'caddy', domain: 'demo.example.com', upstream: 'demo-web:80' }, proxy),
   ),
   registry_login: 'yes',
 };
 
 describe('evaluateChecks', () => {
   it('allows DNS without an IP assertion and compares both IP families', () => {
-    const { address: _address, ...withoutAddress } = host;
-    assert.isTrue(evaluateChecks(app, withoutAddress, ['2001:db8::1'], ready)[0]!.ok);
-    assert.isFalse(evaluateChecks(app, withoutAddress, [], ready)[0]!.ok);
+    const { address: _address, ...withoutAddress } = proxy;
+    assert.isTrue(evaluateChecks(app, hostWith(withoutAddress), ['2001:db8::1'], ready)[0]!.ok);
+    assert.isFalse(evaluateChecks(app, hostWith(withoutAddress), [], ready)[0]!.ok);
 
-    const ipv6 = { ...withoutAddress, proxy: { ...host.proxy, address: '2001:db8:0:0::1' } };
+    const ipv6 = hostWith({ ...proxy, address: '2001:db8:0:0::1' });
     assert.isTrue(evaluateChecks(app, ipv6, ['2001:db8::1'], ready)[0]!.ok);
     assert.isFalse(evaluateChecks(app, ipv6, ['2001:db8::2'], ready)[0]!.ok);
   });
@@ -62,15 +68,15 @@ describe('evaluateChecks', () => {
       { container_running: 'yes', container_health: 'unhealthy' },
       { container_running: 'yes', container_health: 'starting' },
     ]) {
-      const check = evaluateChecks(app, host, [host.address!], { ...ready, ...state })[1]!;
+      const check = evaluateChecks(app, host, [address], { ...ready, ...state })[1]!;
       assert.isFalse(check.ok);
       assert.include(check.detail, 'Caddy is not ready');
     }
 
-    const provisioned = { ...host, proxy: { ...host.proxy, provision: { image: 'caddy:2' } } };
-    assert.isFalse(evaluateChecks(app, provisioned, [host.address!], ready)[1]!.ok);
+    const provisioned = hostWith({ ...proxy, provision: { image: 'caddy:2' } });
+    assert.isFalse(evaluateChecks(app, provisioned, [address], ready)[1]!.ok);
     assert.isTrue(
-      evaluateChecks(app, provisioned, [host.address!], {
+      evaluateChecks(app, provisioned, [address], {
         ...ready,
         container_health: 'healthy',
       })[1]!.ok,
@@ -127,7 +133,7 @@ describe('evaluateChecks', () => {
   });
 
   it('blocks a caddy app on a host without a proxy entry', () => {
-    const { proxy: _proxy, ...bare } = host;
+    const { ingress: _ingress, ...bare } = host;
     const checks = evaluateChecks(app, bare, [], { registry_login: 'yes' });
     assert.deepStrictEqual(
       checks.map((check) => [check.name, check.ok, check.fix]),
@@ -179,7 +185,7 @@ describe('evaluateChecks', () => {
   });
 
   it('produces only the registry check without ingress, and nothing for ssh-load', () => {
-    const plain: App = { ...app, config: { ...app.config, ingress: { mode: 'none' } } };
+    const plain: App = { ...app, config: { ...app.config, ingress: { none: {} } } };
     assert.deepStrictEqual(
       evaluateChecks(plain, host, [], { registry_login: 'yes' }).map((check) => check.name),
       ['registry'],

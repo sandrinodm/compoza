@@ -10,7 +10,6 @@ import { DryRun } from './Shell.ts';
 
 const host: HostConfig = {
   ssh: 'deploy@atlas.example.com',
-  address: '192.0.2.42',
   platform: 'linux/arm64',
   transport: { mode: 'ssh-load' },
 };

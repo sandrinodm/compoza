@@ -28,7 +28,7 @@ const fixture = Effect.gen(function* () {
     Effect.promise(() => mkdtempDisposable(join(tmpdir(), 'compoza-working-directory-'))),
     (directory) => Effect.promise(() => directory.remove()),
   );
-  const directory = join(root, 'localcloud/compose/foo');
+  const directory = join(root, 'deployments/compose/foo');
   const repository = join(root, 'foo');
   const source = join(repository, 'app source');
   const file = join(directory, 'production.yaml');

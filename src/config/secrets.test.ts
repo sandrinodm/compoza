@@ -10,7 +10,7 @@ import type { App } from './deploy.ts';
 import { OnePasswordReader } from '../extensions/1password/index.ts';
 import { DryRun } from '../services/Shell.ts';
 import { deploymentScript } from '../ssh-plan.ts';
-import { selectDestination, validateSecretSettings } from './deploy.ts';
+import { selectDestination } from './deploy.ts';
 import { parseEnvFile } from './env-file.ts';
 import { readSecrets, secretSource, validateSecrets } from './secrets.ts';
 
@@ -21,7 +21,7 @@ const app: App = {
     host: 'atlas',
     targets: ['web'],
     composeFiles: ['compose.yaml'],
-    secrets: { provider: '1password', environmentId: 'fictional-environment' },
+    secrets: { '1password': { environmentId: 'fictional-environment' } },
   },
 };
 
@@ -36,52 +36,25 @@ const allowlisted = (variables: ReadonlyArray<string>): App => ({
 });
 
 describe('secret sources', () => {
-  it('replaces the entire inherited source and legacy source at destinations', () => {
+  it('replaces the entire inherited source at destinations', () => {
     const selected = selectDestination(
       {
         ...app,
         config: {
           ...app.config,
-          destinations: { cedar: { secrets: { provider: 'env-file', path: 'dev.env' } } },
+          destinations: { cedar: { secrets: { 'env-file': { path: 'dev.env' } } } },
         },
       },
       'cedar',
     );
     assert.deepStrictEqual(secretSource(selected), { provider: 'env-file', path: 'dev.env' });
-
-    const { secrets: _source, ...legacyConfig } = app.config;
-    const legacy = selectDestination(
-      {
-        ...app,
-        config: {
-          ...legacyConfig,
-          envFile: 'legacy.env',
-          destinations: { cedar: { secrets: { provider: 'none' } } },
-        },
-      },
-      'cedar',
-    );
-    assert.deepStrictEqual(secretSource(legacy), { provider: 'none' });
-    assert.isUndefined(legacy.config.envFile);
   });
 
-  it('rejects ambiguous aliases and requires explicit local source selection', () => {
-    assert.throws(
-      () => validateSecretSettings({ ...app.config, envFile: 'legacy.env' }),
-      'Ambiguous',
-    );
-    assert.throws(
-      () =>
-        validateSecretSettings({
-          ...app.config,
-          remote: { stackDir: '/srv/app', envFile: '/srv/app/.env' },
-        }),
-      'Ambiguous',
-    );
+  it('requires explicit local source selection', () => {
     assert.throws(() => secretSource(app, { local: true }), 'local.secrets');
     assert.deepStrictEqual(
       secretSource(
-        { ...app, config: { ...app.config, local: { secrets: { provider: 'none' } } } },
+        { ...app, config: { ...app.config, local: { secrets: { none: {} } } } },
         { local: true },
       ),
       { provider: 'none' },
@@ -232,7 +205,7 @@ describe('secret sources', () => {
       assert.deepStrictEqual(
         yield* readSecrets({
           ...app,
-          config: { ...app.config, secrets: { provider: 'env-file', path: '/does-not-exist' } },
+          config: { ...app.config, secrets: { 'env-file': { path: '/does-not-exist' } } },
         }),
         {},
       );
@@ -259,7 +232,7 @@ describe('secret sources', () => {
             assert.deepStrictEqual(
               yield* readSecrets({
                 dir,
-                config: { ...app.config, secrets: { provider: 'env-file', path: 'local.env' } },
+                config: { ...app.config, secrets: { 'env-file': { path: 'local.env' } } },
               }),
               { TOKEN: '$HOME "quote"', EMPTY: '' },
             );

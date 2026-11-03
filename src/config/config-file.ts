@@ -1,5 +1,5 @@
 import { Effect, FileSystem, Schema } from 'effect';
-import { parseDocument } from 'yaml';
+import { type Document, parseDocument } from 'yaml';
 
 import { DeployError, platformFailure } from '../errors.ts';
 
@@ -37,8 +37,8 @@ interface ReadConfigOptions {
  * is used as given, so callers resolve it first and the messages show the absolute path.
  *
  * Unknown keys are an error rather than ignored: both files are hand-written, and a misspelt or
- * outdated key (such as a top-level `domain` from an older layout) would otherwise be dropped
- * silently, so a deploy would skip the routing it was meant to do.
+ * misplaced key (such as `domain` at the top level instead of under `ingress`) would otherwise be
+ * dropped silently, so a deploy would skip the routing it was meant to do.
  */
 export const readConfigFile = Effect.fn('readConfigFile')(function* <T>(
   file: string,
@@ -81,6 +81,14 @@ export function fileExists(
  * Parses one YAML 1.2 document with unique keys, string keys and bounded alias expansion.
  */
 export function parseConfig(text: string): unknown {
+  return parseConfigDocument(text).toJS({ maxAliasCount: MAX_YAML_ALIASES }) as unknown;
+}
+
+/**
+ * Parses one YAML 1.2 document under the rules of `parseConfig`, keeping the document so it can be
+ * edited and written back with its comments. Throws the first parser error or warning.
+ */
+export function parseConfigDocument(text: string): Document {
   const document = parseDocument(text, {
     strict: true,
     uniqueKeys: true,
@@ -93,7 +101,7 @@ export function parseConfig(text: string): unknown {
     throw issue;
   }
 
-  return document.toJS({ maxAliasCount: MAX_YAML_ALIASES }) as unknown;
+  return document;
 }
 
 /**

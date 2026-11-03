@@ -42,9 +42,8 @@ compoza_metadata() {
     (.project | type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]*$")) and
     (.profiles | type == "array" and all(.[]; type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9_-]*$"))) and
     (.files | file_paths) and
-    (if has("ownedFiles") then (.ownedFiles | file_paths) and ((.files - .ownedFiles) | length == 0) else true end) and
+    (.ownedFiles | file_paths) and ((.files - .ownedFiles) | length == 0) and
     (.overlay | . == null or (type == "string" and startswith("/") and (explode | all(. >= 32)))) and
-    (.hostEnv | . == null or (type == "string" and startswith("/") and (explode | all(. >= 32)))) and
     (.managed | type == "boolean") and (.unroute | type == "string"))' "$metadata" >/dev/null 2>&1 || { compoza_fail 'Invalid deployed lifecycle metadata; redeploy with the current CLI'; return 1; }
 }
 
@@ -60,15 +59,15 @@ compoza_target() {
   [ ! -e "$part" ] && return 0
   [ -f "$part" ] || { compoza_fail 'Stack output is not a regular file'; return 1; }
   if [ "$relative" = .env ] && [ ! -f "$root/.compoza.json" ]; then
-    compoza_fail 'Existing .env is operator-owned; move it to a separate host file and select remote.envFile before deploying'; return 1
+    compoza_fail 'Existing .env is operator-owned; move it to a separate host file and reference it with an absolute env_file path before deploying'; return 1
   fi
-  [ -f "$root/.compoza.json" ] && jq -e --arg file "$relative" '$file == ".env" or $file == ".compoza.json" or ((.ownedFiles // .files) | index($file) != null)' "$root/.compoza.json" >/dev/null 2>&1 || { compoza_fail 'Refusing to overwrite an operator-owned stack file; move it or choose another stackDir'; return 1; }
+  [ -f "$root/.compoza.json" ] && jq -e --arg file "$relative" '$file == ".env" or $file == ".compoza.json" or (.ownedFiles | index($file) != null)' "$root/.compoza.json" >/dev/null 2>&1 || { compoza_fail 'Refusing to overwrite an operator-owned stack file; move it or choose another stackDir'; return 1; }
 }
 
 # Remember retained files without adding them to the current model's asset allowlist.
 compoza_merge_ownership() {
   [ -f "$root/.compoza.json" ] || return 0
-  jq --slurpfile previous "$root/.compoza.json" '.ownedFiles = ((.files + ($previous[0].ownedFiles // $previous[0].files)) | unique)' "$metadata" > "$root/.deploy-lock/metadata.json"
+  jq --slurpfile previous "$root/.compoza.json" '.ownedFiles = ((.files + $previous[0].ownedFiles) | unique)' "$metadata" > "$root/.deploy-lock/metadata.json"
   mv -f -- "$root/.deploy-lock/metadata.json" "$metadata"
 }
 
@@ -131,8 +130,10 @@ compoza_validate_model() {
 }
 
 # Compose receives a clean environment and literal arguments; secrets are passed only through file paths.
+# A leading `all-profiles` argument enables every Compose profile, for reading service names.
 compoza_compose() {
-  local profile overlay host_env permissions
+  local profile overlay permissions all_profiles=no
+  if [ "${1-}" = all-profiles ]; then all_profiles=yes; shift; fi
   if jq -e .managed "$metadata" >/dev/null 2>&1; then
     [ -f "$env_file" ] && [ ! -L "$env_file" ] || { compoza_fail 'Missing or unsafe managed dotenv'; return 1; }
     case "$(uname -s)" in Darwin) permissions=$(stat -f '%Lp' "$env_file");; *) permissions=$(stat -c '%a' "$env_file");; esac
@@ -149,13 +150,18 @@ compoza_compose() {
     [ -z "$overlay" ] || args+=(--file "$overlay")
   fi
   while IFS= read -r profile; do args+=(--profile "$profile"); done < <(jq -r '.profiles[]' "$metadata")
-  host_env=$(jq -r '.hostEnv // empty' "$metadata")
-  if [ -n "$host_env" ]; then
-    [ -f "$host_env" ] && [ -r "$host_env" ] || { compoza_fail 'Configured host env file is missing'; return 1; }
-    args+=(--env-file "$host_env")
-  fi
+  [ "$all_profiles" = no ] || args+=(--profile '*')
   args+=(--env-file "$env_file")
   env -i HOME="$HOME" USER="${USER-}" PATH="$PATH" XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR-}" DOCKER_HOST="${DOCKER_HOST-}" DOCKER_CONTEXT="${DOCKER_CONTEXT-}" DOCKER_CONFIG="${DOCKER_CONFIG-$HOME/.docker}" docker compose "${args[@]}" "$@"
+}
+
+# Names only: service names are not secret, and Compose's own diagnostics stay suppressed. Every
+# profile is enabled because `logs` also reads services of profiles the deployment does not select.
+compoza_require_service() {
+  local services
+  services=$(compoza_compose all-profiles config --services 2>/dev/null) || { compoza_fail 'Cannot read the deployed services; diagnostics suppressed'; return 1; }
+  printf '%s\n' "$services" | grep -qxF -- "$1" && return
+  compoza_fail "No service \"$1\" in the deployed stack; services: $(printf '%s\n' "$services" | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')"
 }
 
 compoza_compose_safe() {

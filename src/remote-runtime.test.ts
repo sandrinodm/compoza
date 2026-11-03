@@ -283,11 +283,12 @@ describe.skipIf(!composeAvailable)(
       composeFixture(({ app, dir, root, run }) => {
         const envFile = join(dir, 'operator.env');
         const overlayFile = join(dir, 'operator.yaml');
+        const overlay = `services: {web: {env_file: [${JSON.stringify(envFile)}], environment: {MODE: live}}}`;
         writeFileSync(envFile, 'TOKEN=operator\n');
-        writeFileSync(overlayFile, 'services: {web: {environment: {MODE: live}}}');
+        writeFileSync(overlayFile, overlay);
         Object.assign(app.config, {
           composeFiles: ['compose.yaml'],
-          remote: { stackDir: root, envFile, overlayFile },
+          remote: { stackDir: root, overlayFile },
         });
 
         const plan = deploymentScript(app, host, 'known', [
@@ -314,10 +315,7 @@ describe.skipIf(!composeAvailable)(
         }
 
         assert.isFalse(existsSync(join(root, '.deploy-lock')));
-        assert.strictEqual(
-          readFileSync(overlayFile, 'utf8'),
-          'services: {web: {environment: {MODE: live}}}',
-        );
+        assert.strictEqual(readFileSync(overlayFile, 'utf8'), overlay);
       }));
   },
 );

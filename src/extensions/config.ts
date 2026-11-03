@@ -3,25 +3,20 @@ import { Effect, type FileSystem, type Path, Schema } from 'effect';
 import type { App } from '../config/deploy.ts';
 import type { HostConfig } from '../config/hosts.ts';
 import type { DeployError } from '../errors.ts';
+import type { OnePasswordConfig } from './1password/config.ts';
+import type { CaddyIngress, ProxyConfig as CaddyProxy } from './caddy/config.ts';
+import type { CloudflareIngress, CloudflareProxy } from './cloudflare-tunnel/config.ts';
+import type { EnvFileConfig } from './env-file/config.ts';
 
-import { OnePasswordConfig, OnePasswordSelection } from './1password/config.ts';
-import {
-  CaddyIngress,
-  CaddySelection,
-  CaddyHostSelection,
-  ProxyConfig as CaddyProxy,
-} from './caddy/config.ts';
+import { OnePasswordSelection } from './1password/config.ts';
+import { CaddySelection, CaddyHostSelection } from './caddy/config.ts';
 import { loadAppTemplates, loadHostTemplates } from './caddy/templates.ts';
-import {
-  CloudflareIngress,
-  CloudflareSelection,
-  CloudflareHostSelection,
-  CloudflareProxy,
-} from './cloudflare-tunnel/config.ts';
+import { CloudflareSelection, CloudflareHostSelection } from './cloudflare-tunnel/config.ts';
 import { loadCloudflareAppFiles, loadCloudflareHostFiles } from './cloudflare-tunnel/templates.ts';
-import { EnvFileConfig, EnvFileSelection } from './env-file/config.ts';
+import { EnvFileSelection } from './env-file/config.ts';
 
-export { CaddyIngress, HealthPath } from './caddy/config.ts';
+export { HealthPath } from './caddy/config.ts';
+export type { CaddyIngress } from './caddy/config.ts';
 
 /**
  * The explicit extension opt-out, with no settings and no implicit provider fallback.
@@ -34,34 +29,10 @@ export const NoExtension = Schema.Struct({
 });
 
 /**
- * The legacy ingress opt-out retained for existing app files.
- */
-export const NoIngress = Schema.Struct({
-  /**
-   * The legacy empty ingress selector.
-   */
-  mode: Schema.Literal('none'),
-});
-
-/**
- * The internal ingress representation used by deployment planners after resolving extension
- * settings.
- */
-export const ResolvedIngress = Schema.Union([CaddyIngress, CloudflareIngress, NoIngress]);
-
-/**
  * The application ingress input, selecting exactly one extension and validating its own required
- * settings.
- *
- * Flat legacy selections remain accepted during migration. Strict YAML decoding rejects ambiguous
- * or misspelled selectors.
+ * settings. Strict YAML decoding rejects ambiguous or misspelled selectors.
  */
-export const Ingress = Schema.Union([
-  CaddySelection,
-  CloudflareSelection,
-  NoExtension,
-  ResolvedIngress,
-]);
+export const Ingress = Schema.Union([CaddySelection, CloudflareSelection, NoExtension]);
 
 /**
  * Host ingress capabilities: either provider, both providers, or an explicit opt-out.
@@ -74,33 +45,9 @@ export const HostIngress = Schema.Union([
 ]);
 
 /**
- * The internal host proxy representation and legacy hosts.yaml input.
+ * The named credential source input, selecting exactly one provider or `none`.
  */
-export const ProxyConfig = Schema.Union([CaddyProxy, CloudflareProxy]);
-
-/**
- * The normalized credential provider inputs, never containing resolved secret values.
- */
-export const ResolvedSecretsConfig = Schema.Union([
-  EnvFileConfig,
-  OnePasswordConfig,
-  Schema.Struct({
-    /**
-     * The legacy empty source selector.
-     */
-    provider: Schema.Literal('none'),
-  }),
-]);
-
-/**
- * The named credential source input, with flat legacy sources retained for migration.
- */
-export const SecretsConfig = Schema.Union([
-  EnvFileSelection,
-  OnePasswordSelection,
-  NoExtension,
-  ResolvedSecretsConfig,
-]);
+export const SecretsConfig = Schema.Union([EnvFileSelection, OnePasswordSelection, NoExtension]);
 
 /**
  * The decoded application ingress input.
@@ -108,9 +55,20 @@ export const SecretsConfig = Schema.Union([
 export type Ingress = typeof Ingress.Type;
 
 /**
- * The normalized application ingress selection.
+ * An app that routes through no ingress extension, as planners see it.
  */
-export type ResolvedIngress = typeof ResolvedIngress.Type;
+export type NoIngress = {
+  /**
+   * Marks the app as routed through no extension.
+   */
+  readonly mode: 'none';
+};
+
+/**
+ * The application ingress as deployment planners see it: the selected extension's settings tagged
+ * with its `mode`.
+ */
+export type ResolvedIngress = CaddyIngress | CloudflareIngress | NoIngress;
 
 /**
  * An ingress provider's internal identifier, shared by host selection and app planning.
@@ -123,9 +81,12 @@ export type IngressId = Exclude<ResolvedIngress['mode'], 'none'>;
 export type HostIngress = typeof HostIngress.Type;
 
 /**
- * The normalized host proxy settings.
+ * One host ingress capability as extensions see it: the provider's settings tagged with its
+ * `provider`.
  */
-export type ProxyConfig = typeof ProxyConfig.Type;
+export type ProxyConfig =
+  | ({ readonly provider: 'caddy' } & CaddyProxy)
+  | ({ readonly provider: 'cloudflare-tunnel' } & CloudflareProxy);
 
 /**
  * The decoded credential source input.
@@ -133,9 +94,13 @@ export type ProxyConfig = typeof ProxyConfig.Type;
 export type SecretsConfig = typeof SecretsConfig.Type;
 
 /**
- * The normalized credential provider selection.
+ * The credential source as providers see it: the selected provider's settings tagged with its
+ * `provider`, never containing resolved secret values.
  */
-export type ResolvedSecretsConfig = typeof ResolvedSecretsConfig.Type;
+export type ResolvedSecretsConfig =
+  | EnvFileConfig
+  | OnePasswordConfig
+  | { readonly provider: 'none' };
 
 /**
  * Loads extension-owned host files relative to the winning host definition before pure planning.
@@ -159,14 +124,9 @@ export function loadAppExtensionFiles(
 }
 
 /**
- * Resolves named app settings to the provider's existing planning contract without changing
- * execution behavior.
+ * Tags the selected extension's app settings with its `mode`, the shape deployment planners take.
  */
 export function resolveIngress(config: Ingress): ResolvedIngress {
-  if ('mode' in config) {
-    return config;
-  }
-
   if ('caddy' in config) {
     return { mode: 'caddy', ...config.caddy };
   }
@@ -206,14 +166,10 @@ export function resolveHostIngress(
 }
 
 /**
- * Resolves named source settings without accessing a credential provider or reading any secret
- * file.
+ * Tags the selected source's settings with its `provider`, without accessing a credential provider
+ * or reading any secret file.
  */
 export function resolveSecrets(config: SecretsConfig): ResolvedSecretsConfig {
-  if ('provider' in config) {
-    return config;
-  }
-
   if ('1password' in config) {
     return { provider: '1password', ...config['1password'] };
   }

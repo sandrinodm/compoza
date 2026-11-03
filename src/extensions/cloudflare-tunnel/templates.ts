@@ -41,12 +41,11 @@ export const loadCloudflareHostFiles = Effect.fn('loadCloudflareHostFiles')(func
   host: HostConfig,
   file: string,
 ): Effect.fn.Return<HostConfig, DeployError, FileSystem.FileSystem | Path.Path> {
-  const named = host.ingress !== undefined && 'cloudflare-tunnel' in host.ingress;
-  const selected = cloudflareHostSettings(host);
-  if (selected === undefined) {
+  if (host.ingress === undefined || !('cloudflare-tunnel' in host.ingress)) {
     return host;
   }
 
+  const selected = host.ingress['cloudflare-tunnel'];
   if (selected.templates === undefined && envFileSecret(selected.provision) === undefined) {
     return host;
   }
@@ -74,21 +73,8 @@ export const loadCloudflareHostFiles = Effect.fn('loadCloudflareHostFiles')(func
   }
 
   const result = { ...selected, ...(provision === undefined ? {} : { provision }), templates };
-  return named
-    ? { ...host, ingress: { ...host.ingress, 'cloudflare-tunnel': result } }
-    : { ...host, proxy: { ...result, provider: 'cloudflare-tunnel' as const } };
+  return { ...host, ingress: { ...host.ingress, 'cloudflare-tunnel': result } };
 });
-
-/**
- * Selects Cloudflare host settings from either named or legacy host configuration.
- */
-function cloudflareHostSettings(host: HostConfig) {
-  if (host.ingress !== undefined && 'cloudflare-tunnel' in host.ingress) {
-    return host.ingress['cloudflare-tunnel'];
-  }
-
-  return host.proxy?.provider === 'cloudflare-tunnel' ? host.proxy : undefined;
-}
 
 /**
  * The env-file secret source of a provisioned connector, or undefined when the connector is not
@@ -100,18 +86,13 @@ function envFileSecret(provision: CloudflareProxy['provision']) {
 }
 
 /**
- * Selects Cloudflare application settings from either named or legacy ingress configuration.
+ * The Cloudflare Tunnel settings of an app's ingress; undefined when the app routes through another
+ * extension or none.
  */
 function cloudflareAppSettings(ingress: App['config']['ingress']) {
-  if (ingress === undefined) {
-    return undefined;
-  }
-
-  if ('cloudflare-tunnel' in ingress) {
-    return ingress['cloudflare-tunnel'];
-  }
-
-  return 'mode' in ingress && ingress.mode === 'cloudflare-tunnel' ? ingress : undefined;
+  return ingress !== undefined && 'cloudflare-tunnel' in ingress
+    ? ingress['cloudflare-tunnel']
+    : undefined;
 }
 
 /**
@@ -127,9 +108,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export const loadCloudflareAppFiles = Effect.fn('loadCloudflareAppFiles')(function* (
   app: App,
 ): Effect.fn.Return<App, DeployError, FileSystem.FileSystem | Path.Path> {
-  const ingress = app.config.ingress;
-  const selected = cloudflareAppSettings(ingress);
-  if (ingress === undefined || selected?.routeTemplate === undefined) {
+  const selected = cloudflareAppSettings(app.config.ingress);
+  if (selected?.routeTemplate === undefined) {
     return app;
   }
 
@@ -142,10 +122,7 @@ export const loadCloudflareAppFiles = Effect.fn('loadCloudflareAppFiles')(functi
     ...app,
     config: {
       ...app.config,
-      ingress:
-        'cloudflare-tunnel' in ingress
-          ? { 'cloudflare-tunnel': { ...selected, routeTemplate } }
-          : { ...selected, mode: 'cloudflare-tunnel' as const, routeTemplate },
+      ingress: { 'cloudflare-tunnel': { ...selected, routeTemplate } },
     },
   };
 });

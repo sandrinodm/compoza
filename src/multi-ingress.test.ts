@@ -23,6 +23,12 @@ const ROUTE_TEMPLATE = 'hostname: {{domain}}\nservice: {{service}}\n';
  */
 const CLI_TIMEOUT_MS = 10_000;
 
+/**
+ * How long one test may take. A test starts the CLI several times, and each start may use the whole
+ * `CLI_TIMEOUT_MS` under full-suite load, so Vitest's default of five seconds is too short.
+ */
+const CLI_TEST_TIMEOUT_MS = 3 * CLI_TIMEOUT_MS;
+
 const caddy = {
   dir: '/srv/caddy',
   container: 'caddy',
@@ -100,7 +106,7 @@ const loadedFixture = Effect.gen(function* () {
   });
 });
 
-describe('multiple host ingress providers', () => {
+describe('multiple host ingress providers', { timeout: CLI_TEST_TIMEOUT_MS }, () => {
   it.effect('loads and preserves both providers from one referenced host file', () =>
     loadedFixture.pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

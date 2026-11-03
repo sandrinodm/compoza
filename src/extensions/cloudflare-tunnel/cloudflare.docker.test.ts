@@ -58,7 +58,6 @@ it.skipIf(image === undefined)(
     writeFileSync(envFile, `TUNNEL_TOKEN=${token}\n`, { mode: 0o600 });
 
     const operation = provisionOperation({
-      provider: 'cloudflare-tunnel',
       routing: 'manual',
       accountId,
       tunnelId,

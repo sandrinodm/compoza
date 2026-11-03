@@ -156,7 +156,10 @@ describe('Caddy templates', () => {
           local: { ...host, ingress: { caddy: { ...caddy, templates: { site: './site.tmpl' } } } },
         });
 
-        const hosts = yield* loadDefaultHosts(join(dir, 'repo'), join(dir, 'global', 'hosts.yaml'));
+        const hosts = yield* loadDefaultHosts({
+          directory: join(dir, 'repo'),
+          globalFile: join(dir, 'global', 'hosts.yaml'),
+        });
         const external = ingressConfigOf(hosts.external!)!;
         assert.strictEqual(external.provider, 'caddy');
 
@@ -183,7 +186,7 @@ describe('Caddy templates', () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect('accepts absolute and home-relative paths in legacy host entries', () =>
+  it.effect('accepts absolute and home-relative template paths in host entries', () =>
     Effect.gen(function* () {
       const dir = yield* fixture;
       const path = join(dir, 'site.tmpl');
@@ -195,17 +198,15 @@ describe('Caddy templates', () => {
             ssh: host.ssh,
             platform: host.platform,
             transport: host.transport,
-            proxy: { ...caddy, templates: { site: source } },
+            ingress: { caddy: { ...caddy, templates: { site: source } } },
           },
         });
 
         const hosts = yield* loadHosts(join(dir, 'hosts.yaml'));
-        assert.deepStrictEqual(
-          hosts.server!.proxy &&
-            hosts.server!.proxy.provider !== 'cloudflare-tunnel' &&
-            hosts.server!.proxy.templates?.site,
-          { inline: budget },
-        );
+        const proxy = ingressConfigOf(hosts.server!, 'caddy');
+        assert.deepStrictEqual(proxy?.provider === 'caddy' && proxy.templates?.site, {
+          inline: budget,
+        });
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

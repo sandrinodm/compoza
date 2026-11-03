@@ -19,17 +19,6 @@ export const OnePasswordSettings = Schema.Struct({
 });
 
 /**
- * The legacy flat 1Password Environment source and normalized provider input.
- */
-export const OnePasswordConfig = Schema.Struct({
-  /**
-   * The legacy credential provider selector.
-   */
-  provider: Schema.Literal('1password'),
-  ...OnePasswordSettings.fields,
-});
-
-/**
  * The named 1Password Environment source configuration.
  */
 export const OnePasswordSelection = Schema.Struct({
@@ -38,3 +27,11 @@ export const OnePasswordSelection = Schema.Struct({
    */
   '1password': OnePasswordSettings,
 });
+
+/**
+ * A 1Password Environment source as credential providers receive it, tagged with `provider:
+ * '1password'`.
+ */
+export type OnePasswordConfig = {
+  readonly provider: '1password';
+} & typeof OnePasswordSettings.Type;

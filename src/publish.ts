@@ -14,7 +14,7 @@ import { Shell } from './services/Shell.ts';
  */
 export function contentTarget(app: App, section: string): Effect.Effect<string, DeployError> {
   const sections = contentOf(app.config);
-  const target = sections[section];
+  const target = Object.hasOwn(sections, section) ? sections[section] : undefined;
   if (target === undefined) {
     const known = Object.keys(sections).join(', ') || 'none';
     return Effect.fail(

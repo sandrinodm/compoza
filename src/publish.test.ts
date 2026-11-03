@@ -20,7 +20,6 @@ const app: App = {
 
 const host: HostConfig = {
   ssh: 'deploy@atlas.example.com',
-  address: '192.0.2.42',
   platform: 'linux/arm64',
   transport: { mode: 'ssh-load' },
 };
@@ -51,6 +50,9 @@ describe('contentTarget', () => {
 
       const unknown = yield* contentTarget(app, 'research').pipe(Effect.flip);
       assert.include(unknown.message, 'sections: demo');
+
+      const inherited = yield* contentTarget(app, 'constructor').pipe(Effect.flip);
+      assert.include(inherited.message, 'has no content section "constructor"');
 
       const error = yield* contentTarget(
         { ...app, config: { ...app.config, content: {} } },

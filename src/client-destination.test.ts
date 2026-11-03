@@ -45,15 +45,20 @@ it.effect(
     }> = [];
     const probes: Array<string> = [];
     const steps: Array<Step> = [];
-    const host: HostConfig & { proxy: ProxyConfig } = {
-      ssh: 'fixture',
+    const proxy: ProxyConfig = {
       address: '192.0.2.1',
+      dir: '/srv/proxy',
+      container: 'caddy',
+      network: 'edge',
+    };
+    const host: HostConfig = {
+      ssh: 'fixture',
       platform: 'linux/arm64',
       transport: { mode: 'ssh-load' },
-      proxy: { dir: '/srv/proxy', container: 'caddy', network: 'edge' },
+      ingress: { caddy: proxy },
     };
 
-    const ingress = { mode: 'caddy' as const, domain: 'app.example.com', upstream: 'web:80' };
+    const caddy = { domain: 'app.example.com', upstream: 'web:80' };
     const probe = {
       proxy_dir: 'present',
       caddyfile_import: 'yes',
@@ -62,7 +67,7 @@ it.effect(
       container_running: 'yes',
       container_health: 'none',
       network: 'yes',
-      site_sha256: sha256(siteFile('app-dev', ingress, host.proxy!)),
+      site_sha256: sha256(siteFile('app-dev', { mode: 'caddy', ...caddy }, proxy)),
     };
 
     const noGit = () => Effect.die('Third-party stack must not consult Git');
@@ -116,7 +121,7 @@ it.effect(
                 targets: [],
                 execution: 'client',
                 composeFiles: ['compose.yaml'],
-                ingress,
+                ingress: { caddy },
                 destinations: { dev: { projectName: 'app-dev' } },
               }),
             ),

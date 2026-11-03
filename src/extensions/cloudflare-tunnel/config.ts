@@ -31,8 +31,8 @@ const HOST_REQUIREMENTS_MESSAGE =
   'provisioning/manual routing requires dir, container and network';
 
 /**
- * Host validation is shared by named and legacy inputs; spreading fields alone would drop Struct
- * refinements.
+ * Whether host settings name what their routing mode needs: managed routing needs `apiTokenFile`
+ * and `stateDir`, and provisioning or manual routing needs `dir`, `container` and `network`.
  */
 function validCloudflareHost(config: {
   routing?: string;
@@ -235,28 +235,6 @@ export const CloudflareHostSettings = Schema.Struct({
 }).check(Schema.makeFilter(validCloudflareHost, { message: HOST_REQUIREMENTS_MESSAGE }));
 
 /**
- * The legacy flat app configuration and normalized runtime representation.
- */
-export const CloudflareIngress = Schema.Struct({
-  /**
-   * The legacy mode selector.
-   */
-  mode: Schema.Literal('cloudflare-tunnel'),
-  ...CloudflareSettings.fields,
-});
-
-/**
- * The legacy flat host configuration and normalized runtime representation.
- */
-export const CloudflareProxy = Schema.Struct({
-  /**
-   * The legacy host provider selector.
-   */
-  provider: Schema.Literal('cloudflare-tunnel'),
-  ...CloudflareHostSettings.fields,
-}).check(Schema.makeFilter(validCloudflareHost, { message: HOST_REQUIREMENTS_MESSAGE }));
-
-/**
  * The named Cloudflare Tunnel app configuration.
  */
 export const CloudflareSelection = Schema.Struct({
@@ -277,11 +255,14 @@ export const CloudflareHostSelection = Schema.Struct({
 });
 
 /**
- * The decoded Cloudflare application settings.
+ * An app's Cloudflare Tunnel settings as planners see them, tagged with `mode: 'cloudflare-tunnel'`
+ * so they can be told apart from other extensions' settings.
  */
-export type CloudflareIngress = typeof CloudflareIngress.Type;
+export type CloudflareIngress = {
+  readonly mode: 'cloudflare-tunnel';
+} & typeof CloudflareSettings.Type;
 
 /**
  * The decoded Cloudflare host settings, containing paths and identifiers but no secret values.
  */
-export type CloudflareProxy = typeof CloudflareProxy.Type;
+export type CloudflareProxy = typeof CloudflareHostSettings.Type;

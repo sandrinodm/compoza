@@ -222,7 +222,7 @@ export function deploymentScript(
 
   const files = ['compose.yaml', ...assets.map((file) => file.path)];
   const outputs = [...files, '.env', '.compoza.json'];
-  assertHostFilesSeparate(app, root, outputs);
+  assertOverlaySeparate(app, root, outputs);
 
   const ingress = ingressFor(app)?.plan(app, host);
   const url = app.config.health?.url ?? ingress?.healthUrl;
@@ -257,15 +257,40 @@ export function deploymentScript(
 }
 
 /**
+ * Extra steps of a deployed-stack script.
+ */
+export interface DeployedScriptOptions {
+  /**
+   * A service the Compose command names: the script fails with the deployed service names, and runs
+   * nothing, when the stack has no such service.
+   */
+  readonly service?: string | undefined;
+
+  /**
+   * Stop with exit status 0 on Ctrl-C (SIGINT), for commands such as `logs --follow` that only end
+   * when interrupted.
+   */
+  readonly interruptible?: boolean;
+}
+
+/**
  * Uses deployed lifecycle metadata and flat Compose files, ignoring unshipped local configuration
  * changes.
  *
  * Mutations share the deployment lock; inspection does not create host paths or read a client
  * credential provider.
  */
-export function deployedScript(app: App, args: ReadonlyArray<string>, mutate: boolean): string {
+export function deployedScript(
+  app: App,
+  args: ReadonlyArray<string>,
+  mutate: boolean,
+  { service, interruptible = false }: DeployedScriptOptions = {},
+): string {
   const root = stackRoot(app);
   const unroute = args[0] === 'down' ? 'jq -r .unroute "$metadata" | bash\n' : '';
+  const requireService =
+    service === undefined ? '' : `compoza_require_service ${shellQuote(service)}\n`;
+  const interrupt = interruptible ? "trap 'exit 0' INT\n" : '';
   return `${runtimePreamble(root)}compoza_root || { echo 'Unsafe stack path' >&2; exit 1; }
 ${mutate ? 'compoza_lock' : ''}
 metadata="$root/.compoza.json"
@@ -276,7 +301,7 @@ env_file="$root/.env"
 if ! compoza_compose config --quiet >/dev/null 2>&1; then
   echo 'Deployed Compose configuration is invalid; inspect host env and overlay privately' >&2; exit 1
 fi
-${unroute}compoza_compose_safe ${args.map(shellQuote).join(' ')}
+${unroute}${requireService}${interrupt}compoza_compose_safe ${args.map(shellQuote).join(' ')}
 `;
 }
 
@@ -290,7 +315,6 @@ export function sshReadinessScript(app: App, host: HostConfig): string {
   const root = stackRoot(app);
   const quotedRoot = shellQuote(root);
   const quotedMetadata = shellQuote(`${root}/.compoza.json`);
-  const hostEnvCheck = readableFileCheck(app.config.remote?.envFile);
   const overlayCheck = readableFileCheck(app.config.remote?.overlayFile);
   const probesHttp = app.config.health !== undefined || ingressOf(app.config).mode !== 'none';
   const curlCheck = probesHttp ? 'command -v curl >/dev/null 2>&1' : 'true';
@@ -302,7 +326,6 @@ printf 'docker='; if docker info >/dev/null 2>&1; then echo yes; else echo no; f
 printf 'compose='; if ${COMPOSE_FEATURES_CHECK}; then echo yes; else echo no; fi
 printf 'jq='; if command -v jq >/dev/null 2>&1; then echo yes; else echo no; fi
 printf 'stack_path='; if [ -L ${quotedRoot} ] || [ -L ${quotedMetadata} ]; then echo no; else echo yes; fi
-printf 'host_env='; if ${hostEnvCheck}; then echo yes; else echo no; fi
 printf 'host_overlay='; if ${overlayCheck}; then echo yes; else echo no; fi
 printf 'curl='; if ${curlCheck}; then echo yes; else echo no; fi
 printf 'buildkit='; if ${buildkitCheck}; then echo yes; else echo no; fi
@@ -405,14 +428,13 @@ function isGeneratedComposePath(path: string): boolean {
 }
 
 /**
- * Rejects a host env or overlay file that resolves to one of the stack files the transaction
- * replaces, since installing the stack would overwrite operator-owned configuration.
+ * Rejects a host overlay file that resolves to one of the stack files the transaction replaces,
+ * since installing the stack would overwrite operator-owned configuration.
  */
-function assertHostFilesSeparate(app: App, root: string, outputs: ReadonlyArray<string>): void {
-  for (const path of [app.config.remote?.envFile, app.config.remote?.overlayFile]) {
-    if (path !== undefined && outputs.some((file) => posix.normalize(path) === `${root}/${file}`)) {
-      throw new Error('Host env and overlay files must be separate from tool-owned stack files');
-    }
+function assertOverlaySeparate(app: App, root: string, outputs: ReadonlyArray<string>): void {
+  const path = app.config.remote?.overlayFile;
+  if (path !== undefined && outputs.some((file) => posix.normalize(path) === `${root}/${file}`)) {
+    throw new Error('Host overlay file must be separate from tool-owned stack files');
   }
 }
 
@@ -435,7 +457,6 @@ function deploymentMetadata(
     files,
     ownedFiles: files,
     overlay: app.config.remote?.overlayFile ?? null,
-    hostEnv: app.config.remote?.envFile ?? null,
     managed,
     unroute: ingress === undefined ? '' : ingressOperationScript(ingress.unroute),
   });

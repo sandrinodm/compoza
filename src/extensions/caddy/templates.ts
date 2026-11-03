@@ -9,7 +9,7 @@ import type { CaddyTemplate } from './config.ts';
 import { DeployError } from '../../errors.ts';
 
 /**
- * The bundled site template preserves existing app route output.
+ * The bundled site template, used when neither the app nor the host supplies one.
  */
 export const defaultSiteTemplate = readFileSync(
   new URL('./templates/site.caddy.tmpl', import.meta.url),
@@ -215,20 +215,18 @@ const loadCheckedTemplate = Effect.fn('loadCheckedCaddyTemplate')(function* (
 });
 
 /**
- * Resolves only a winning host entry, preserving named and legacy ingress selection.
+ * Loads the template files of a winning host entry's Caddy ingress, returning the host unchanged
+ * when it has no Caddy ingress or names no templates.
  */
 export const loadHostTemplates = Effect.fn('loadCaddyHostTemplates')(function* (
   host: HostConfig,
   file: string,
 ): Effect.fn.Return<HostConfig, DeployError, FileSystem.FileSystem | Path.Path> {
-  const named = host.ingress !== undefined && 'caddy' in host.ingress;
-  // A named Caddy entry has the legacy proxy shape without `provider`, so typing it as the legacy
-  // union lets the `provider` check rule out a legacy Cloudflare Tunnel entry.
-  const proxy: HostConfig['proxy'] = named ? host.ingress.caddy : host.proxy;
-  if (proxy === undefined || proxy.provider === 'cloudflare-tunnel') {
+  if (host.ingress === undefined || !('caddy' in host.ingress)) {
     return host;
   }
 
+  const proxy = host.ingress.caddy;
   if (proxy.templates === undefined) {
     return host;
   }
@@ -242,9 +240,7 @@ export const loadHostTemplates = Effect.fn('loadCaddyHostTemplates')(function* (
     templates.config = yield* loadCheckedTemplate(templates.config, file, 'config');
   }
 
-  return named
-    ? { ...host, ingress: { ...host.ingress, caddy: { ...host.ingress.caddy, templates } } }
-    : { ...host, proxy: { ...proxy, templates } };
+  return { ...host, ingress: { ...host.ingress, caddy: { ...proxy, templates } } };
 });
 
 /**
@@ -254,12 +250,12 @@ export const loadAppTemplates = Effect.fn('loadCaddyAppTemplates')(function* (
   app: App,
 ): Effect.fn.Return<App, DeployError, FileSystem.FileSystem | Path.Path> {
   const ingress = app.config.ingress;
-  if (ingress === undefined) {
+  if (ingress === undefined || !('caddy' in ingress)) {
     return app;
   }
 
-  const settings = caddySettingsOf(ingress);
-  if (settings?.siteTemplate === undefined) {
+  const settings = ingress.caddy;
+  if (settings.siteTemplate === undefined) {
     return app;
   }
 
@@ -272,26 +268,7 @@ export const loadAppTemplates = Effect.fn('loadCaddyAppTemplates')(function* (
     ...app,
     config: {
       ...app.config,
-      ingress:
-        'caddy' in ingress
-          ? { caddy: { ...ingress.caddy, siteTemplate } }
-          : { ...settings, mode: 'caddy' as const, siteTemplate },
+      ingress: { caddy: { ...settings, siteTemplate } },
     },
   };
 });
-
-/**
- * The Caddy settings of an app's ingress, from either the named `caddy` selection or the legacy
- * `mode: caddy` form; undefined when the app routes through another extension.
- */
-function caddySettingsOf(ingress: NonNullable<App['config']['ingress']>) {
-  if ('caddy' in ingress) {
-    return ingress.caddy;
-  }
-
-  if ('mode' in ingress && ingress.mode === 'caddy') {
-    return ingress;
-  }
-
-  return undefined;
-}

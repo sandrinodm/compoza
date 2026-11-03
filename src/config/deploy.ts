@@ -1,7 +1,8 @@
 import { Effect, type FileSystem, Path, Schema } from 'effect';
 import { resolve } from 'node:path';
 
-import { DeployError } from '../errors.ts';
+import type { DeployError } from '../errors.ts';
+
 import {
   Ingress,
   SecretsConfig,
@@ -12,8 +13,8 @@ import { fileExists, readConfigFile } from './config-file.ts';
 import { expandHome } from './hosts.ts';
 import { AbsolutePath, Name, Target } from './schema.ts';
 
-export { HealthPath, CaddyIngress, NoIngress } from '../extensions/config.ts';
-export { Ingress, SecretsConfig } from '../extensions/config.ts';
+export { HealthPath, Ingress, SecretsConfig } from '../extensions/config.ts';
+export type { CaddyIngress, NoIngress } from '../extensions/config.ts';
 
 /**
  * The file name that marks a deploy folder.
@@ -59,12 +60,6 @@ const HEALTH_URL_PATTERN = /^https?:\/\/[^\s@]+$/;
 const DIRECTORY_PATH_PATTERN = /^(?=.*\S)[^\p{Cc}]+$/u;
 
 /**
- * The message for a configuration that declares more than one secret source at the same level.
- */
-const AMBIGUOUS_SECRET_SOURCES =
-  'Ambiguous secret sources: use secrets, envFile, or remote.envFile, never a combination';
-
-/**
  * Settings that replace the deployment's for `--local` runs against this machine's Docker.
  */
 export const LocalOverrides = Schema.Struct({
@@ -88,19 +83,14 @@ export const LocalOverrides = Schema.Struct({
 /**
  * Host-owned paths and health deadlines for SSH execution.
  *
- * The overlay, legacy host dotenv and persistent data remain operator-owned. Client-resolved
- * providers are uploaded in the protected stack .env file.
+ * The overlay and persistent data remain operator-owned. Client-resolved providers are uploaded in
+ * the protected stack .env file.
  */
 export const RemoteConfig = Schema.Struct({
   /**
    * The absolute stack root containing compose.yaml, .env, assets and lifecycle metadata.
    */
   stackDir: AbsolutePath,
-
-  /**
-   * The absolute production dotenv path; Compose reads it only on the host.
-   */
-  envFile: Schema.optionalKey(AbsolutePath),
 
   /**
    * The optional absolute host-owned Compose overlay, applied after compose.yaml.
@@ -280,12 +270,6 @@ export const DeployConfig = Schema.Struct({
   environment: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 
   /**
-   * A `KEY=value` file on this machine with secret Compose variables, read at deploy time and never
-   * printed. A leading `~/` means the home folder.
-   */
-  envFile: Schema.optionalKey(Schema.String),
-
-  /**
    * Overrides for `--local` runs.
    */
   local: Schema.optionalKey(LocalOverrides),
@@ -433,11 +417,6 @@ export const loadApp = Effect.fn('loadApp')(function* (
     `No ${file}. Point compoza at a folder holding a ${DEPLOY_FILE}.`,
     { privateInput: true },
   );
-  const issue = secretSettingsIssue(config);
-  if (issue !== undefined) {
-    return yield* new DeployError({ message: issue });
-  }
-
   return { dir: path.dirname(file), file, config };
 });
 
@@ -474,9 +453,10 @@ export function selectDestination(app: App, name?: string): App {
     return app;
   }
 
-  const selected = app.config.destinations?.[name];
+  const destinations = app.config.destinations ?? {};
+  const selected = Object.hasOwn(destinations, name) ? destinations[name] : undefined;
   if (selected === undefined) {
-    const choices = Object.keys(app.config.destinations ?? {}).join(', ') || 'none';
+    const choices = Object.keys(destinations).join(', ') || 'none';
     throw new Error(`Unknown destination "${name}"; choices: ${choices}`);
   }
 
@@ -485,18 +465,6 @@ export function selectDestination(app: App, name?: string): App {
     ...selected,
     environment: { ...app.config.environment, ...selected.environment },
   };
-
-  if (selected.secrets !== undefined) {
-    delete config.envFile;
-
-    if (config.remote !== undefined) {
-      const { envFile: _legacy, ...remote } = config.remote;
-      config.remote = remote;
-    }
-  }
-
-  validateSecretSettings(config);
-
   return { ...app, config };
 }
 
@@ -505,48 +473,4 @@ export function selectDestination(app: App, name?: string): App {
  */
 export function projectNameOf(app: App): string {
   return app.config.projectName ?? app.config.name;
-}
-
-/**
- * Rejects competing source declarations before fetching secrets or mutating a host.
- *
- * Destination provider objects replace inherited sources, while conflicting declarations within one
- * level are errors.
- */
-export function validateSecretSettings(config: DeployConfig): void {
-  const issue = secretSettingsIssue(config);
-  if (issue !== undefined) {
-    throw new Error(issue);
-  }
-}
-
-/**
- * Describes ambiguous source settings without throwing, for both pure planners and typed Effect
- * callers.
- */
-export function secretSettingsIssue(config: DeployConfig): string | undefined {
-  if (declaredSecretSources(config).length > 1) {
-    return AMBIGUOUS_SECRET_SOURCES;
-  }
-
-  for (const [name, destination] of Object.entries(config.destinations ?? {})) {
-    if (destination.secrets !== undefined && destination.remote?.envFile !== undefined) {
-      return (
-        `Ambiguous secret sources in destination "${name}": ` +
-        'use secrets or remote.envFile, never both'
-      );
-    }
-  }
-
-  return undefined;
-}
-
-/**
- * The secret sources a configuration declares at its top level, out of `secrets`, `envFile` and
- * `remote.envFile`; empty when it declares none. Destination sources are not included.
- */
-export function declaredSecretSources(config: DeployConfig): ReadonlyArray<unknown> {
-  return [config.secrets, config.envFile, config.remote?.envFile].filter(
-    (source) => source !== undefined,
-  );
 }

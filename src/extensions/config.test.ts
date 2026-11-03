@@ -89,12 +89,16 @@ const loadFixture = Effect.fn(function* () {
     const invalidApp = yield* loadApp(dir).pipe(Effect.flip);
     assert.include(invalidApp.message, 'invalid configuration');
 
+    const { ingress: _ingress, ...bareHost } = host;
     yield* Effect.promise(() =>
-      writeFile(join(dir, 'hosts.yaml'), YAML.stringify({ server: { ...host, proxy: caddyHost } })),
+      writeFile(
+        join(dir, 'hosts.yaml'),
+        YAML.stringify({ server: { ...bareHost, proxy: caddyHost } }),
+      ),
     );
 
     const invalidHost = yield* loadHosts(join(dir, 'hosts.yaml')).pipe(Effect.flip);
-    assert.include(invalidHost.message, 'never both');
+    assert.include(invalidHost.message, 'Expected no excess property\n  at ["server"]["proxy"]');
   }).pipe(Effect.ensuring(Effect.promise(() => directory.remove())));
 });
 
@@ -103,34 +107,15 @@ describe('named extension configuration', () => {
     loadFixture().pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it('keeps Caddy planning and frozen SSH releases equivalent to legacy configuration', () => {
+  it('resolves named Caddy settings for planners and passes readiness at the host address', () => {
     const canonical = decodeDeployConfig(app.config);
     const hosts = decodeHosts({ server: host });
 
     assert.deepStrictEqual(ingressOf(canonical), { mode: 'caddy', ...caddy });
     assert.deepStrictEqual(ingressConfigOf(hosts.server!), { provider: 'caddy', ...caddyHost });
 
-    const { address, ...proxy } = caddyHost;
-    const { ingress: _hostIngress, ...baseHost } = host;
-    const legacyHost: HostConfig = { ...baseHost, address, proxy };
-    const legacyApp: App = {
-      ...app,
-      config: {
-        ...app.config,
-        ingress: { mode: 'caddy', ...caddy },
-        secrets: { provider: 'none' },
-      },
-    };
-
     const extension = ingressFor(app)!;
-    assert.deepStrictEqual(extension.plan(app, host), extension.plan(legacyApp, legacyHost));
-    assert.deepStrictEqual(extension.setup(host), extension.setup(legacyHost));
-    assert.deepStrictEqual(
-      deploymentScript(app, host, 'one', []),
-      deploymentScript(legacyApp, legacyHost, 'one', []),
-    );
-
-    const checks = extension.checks(app, host, [address], {
+    const checks = extension.checks(app, host, [caddyHost.address], {
       proxy_dir: 'present',
       caddyfile_import: 'yes',
       compose_mount: 'yes',
@@ -158,20 +143,6 @@ describe('named extension configuration', () => {
     assert.strictEqual(extension.id, 'cloudflare-tunnel');
     assert.strictEqual(hostIngress(namedHost), extension);
     assert.strictEqual(extension.plan(selected, namedHost).healthUrl, 'https://app.example.com/');
-
-    const { ingress: _hostIngress, ...baseHost } = namedHost;
-    const legacyHost: HostConfig = {
-      ...baseHost,
-      proxy: { provider: 'cloudflare-tunnel', ...cloudflareHost },
-    };
-    const legacyApp: App = {
-      ...selected,
-      config: { ...selected.config, ingress: { mode: 'cloudflare-tunnel', ...cloudflare } },
-    };
-    assert.deepStrictEqual(
-      deploymentScript(selected, namedHost, 'one', []),
-      deploymentScript(legacyApp, legacyHost, 'one', []),
-    );
   });
 
   for (const [name, ingress] of [
@@ -181,8 +152,9 @@ describe('named extension configuration', () => {
     ['unknown app setting', { caddy: { ...caddy, typo: true } }],
     ['multiple selected extensions', { caddy, 'cloudflare-tunnel': cloudflare }],
     ['none mixed with an extension', { none: {}, caddy }],
-    ['retired Caddy identifier', { mode: 'caddy-sites', ...caddy }],
-    ['legacy and nested settings', { mode: 'caddy', ...caddy, caddy }],
+    ['flat Caddy settings', { mode: 'caddy', ...caddy }],
+    ['flat Cloudflare Tunnel settings', { mode: 'cloudflare-tunnel', ...cloudflare }],
+    ['a flat none', { mode: 'none' }],
     ['settings on none', { none: { domain: caddy.domain } }],
   ] as const) {
     it(`rejects ${name}`, () =>
@@ -215,21 +187,14 @@ describe('named extension configuration', () => {
       );
     }
 
-    assert.throws(
-      () =>
-        decodeHosts({
-          server: { ...host, proxy: caddyHost },
-        }),
-      'never both',
-    );
-    assert.throws(() => ingressConfigOf({ ...host, proxy: caddyHost }), 'never both');
-
-    const { ingress: _ingress, ...legacyHost } = host;
-    assert.throws(() =>
-      decodeHosts({
-        server: { ...legacyHost, proxy: { ...caddyHost, provider: 'caddy-sites' } },
-      }),
-    );
+    const { ingress: _ingress, ...bareHost } = host;
+    for (const server of [
+      { ...bareHost, proxy: caddyHost },
+      { ...bareHost, proxy: { provider: 'cloudflare-tunnel', ...cloudflareHost } },
+      { ...host, address: caddyHost.address },
+    ]) {
+      assert.throws(() => decodeHosts({ server }));
+    }
   });
 
   it('selects each app provider independently on a host with both ingress capabilities', () => {
@@ -302,51 +267,41 @@ describe('named extension configuration', () => {
     assert.throws(() => hostIngress({ ...host, ingress: { none: {} } }), 'Host has no proxy');
   });
 
-  it('preserves 1Password allowlists in named, legacy, destination and local selections', () => {
-    for (const secrets of [
-      { '1password': { environmentId: 'prod', variables: ['TOKEN'] } },
-      { provider: '1password', environmentId: 'prod', variables: ['TOKEN'] },
-    ]) {
-      const config = decodeDeployConfig({
-        ...app.config,
-        secrets,
-        destinations: {
-          staging: { secrets: { '1password': { environmentId: 'stage', variables: [] } } },
-        },
-        local: { secrets: { '1password': { environmentId: 'dev', variables: ['LOCAL_TOKEN'] } } },
-      });
-      const selected = { ...app, config };
-      assert.deepStrictEqual(secretSource(selected), {
-        provider: '1password',
-        environmentId: 'prod',
-        variables: ['TOKEN'],
-      });
-      assert.deepStrictEqual(secretSource(selected, { local: true }), {
-        provider: '1password',
-        environmentId: 'dev',
-        variables: ['LOCAL_TOKEN'],
-      });
-      assert.deepStrictEqual(secretSource(selectDestination(selected, 'staging')), {
-        provider: '1password',
-        environmentId: 'stage',
-        variables: [],
-      });
-    }
+  it('preserves 1Password allowlists in top-level, destination and local selections', () => {
+    const config = decodeDeployConfig({
+      ...app.config,
+      secrets: { '1password': { environmentId: 'prod', variables: ['TOKEN'] } },
+      destinations: {
+        staging: { secrets: { '1password': { environmentId: 'stage', variables: [] } } },
+      },
+      local: { secrets: { '1password': { environmentId: 'dev', variables: ['LOCAL_TOKEN'] } } },
+    });
+    const selected = { ...app, config };
+    assert.deepStrictEqual(secretSource(selected), {
+      provider: '1password',
+      environmentId: 'prod',
+      variables: ['TOKEN'],
+    });
+    assert.deepStrictEqual(secretSource(selected, { local: true }), {
+      provider: '1password',
+      environmentId: 'dev',
+      variables: ['LOCAL_TOKEN'],
+    });
+    assert.deepStrictEqual(secretSource(selectDestination(selected, 'staging')), {
+      provider: '1password',
+      environmentId: 'stage',
+      variables: [],
+    });
   });
 
   it('rejects invalid 1Password variable allowlists', () => {
     for (const variables of ['TOKEN', [123], [''], ['BAD-NAME'], ['TOKEN*'], ['TOKEN\n']]) {
-      for (const secrets of [
-        { '1password': { environmentId: 'prod', variables } },
-        { provider: '1password', environmentId: 'prod', variables },
-      ]) {
-        assert.throws(() =>
-          decodeDeployConfig({
-            ...app.config,
-            secrets,
-          }),
-        );
-      }
+      assert.throws(() =>
+        decodeDeployConfig({
+          ...app.config,
+          secrets: { '1password': { environmentId: 'prod', variables } },
+        }),
+      );
     }
   });
 
@@ -359,6 +314,9 @@ describe('named extension configuration', () => {
       { '1password': { environmentId: 'prod' }, 'env-file': { path: 'dev.env' } },
       { provider: 'none', 'env-file': { path: 'dev.env' } },
       { none: {}, '1password': { environmentId: 'prod' } },
+      { provider: 'env-file', path: 'dev.env' },
+      { provider: '1password', environmentId: 'prod' },
+      { provider: 'none' },
     ]) {
       assert.throws(() =>
         decodeDeployConfig({

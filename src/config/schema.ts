@@ -92,15 +92,6 @@ export const ComposeServiceName = Schema.String.pipe(
 );
 
 /**
- * A dotted IPv4 address, which is what the app domains must resolve to.
- */
-export const Ipv4 = Schema.String.pipe(
-  Schema.check(
-    Schema.isPattern(/^(?:\d{1,3}\.){3}\d{1,3}$/, { message: 'expected an IPv4 address' }),
-  ),
-);
-
-/**
  * A Docker build platform such as `linux/arm64` or `linux/amd64`.
  */
 export const Platform = Schema.String.pipe(

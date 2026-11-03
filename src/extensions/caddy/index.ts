@@ -10,21 +10,15 @@ import { provisionOperation } from './provision.ts';
 import { checkScript, routeScript, setupScript, siteFile, unrouteScript } from './scripts.ts';
 
 /**
- * The host's Caddy proxy entry, from either the named `caddy` ingress or a legacy `proxy` entry;
- * undefined when the host has none or its entry belongs to another extension.
+ * The host's `caddy` ingress settings; undefined when the host has no Caddy ingress.
  */
 function caddyProxyOf(host: HostConfig): ProxyConfig | undefined {
   const proxy = ingressConfigOf(host, 'caddy');
-  if (proxy === undefined || (proxy.provider !== undefined && proxy.provider !== 'caddy')) {
-    return undefined;
-  }
-
-  return proxy;
+  return proxy?.provider === 'caddy' ? proxy : undefined;
 }
 
 /**
- * Requires host settings compatible with the selected Caddy extension before creating mutation
- * scripts.
+ * Requires the host's Caddy ingress settings before creating mutation scripts.
  */
 function caddyProxy(host: HostConfig): ProxyConfig {
   const proxy = caddyProxyOf(host);
@@ -56,7 +50,7 @@ function settings(app: App) {
  */
 export const caddyIngress: IngressExtension = {
   /**
-   * Selected by `ingress.mode: caddy` and by host proxies without a provider.
+   * Selected by an app's `ingress.caddy` and a host's `ingress.caddy`.
    */
   id: 'caddy',
 

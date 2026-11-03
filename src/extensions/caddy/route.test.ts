@@ -106,7 +106,7 @@ async function until(predicate: () => boolean): Promise<void> {
 }
 
 describe('Caddy route transactions', { timeout: ROUTE_TEST_TIMEOUT_MS }, () => {
-  it('shares the setup lock and restores legacy files without printing Compose diagnostics', () =>
+  it('shares the setup lock and restores the original files without printing Compose diagnostics', () =>
     fixture((f) => {
       const caddyfile = '# existing config\n';
       const compose =

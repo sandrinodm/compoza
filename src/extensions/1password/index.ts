@@ -2,6 +2,7 @@ import { Context, Effect } from 'effect';
 
 import type { CredentialProvider } from '../credentials.ts';
 
+import { loadSettings } from '../../config/settings.ts';
 import { DeployError } from '../../errors.ts';
 
 /**
@@ -61,19 +62,29 @@ interface OnePasswordSdk {
 }
 
 /**
+ * The service-account token the SDK authenticates with, for automation.
+ */
+const TOKEN_ENV = 'OP_SERVICE_ACCOUNT_TOKEN';
+
+/**
+ * The desktop account to authenticate with, which overrides the one saved in the settings file.
+ */
+const ACCOUNT_ENV = 'COMPOZA_1PASSWORD_ACCOUNT';
+
+/**
  * Reads an Environment using the optional official SDK on the CLI machine.
  *
  * Dynamic import keeps dotenv and dry runs usable without optional dependencies. Authentication
  * uses a service token or an explicitly selected desktop account, never an application-configured
- * token or an implicit account.
+ * token or an implicit account. Throws when neither is available or the SDK call fails.
  */
 async function fetchEnvironment(
   environmentId: string,
+  account: string | undefined,
 ): Promise<ReadonlyArray<EnvironmentVariable>> {
   const packageName = '@1password/sdk';
   const sdk = (await import(packageName)) as OnePasswordSdk;
-  const token = process.env.OP_SERVICE_ACCOUNT_TOKEN;
-  const account = process.env.COMPOZA_1PASSWORD_ACCOUNT;
+  const token = process.env[TOKEN_ENV];
   if (!token && !account) {
     throw new Error('Missing operator authentication');
   }
@@ -85,6 +96,20 @@ async function fetchEnvironment(
   });
   return (await client.environments.getVariables(environmentId)).variables;
 }
+
+/**
+ * The desktop account for a read: `COMPOZA_1PASSWORD_ACCOUNT`, else the `1password.account`
+ * setting. The settings file is read only when neither that variable nor a service-account token is
+ * set, so automation with a token never depends on it.
+ */
+const desktopAccount = Effect.fn('desktopAccount')(function* () {
+  const fromEnvironment = process.env[ACCOUNT_ENV];
+  if (fromEnvironment || process.env[TOKEN_ENV]) {
+    return fromEnvironment || undefined;
+  }
+
+  return (yield* loadSettings())['1password']?.account;
+});
 
 /**
  * Whether an SDK entry has the documented name, value and masking types. The SDK response is not
@@ -143,8 +168,9 @@ export const onePasswordProvider: CredentialProvider = {
     }
 
     const reader = yield* OnePasswordReader;
+    const account = yield* desktopAccount();
     const variables = yield* Effect.tryPromise({
-      try: () => reader(source.environmentId),
+      try: () => reader(source.environmentId, account),
       catch: () =>
         new DeployError({
           message:

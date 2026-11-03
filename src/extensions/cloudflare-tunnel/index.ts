@@ -315,7 +315,7 @@ function managedRoutingChecks(probe: Record<string, string>): ReadonlyArray<Chec
  */
 export const cloudflareIngress: IngressExtension = {
   /**
-   * Selected by `ingress.mode: cloudflare-tunnel` and host proxies with that provider.
+   * Selected by an app's `ingress.cloudflare-tunnel` and a host's `ingress.cloudflare-tunnel`.
    */
   id: 'cloudflare-tunnel',
 

@@ -36,16 +36,15 @@ const valid = {
   targets: ['builder', 'web'],
   composeFiles: ['compose.yaml', 'compose.production.yaml'],
   ingress: {
-    mode: 'caddy',
-    domain: 'demo.example.com',
-    upstream: 'demo-web:80',
-    healthPath: '/healthz',
+    caddy: { domain: 'demo.example.com', upstream: 'demo-web:80', healthPath: '/healthz' },
   },
   directories: ['/srv/demo/data'],
   content: { demo: '/srv/demo/data/demo' },
   environment: { DEMO_PORT: '8090' },
   local: { composeFiles: ['compose.yaml'], environment: { DEMO_SOURCES_PATH: '../sources' } },
 };
+
+const caddy = valid.ingress.caddy;
 
 describe('DeployConfig', () => {
   it.effect('accepts a complete config', () =>
@@ -80,12 +79,34 @@ describe('DeployConfig', () => {
       }),
   );
 
-  it.effect('rejects destination overrides of the shared source directory', () =>
+  it.effect.each([
+    [
+      'destination overrides of the shared source directory',
+      { dev: { workingDirectory: '/other' } },
+    ],
+    ['a destination envFile', { dev: { envFile: 'dev.env' } }],
+    [
+      'a destination remote.envFile',
+      { dev: { remote: { stackDir: '/srv', envFile: '/srv/.env' } } },
+    ],
+  ] as const)('rejects %s', ([, destinations]) =>
     Effect.gen(function* () {
       const error = yield* Schema.decodeUnknownEffect(DeployConfig, { onExcessProperty: 'error' })({
         ...valid,
-        destinations: { dev: { workingDirectory: '/other' } },
+        destinations,
       }).pipe(Effect.flip);
+      assert.strictEqual(error._tag, 'SchemaError');
+    }),
+  );
+
+  it.effect.each([
+    ['a top-level envFile', { ...valid, envFile: 'secrets.env' }],
+    ['remote.envFile', { ...valid, remote: { stackDir: '/srv/demo', envFile: '/srv/demo/.env' } }],
+    ['a local envFile', { ...valid, local: { ...valid.local, envFile: 'dev.env' } }],
+  ] as const)('rejects %s', ([, input]) =>
+    Effect.gen(function* () {
+      const decode = Schema.decodeUnknownEffect(DeployConfig, { onExcessProperty: 'error' });
+      const error = yield* decode(input).pipe(Effect.flip);
       assert.strictEqual(error._tag, 'SchemaError');
     }),
   );
@@ -108,12 +129,12 @@ describe('DeployConfig', () => {
     ]),
     ['name', { ...valid, name: 'Docs App' }],
     ['host', { ...valid, host: undefined }],
-    ['domain', { ...valid, ingress: { ...valid.ingress, domain: 'https://demo.example.com' } }],
-    ['upstream', { ...valid, ingress: { ...valid.ingress, upstream: 'demo-web' } }],
-    ['healthPath', { ...valid, ingress: { ...valid.ingress, healthPath: 'healthz' } }],
+    ['domain', { ...valid, ingress: { caddy: { ...caddy, domain: 'https://demo.example.com' } } }],
+    ['upstream', { ...valid, ingress: { caddy: { ...caddy, upstream: 'demo-web' } } }],
+    ['healthPath', { ...valid, ingress: { caddy: { ...caddy, healthPath: 'healthz' } } }],
     [
       'healthPath with whitespace',
-      { ...valid, ingress: { ...valid.ingress, healthPath: '/health z' } },
+      { ...valid, ingress: { caddy: { ...caddy, healthPath: '/health z' } } },
     ],
     ['directories', { ...valid, directories: ['relative/path'] }],
     ['targets', { ...valid, targets: ['Invalid'] }],
@@ -182,29 +203,6 @@ describe('loadApp', () => {
         yield* Effect.promise(() => writeFile(join(dir, 'deploy.yaml'), YAML.stringify(valid)));
 
         assert.strictEqual((yield* loadApp(dir)).file, join(dir, 'deploy.yaml'));
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect('names the setting that makes secret sources ambiguous', () =>
-    withTempDir((dir) =>
-      Effect.gen(function* () {
-        const file = join(dir, 'deploy.yaml');
-        const topLevel = { ...valid, envFile: 'legacy.env', secrets: { none: {} } };
-        yield* Effect.promise(() => writeFile(file, YAML.stringify(topLevel)));
-
-        const ambiguous = yield* loadApp(dir).pipe(Effect.flip);
-        assert.include(ambiguous.message, 'Ambiguous secret sources: use secrets, envFile');
-
-        const staging = {
-          secrets: { none: {} },
-          remote: { stackDir: '/srv/demo/staging', envFile: '/srv/demo/staging/.env' },
-        };
-        const destination = { ...valid, destinations: { staging } };
-        yield* Effect.promise(() => writeFile(file, YAML.stringify(destination)));
-
-        const inDestination = yield* loadApp(dir).pipe(Effect.flip);
-        assert.include(inDestination.message, 'destination "staging"');
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

@@ -90,6 +90,9 @@ case " $* " in
   *' config --quiet '*) if [ -f ${shellQuote(join(dir, 'invalid'))} ]; then echo PRIVATE_DIAGNOSTIC >&2; exit 1; fi;;
   *' config --format json '*) cat ${shellQuote(join(dir, 'model.json'))};;
   *' up '*) if [ -f ${shellQuote(join(dir, 'up-fail'))} ]; then echo PRIVATE_DIAGNOSTIC >&2; exit 1; fi;;
+  *' config --services '*) printf 'web\\nworker\\n';;
+  *' logs --follow '*) echo $$ > ${shellQuote(join(dir, 'follow.pid'))}; exec sleep 30;;
+  *' logs '*) echo LOGS_PRINTED;;
   *' ps '*) cat ${shellQuote(join(dir, 'status.json'))};;
   *' stop '*) echo PRIVATE_DIAGNOSTIC;;
 esac
@@ -225,9 +228,6 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
       succeeded(deploy('one', undefined, [source, asset]));
 
       const metadataFile = join(root, '.compoza.json');
-      const legacy = JSON.parse(readFileSync(metadataFile, 'utf8'));
-      delete legacy.ownedFiles;
-      writeFileSync(metadataFile, JSON.stringify(legacy));
       succeeded(deploy('two'));
 
       const retained = readFileSync(metadataFile, 'utf8');
@@ -282,6 +282,7 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
       const environment = readFileSync(join(root, '.env'), 'utf8');
 
       for (const ownedFiles of [
+        undefined,
         null,
         {},
         [],
@@ -318,9 +319,8 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
     fixture(({ app, root, deploy }) => {
       mkdirSync(root);
 
-      const envFile = join(root, 'operator.env');
       const overlayFile = join(root, 'operator.yaml');
-      Object.assign(app.config, { remote: { stackDir: root, envFile, overlayFile } });
+      Object.assign(app.config, { remote: { stackDir: root, overlayFile } });
 
       for (const name of ['operator.env', 'operator.yaml', 'data.txt']) {
         writeFileSync(join(root, name), 'operator-owned');
@@ -348,7 +348,7 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
 
       const result = deploy();
       assert.notStrictEqual(result.status, 0);
-      assert.include(String(result.stderr), 'remote.envFile');
+      assert.include(String(result.stderr), 'absolute env_file path');
       assert.strictEqual(readFileSync(join(root, '.env'), 'utf8'), 'TOKEN=operator');
 
       rmSync(join(root, '.env'));
@@ -448,6 +448,52 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
         assert.notStrictEqual(result.status, 0);
         assert.notInclude(String(result.stdout) + String(result.stderr), 'PRIVATE_DIAGNOSTIC');
       }
+    }));
+
+  it('names the deployed services when a requested one is missing, even with managed secrets', () =>
+    fixture(({ app, dir, root, deploy, run }) => {
+      succeeded(deploy('one', { TOKEN: 'private-token' }));
+      assert.isTrue(JSON.parse(readFileSync(join(root, '.compoza.json'), 'utf8')).managed);
+
+      const missing = run(
+        deployedScript(app, ['logs', '--tail', '5', 'wbe'], false, { service: 'wbe' }),
+      );
+      assert.notStrictEqual(missing.status, 0);
+      assert.include(
+        String(missing.stderr),
+        'No service "wbe" in the deployed stack; services: web, worker',
+      );
+      const calls = readFileSync(join(dir, 'calls'), 'utf8');
+      assert.notInclude(calls, ' logs ');
+
+      // Services of profiles the deployment does not select still have logs to read.
+      assert.match(calls, /--profile \* --env-file \S+ config --services/);
+
+      const found = run(
+        deployedScript(app, ['logs', '--tail', '5', 'web'], false, { service: 'web' }),
+      );
+      succeeded(found);
+      assert.include(String(found.stdout), 'LOGS_PRINTED');
+    }));
+
+  it('ends a followed command with status 0 on Ctrl-C only when it is interruptible', () =>
+    fixture(({ app, dir, deploy, run }) => {
+      succeeded(deploy());
+      const pidFile = join(dir, 'follow.pid');
+
+      // Ctrl-C reaches the terminal's whole foreground group: the host script and Compose.
+      const interrupt = [
+        `(while [ ! -s ${shellQuote(pidFile)} ]; do sleep 0.1; done`,
+        `kill -INT "$$" "$(cat ${shellQuote(pidFile)})") &`,
+      ].join('; ');
+      const follow = (interruptible: boolean) => {
+        rmSync(pidFile, { force: true });
+        const script = deployedScript(app, ['logs', '--follow'], false, { interruptible });
+        return run(`${interrupt}\n${script}`);
+      };
+
+      assert.strictEqual(follow(true).status, 0);
+      assert.notStrictEqual(follow(false).status, 0);
     }));
 
   it('checks resolved model paths, declared read-only assets and optional host env files', () =>
