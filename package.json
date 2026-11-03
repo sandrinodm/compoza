@@ -38,6 +38,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@stylistic/eslint-plugin": "catalog:",
     "@types/node": "catalog:",
     "jsdoc-lint": "catalog:",
     "typescript": "catalog:",

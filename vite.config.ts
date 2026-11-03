@@ -67,9 +67,18 @@ export default defineConfig({
   },
   lint: {
     plugins: ['typescript', 'unicorn', 'oxc', 'jsdoc'],
-    jsPlugins: [{ name: 'vite-plus', specifier: 'vite-plus/oxlint-plugin' }],
+    jsPlugins: [
+      { name: 'vite-plus', specifier: 'vite-plus/oxlint-plugin' },
+      { name: '@stylistic', specifier: '@stylistic/eslint-plugin' },
+    ],
     rules: {
       curly: 'error',
+      // A blank line after a block when more code follows it in the same block. The `block-like`
+      // selector is left out on purpose: it also matches `const handler = () => { … };`.
+      '@stylistic/padding-line-between-statements': [
+        'error',
+        { blankLine: 'always', prev: ['if', 'for', 'while', 'do', 'switch', 'try'], next: '*' },
+      ],
       'jsdoc/check-tag-names': 'error',
       'jsdoc/check-access': 'error',
       'jsdoc/check-property-names': 'error',
