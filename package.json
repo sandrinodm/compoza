@@ -1,6 +1,6 @@
 {
   "name": "compoza",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Builds, ships and runs a Compose stack on a remote Docker host over SSH, with readiness checks and Caddy routing.",
   "homepage": "https://github.com/sandrinodm/compoza#readme",
   "bugs": "https://github.com/sandrinodm/compoza/issues",
