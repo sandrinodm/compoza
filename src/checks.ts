@@ -7,6 +7,7 @@ import { type HostConfig, registryOf } from './config/hosts.ts';
 import { type DeployError, tryPlan } from './errors.ts';
 import { ingressFor, tryIngressFor } from './extensions/ingress.ts';
 import { parseCheck, registryProbe } from './probe.ts';
+import { buildingRoles } from './roles.ts';
 import { Remote } from './services/Remote.ts';
 import { sshReadinessScript } from './ssh-plan.ts';
 
@@ -163,7 +164,7 @@ export const runChecks = Effect.fn('runChecks')(function* (
  * pushes nothing.
  */
 function requiredRegistry(app: App, host: HostConfig): string | undefined {
-  return app.config.targets.length === 0 ? undefined : registryOf(host);
+  return buildingRoles(app.config).length === 0 ? undefined : registryOf(host);
 }
 
 /**

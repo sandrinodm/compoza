@@ -39,7 +39,6 @@ export const setupOperationInput = Effect.fn('setupOperationInput')(function* (
     config: {
       name: 'ingress-setup',
       host: 'setup',
-      targets: [],
       composeFiles: ['compose.yaml'],
       secrets: operation.secrets,
     },

@@ -155,6 +155,80 @@ describe('compoza hosts list', { timeout: CLI_TEST_TIMEOUT_MS }, () => {
   });
 });
 
+describe('compoza roles', () => {
+  /**
+   * Writes a deploy folder with two building roles and a hosts file, and returns the folder and the
+   * environment that selects the hosts file.
+   */
+  function rolesFixture(directory: string, extra = '') {
+    writeFileSync(
+      join(directory, 'hosts.yaml'),
+      'host:\n  ssh: deploy@host.example.com\n  platform: linux/amd64\n' +
+        '  transport:\n    mode: ssh-load\n',
+    );
+    writeFileSync(
+      join(directory, 'compose.yaml'),
+      'services: {web: {image: a}, worker: {image: b}}',
+    );
+    writeFileSync(
+      join(directory, 'deploy.yaml'),
+      'name: app\nhost: host\ncomposeFiles: [compose.yaml]\nroles:\n' +
+        '  web:\n    build: {target: server}\n' +
+        '  worker:\n    build: {}\n    environment: {MODE: fast}\n' +
+        extra,
+    );
+    return { COMPOZA_HOSTS: join(directory, 'hosts.yaml') };
+  }
+
+  it('reuses images with a default tag and a per-role tag from the repeatable --tag flag', () => {
+    using temporary = mkdtempDisposableSync(join(tmpdir(), 'compoza-roles-'));
+    const env = rolesFixture(temporary.path);
+    const result = runCli(
+      ['deploy', temporary.path, '--local', '--dry-run', '--tag', 'abc', '--tag', 'worker=def'],
+      env,
+    );
+    assert.strictEqual(result.status, 0, result.stderr);
+    assert.include(result.stdout, 'Deploying app web=abc worker=def to local Docker');
+    assert.include(result.stdout, 'image: "app-web:abc"');
+    assert.include(result.stdout, 'image: "app-worker:def"');
+    assert.include(result.stdout, 'MODE: "fast"');
+  });
+
+  it('rejects --tag values that name an unknown role or leave a role untagged', () => {
+    using temporary = mkdtempDisposableSync(join(tmpdir(), 'compoza-roles-'));
+    const env = rolesFixture(temporary.path);
+    const unknown = runCli(
+      ['deploy', temporary.path, '--local', '--dry-run', '--tag', 'ghost=abc'],
+      env,
+    );
+    assert.notStrictEqual(unknown.status, 0);
+    assert.include(unknown.stderr, 'Unknown role "ghost" in --tag; roles: web, worker');
+
+    const untagged = runCli(
+      ['deploy', temporary.path, '--local', '--dry-run', '--tag', 'web=abc'],
+      env,
+    );
+    assert.notStrictEqual(untagged.status, 0);
+    assert.include(untagged.stderr, 'No tag for role "worker"');
+  });
+
+  it('reports the roles check in compoza check', () => {
+    using temporary = mkdtempDisposableSync(join(tmpdir(), 'compoza-roles-'));
+    const env = rolesFixture(temporary.path);
+    const ok = runCli(['check', temporary.path, '--local'], env);
+    assert.strictEqual(ok.status, 0, ok.stderr);
+    assert.include(ok.stdout, 'ok   roles: Roles match the Compose files');
+
+    const bad = rolesFixture(temporary.path, '  wbe:\n    environment: {A: b}\n');
+    const failed = runCli(['check', temporary.path, '--local'], bad);
+    assert.strictEqual(failed.status, 2, failed.stderr);
+    assert.include(
+      failed.stdout,
+      'FAIL roles: Role "wbe" is not a service in the Compose files; services: web, worker',
+    );
+  });
+});
+
 describe('compoza logs --follow', { timeout: CLI_TEST_TIMEOUT_MS }, () => {
   /**
    * Waits until `condition` holds, checking every 50 ms, and fails after `CLI_TIMEOUT_MS`.
@@ -199,7 +273,7 @@ describe('compoza logs --follow', { timeout: CLI_TEST_TIMEOUT_MS }, () => {
     );
     writeFileSync(
       join(dir, 'deploy.yaml'),
-      'name: app\nhost: host\ntargets: []\nexecution: ssh\ncomposeFiles: [compose.yaml]\n' +
+      'name: app\nhost: host\nexecution: ssh\ncomposeFiles: [compose.yaml]\n' +
         'remote:\n  stackDir: /srv/app\n',
     );
 

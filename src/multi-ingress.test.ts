@@ -63,11 +63,11 @@ const loadedFixture = Effect.gen(function* () {
     (directory) => Effect.promise(() => directory.remove()),
   );
   const directory = temporary.path;
-  const hostDirectory = join(directory, 'macmini-server');
+  const hostDirectory = join(directory, 'linden');
   mkdirSync(hostDirectory);
   writeFileSync(
     join(directory, 'hosts.yaml'),
-    YAML.stringify({ 'macmini-server': { $ref: './macmini-server/host.yaml' } }),
+    YAML.stringify({ linden: { $ref: './linden/host.yaml' } }),
   );
   writeFileSync(join(hostDirectory, 'site.tmpl'), defaultSiteTemplate);
   writeFileSync(join(hostDirectory, 'Caddyfile.tmpl'), defaultConfigTemplate);
@@ -88,8 +88,8 @@ const loadedFixture = Effect.gen(function* () {
   );
 
   const hosts = yield* loadHosts(join(directory, 'hosts.yaml'));
-  const selected = hosts['macmini-server']!;
-  const caddySettings = yield* proxyOf(selected, 'macmini-server');
+  const selected = hosts['linden']!;
+  const caddySettings = yield* proxyOf(selected, 'linden');
   assert.deepStrictEqual(caddySettings.templates?.site, { inline: defaultSiteTemplate });
   assert.deepStrictEqual(caddySettings.templates?.config, { inline: defaultConfigTemplate });
 

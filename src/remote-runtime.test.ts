@@ -69,7 +69,7 @@ exec ${shellQuote(docker)} "$@"
     config: {
       name: 'fixture',
       host: 'host',
-      targets: ['web'],
+      roles: { web: { build: { target: 'web' } } },
       composeFiles: ['compose.yaml', 'production.yaml'],
       execution: 'ssh',
       remote: { stackDir: root },
@@ -83,7 +83,7 @@ exec ${shellQuote(docker)} "$@"
       input,
       encoding: 'utf8',
       timeout: FIXTURE_TIMEOUT_MS,
-      env: { ...process.env, WEB_IMAGE: 'wrong-session-image', TOKEN: 'wrong-session-token' },
+      env: { ...process.env, TOKEN: 'wrong-session-token' },
     });
 
   use({ app, dir, root, run });
@@ -101,7 +101,7 @@ describe.skipIf(!composeAvailable)(
             '/workstation/project/production.yaml',
           ],
         });
-        const plan = deploymentScript(app, host, 'external', [
+        const plan = deploymentScript(app, host, { web: 'external' }, [
           {
             path: 'compose.yaml',
             encoded: Buffer.from(
@@ -111,7 +111,7 @@ describe.skipIf(!composeAvailable)(
           {
             path: 'production.yaml',
             encoded: Buffer.from(
-              'services: {web: {build: !reset null, image: "${WEB_IMAGE:?required}", environment: {MODE: production}}}',
+              'services: {web: {build: !reset null, image: nginx, environment: {MODE: production}}}',
             ).toString('base64'),
           },
         ]);
@@ -121,7 +121,7 @@ describe.skipIf(!composeAvailable)(
         assert.notInclude(installed, '/workstation');
         assert.notInclude(installed, 'build:');
         assert.include(YAML.parse(installed).services.web.environment, 'MODE=production');
-        assert.include(installed, '${WEB_IMAGE:?required}');
+        assert.strictEqual(YAML.parse(installed).services.web.image, 'fixture-web:external');
         assert.deepStrictEqual(
           JSON.parse(readFileSync(join(root, '.compoza.json'), 'utf8')).files,
           ['compose.yaml'],
@@ -139,7 +139,7 @@ describe.skipIf(!composeAvailable)(
           ).toString('base64'),
         };
         const deployAsset = (value: string) => {
-          const plan = deploymentScript(app, host, 'same', [
+          const plan = deploymentScript(app, host, { web: 'same' }, [
             source,
             { path: 'settings.txt', encoded: Buffer.from(value).toString('base64') },
           ]);
@@ -180,15 +180,15 @@ describe.skipIf(!composeAvailable)(
       composeFixture(({ app, root, run }) => {
         Object.assign(app.config, { composeFiles: ['normalized.yaml'] });
         const source = Buffer.from('services: {web: {image: nginx:alpine}}').toString('base64');
-        const first = deploymentScript(app, host, 'one', [
+        const first = deploymentScript(app, host, { web: 'one' }, [
           { path: 'normalized.yaml', encoded: source },
         ]);
         const firstResult = run(first.script, first.input);
         assert.strictEqual(firstResult.status, 0, String(firstResult.stderr));
-        assert.include(readFileSync(join(root, 'compose.yaml'), 'utf8'), 'nginx:alpine');
+        assert.include(readFileSync(join(root, 'compose.yaml'), 'utf8'), 'fixture-web:one');
 
         Object.assign(app.config, { composeFiles: ['compose.yaml'] });
-        const second = deploymentScript(app, host, 'two', [
+        const second = deploymentScript(app, host, { web: 'two' }, [
           {
             path: 'compose.yaml',
             encoded: Buffer.from(
@@ -210,7 +210,7 @@ describe.skipIf(!composeAvailable)(
 
         const compose = `services:
   web:
-    image: \${WEB_IMAGE:?required image}
+    image: nginx
     environment:
       TOKEN: \${TOKEN:?required token}
       LITERAL: $$literal
@@ -227,16 +227,32 @@ describe.skipIf(!composeAvailable)(
           { path: 'production.yaml', encoded: Buffer.from(production).toString('base64') },
           { path: 'settings.txt', encoded: Buffer.from('settings').toString('base64') },
         ];
-        const plan = deploymentScript(app, host, 'known', bundle, {
+        Object.assign(app.config, {
+          roles: {
+            web: {
+              build: { target: 'web' },
+              environment: {
+                ROLE_LITERAL: 'cost $5 ${NOT_A_VARIABLE}',
+                ROLE_UNDERSCORE: '1_000',
+                ROLE_BINARY: '0b101',
+                ROLE_DATE: '2001-12-14',
+              },
+              secrets: ['ROLE_SECRET'],
+            },
+          },
+        });
+        const plan = deploymentScript(app, host, { web: 'known' }, bundle, {
           TOKEN: '$private "quoted" \\ trailing\\',
+          ROLE_SECRET: 'role "secret" $x',
         });
         const result = run(plan.script, plan.input);
         assert.strictEqual(result.status, 0, String(result.stderr));
 
         const installed = readFileSync(join(root, 'compose.yaml'), 'utf8');
-        assert.include(installed, '${WEB_IMAGE:?required image}');
         assert.include(installed, '${TOKEN:?required token}');
         assert.notInclude(installed, '$private');
+        assert.notInclude(installed, 'role "secret"');
+        assert.include(installed, '${ROLE_SECRET}');
         assert.notInclude(installed, '.deploy-lock');
 
         const model = YAML.parse(installed);
@@ -270,6 +286,18 @@ describe.skipIf(!composeAvailable)(
         );
         assert.strictEqual(service.environment.RAW.replaceAll('$$', '$'), '$LITERAL "quoted"');
         assert.strictEqual(service.environment.LITERAL.replaceAll('$$', '$'), '$literal');
+        assert.strictEqual(
+          service.environment.ROLE_LITERAL.replaceAll('$$', '$'),
+          'cost $5 ${NOT_A_VARIABLE}',
+        );
+        assert.strictEqual(service.environment.ROLE_UNDERSCORE, '1_000');
+        assert.strictEqual(service.environment.ROLE_BINARY, '0b101');
+        assert.strictEqual(service.environment.ROLE_DATE, '2001-12-14');
+        assert.strictEqual(
+          service.environment.ROLE_SECRET.replaceAll('$$', '$'),
+          'role "secret" $x',
+        );
+        assert.strictEqual(service.environment.MODE, 'production');
         assert.strictEqual(service.volumes[0].source, join(root, 'settings.txt'));
         assert.deepStrictEqual(readdirSync(root).sort(), [
           '.compoza.json',
@@ -291,11 +319,11 @@ describe.skipIf(!composeAvailable)(
           remote: { stackDir: root, overlayFile },
         });
 
-        const plan = deploymentScript(app, host, 'known', [
+        const plan = deploymentScript(app, host, { web: 'known' }, [
           {
             path: 'compose.yaml',
             encoded: Buffer.from(
-              'services: {web: {image: "${WEB_IMAGE}", environment: {TOKEN: "${TOKEN}"}}}',
+              'services: {web: {image: nginx, environment: {TOKEN: "${TOKEN}"}}}',
             ).toString('base64'),
           },
         ]);

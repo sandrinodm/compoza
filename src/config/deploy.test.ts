@@ -6,6 +6,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as YAML from 'yaml';
 
+import { buildingRoles } from '../roles.ts';
 import {
   composeFilesOf,
   DeployConfig,
@@ -13,6 +14,8 @@ import {
   environmentOf,
   ingressOf,
   loadApp,
+  rolesOf,
+  selectDestination,
   workingDirectoryOf,
 } from './deploy.ts';
 
@@ -33,7 +36,10 @@ function withTempDir<A, E, R>(
 const valid = {
   name: 'demo',
   host: 'atlas',
-  targets: ['builder', 'web'],
+  roles: {
+    builder: { build: { target: 'builder' } },
+    web: { build: { target: 'web' }, environment: { MODE: 'a' }, secrets: ['TOKEN'] },
+  },
   composeFiles: ['compose.yaml', 'compose.production.yaml'],
   ingress: {
     caddy: { domain: 'demo.example.com', upstream: 'demo-web:80', healthPath: '/healthz' },
@@ -137,13 +143,166 @@ describe('DeployConfig', () => {
       { ...valid, ingress: { caddy: { ...caddy, healthPath: '/health z' } } },
     ],
     ['directories', { ...valid, directories: ['relative/path'] }],
-    ['targets', { ...valid, targets: ['Invalid'] }],
+    ['role build target', { ...valid, roles: { web: { build: { target: 'Bad' } } } }],
+    ['role environment value', { ...valid, roles: { web: { environment: { A: 1 } } } }],
+    ['role secrets', { ...valid, roles: { web: { secrets: 'TOKEN' } } }],
+    ['role workingDirectory', { ...valid, roles: { web: { build: { workingDirectory: ' ' } } } }],
     ['environment', { ...valid, environment: { DEMO_PORT: 8090 } }],
   ])('rejects an invalid %s', ([, input]) =>
     Effect.gen(function* () {
       const error = yield* Schema.decodeUnknownEffect(DeployConfig)(input).pipe(Effect.flip);
       assert.strictEqual(error._tag, 'SchemaError');
     }),
+  );
+});
+
+describe('roles', () => {
+  const decode = (input: unknown) => Schema.decodeUnknownEffect(DeployConfig)(input);
+
+  it.effect.each([
+    ['an invalid role name', { Web: {} }],
+    ['a role name ending in a separator', { web_: {} }],
+    ['a role name mixing separators', { 'a_-b': {} }],
+    ['a role name starting with a separator', { '-web': {} }],
+    ['an unknown role field', { web: { ports: [] } }],
+    ['an unknown build field', { web: { build: { image: 'x' } } }],
+  ] as const)('rejects %s', ([, roles]) =>
+    Effect.gen(function* () {
+      const decodeStrict = Schema.decodeUnknownEffect(DeployConfig, { onExcessProperty: 'error' });
+      const error = yield* decodeStrict({ ...valid, roles }).pipe(Effect.flip);
+      assert.strictEqual(error._tag, 'SchemaError');
+    }),
+  );
+
+  it.effect.each([
+    ['destination', { destinations: { dev: { roles: { web: { build: {} } } } } }],
+    ['local', { local: { roles: { web: { build: {} } } } }],
+  ] as const)('rejects a build in %s roles', ([, input]) =>
+    Effect.gen(function* () {
+      const decodeStrict = Schema.decodeUnknownEffect(DeployConfig, { onExcessProperty: 'error' });
+      const error = yield* decodeStrict({ ...valid, ...input }).pipe(Effect.flip);
+      assert.strictEqual(error._tag, 'SchemaError');
+    }),
+  );
+
+  it.effect('accepts build fields, roles without a build and destination or local settings', () =>
+    Effect.gen(function* () {
+      const config = yield* decode({
+        ...valid,
+        workingDirectory: '../repo',
+        dockerfile: 'infra/Dockerfile',
+        context: '.',
+        roles: {
+          ...valid.roles,
+          worker: {
+            build: {
+              target: 'worker',
+              workingDirectory: '../other',
+              dockerfile: 'worker.Dockerfile',
+              context: 'src',
+            },
+          },
+          postgres: { environment: { POSTGRES_USER: 'demo' } },
+          'my_role-1': {},
+        },
+        destinations: { dev: { roles: { web: { environment: { MODE: 'b' }, secrets: [] } } } },
+        local: { roles: { postgres: { secrets: ['PG_PASSWORD'] } } },
+      });
+      assert.deepStrictEqual(Object.keys(config.roles ?? {}), [
+        'builder',
+        'web',
+        'worker',
+        'postgres',
+        'my_role-1',
+      ]);
+      assert.strictEqual(config.roles?.worker?.build?.dockerfile, 'worker.Dockerfile');
+    }),
+  );
+
+  it.effect('does not require roles', () =>
+    Effect.gen(function* () {
+      const { roles: _roles, ...bare } = valid;
+      const config = yield* decode(bare);
+      assert.deepStrictEqual(rolesOf(config), {});
+    }),
+  );
+
+  it.effect('rolls the working directory of a role over the top-level one', () =>
+    Effect.gen(function* () {
+      const app = {
+        dir: '/deployment',
+        config: yield* decode({
+          ...valid,
+          workingDirectory: '../repo',
+          roles: { web: { build: { workingDirectory: '~/other' } }, api: { build: {} } },
+        }),
+      };
+      assert.strictEqual(workingDirectoryOf(app), '/repo');
+      assert.strictEqual(workingDirectoryOf(app, '~/other'), join(homedir(), 'other'));
+    }),
+  );
+
+  it.effect('merges destination roles over the app roles', () =>
+    Effect.gen(function* () {
+      const config = yield* decode({
+        ...valid,
+        destinations: {
+          dev: {
+            roles: {
+              web: { environment: { EXTRA: 'x' }, secrets: ['OTHER'] },
+              builder: { environment: { ONLY: 'dest' } },
+              sidecar: { environment: { SIDE: '1' } },
+            },
+          },
+        },
+      });
+      const { config: selected } = selectDestination({ dir: '/d', config }, 'dev');
+      assert.deepStrictEqual(selected.roles?.web, {
+        build: { target: 'web' },
+        environment: { MODE: 'a', EXTRA: 'x' },
+        secrets: ['OTHER'],
+      });
+      assert.deepStrictEqual(selected.roles?.builder, {
+        build: { target: 'builder' },
+        environment: { ONLY: 'dest' },
+      });
+      assert.deepStrictEqual(selected.roles?.sidecar, { environment: { SIDE: '1' } });
+      assert.deepStrictEqual(buildingRoles(selected), ['builder', 'web']);
+    }),
+  );
+
+  it.effect('keeps the app roles when the destination sets none', () =>
+    Effect.gen(function* () {
+      const config = yield* decode({ ...valid, destinations: { dev: { host: 'other' } } });
+      const { config: selected } = selectDestination({ dir: '/d', config }, 'dev');
+      assert.deepStrictEqual(selected.roles, config.roles);
+    }),
+  );
+
+  it.effect(
+    'merges local roles over the roles of the run, with an empty list clearing secrets',
+    () =>
+      Effect.gen(function* () {
+        const config = yield* decode({
+          ...valid,
+          local: {
+            roles: {
+              web: { environment: { MODE: 'local' }, secrets: [] },
+              sidecar: { secrets: ['SIDE_TOKEN'] },
+            },
+          },
+        });
+        assert.deepStrictEqual(rolesOf(config).web?.secrets, ['TOKEN']);
+        assert.deepStrictEqual(rolesOf(config, { local: true }).web, {
+          build: { target: 'web' },
+          environment: { MODE: 'local' },
+          secrets: [],
+        });
+        assert.deepStrictEqual(rolesOf(config, { local: true }).sidecar, {
+          secrets: ['SIDE_TOKEN'],
+        });
+        assert.deepStrictEqual(buildingRoles(config), ['builder', 'web']);
+      }),
   );
 });
 
@@ -187,6 +346,25 @@ describe('loadApp', () => {
 
         const invalidConfig = yield* loadApp(dir).pipe(Effect.flip);
         assert.include(invalidConfig.message, join(dir, 'deploy.yaml'));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect('fails with the dedicated message when targets is still configured', () =>
+    withTempDir((dir) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          writeFile(join(dir, 'deploy.yaml'), YAML.stringify({ ...valid, targets: ['web'] })),
+        );
+
+        const error = yield* loadApp(dir).pipe(Effect.flip);
+        assert.strictEqual(error._tag, 'DeployError');
+        assert.strictEqual(
+          error.message,
+          `${join(dir, 'deploy.yaml')}: targets was replaced by roles: give each built Compose ` +
+            'service a role with build.target, and remove image: ${<TARGET>_IMAGE} from Compose ' +
+            "files; compoza now sets each built service's image",
+        );
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

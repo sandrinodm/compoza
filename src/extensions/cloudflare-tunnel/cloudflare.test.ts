@@ -141,7 +141,6 @@ if (!url.endsWith('/configurations')) {
       name: 'app',
       projectName: 'app-staging',
       host: 'fixture',
-      targets: [],
       composeFiles: ['compose.yaml'],
       execution: 'ssh',
       remote: { stackDir: join(dir, 'stack') },
@@ -289,7 +288,7 @@ describe('Cloudflare Tunnel extension', { timeout: INTEGRATION_TIMEOUT_MILLIS },
       succeeded(run(cloudflareIngress.setup(host).script));
 
       const plan = cloudflareIngress.plan(app, host);
-      const deployment = deploymentScript(app, host, 'one', []);
+      const deployment = deploymentScript(app, host, {}, []);
       assert.notInclude(deployment.script + deployment.input, sentinel);
 
       const records = deployment.input

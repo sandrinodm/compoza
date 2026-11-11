@@ -219,7 +219,6 @@ describe('Caddy templates', () => {
       yield* yaml(join(dir, 'repo', 'deploy.yaml'), {
         name: 'budget',
         host: 'server',
-        targets: [],
         composeFiles: ['compose.yaml'],
         ingress: {
           caddy: {

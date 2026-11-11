@@ -13,7 +13,7 @@ const app: App = {
   config: {
     name: 'demo',
     host: 'atlas',
-    targets: ['web'],
+    roles: { web: { build: { target: 'web' } } },
     composeFiles: ['compose.yaml'],
     ingress: { caddy: { domain: 'demo.example.com', upstream: 'demo-web:80' } },
   },

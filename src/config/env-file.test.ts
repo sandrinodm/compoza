@@ -54,7 +54,7 @@ describe('readSecrets', () => {
             const config = yield* Schema.decodeUnknownEffect(DeployConfig)({
               name: 'demo',
               host: 'atlas',
-              targets: ['web'],
+              roles: { web: { build: { target: 'web' } } },
               composeFiles: ['compose.yaml'],
               secrets: { 'env-file': { path: 'secrets.env' } },
             });
@@ -71,7 +71,7 @@ describe('readSecrets', () => {
       const config = yield* Schema.decodeUnknownEffect(DeployConfig)({
         name: 'demo',
         host: 'atlas',
-        targets: ['web'],
+        roles: { web: { build: { target: 'web' } } },
         composeFiles: ['compose.yaml'],
       });
       assert.deepStrictEqual(yield* readSecrets({ dir: '/nonexistent', config }), {});

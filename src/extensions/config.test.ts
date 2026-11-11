@@ -44,7 +44,6 @@ const app: App = {
   config: {
     name: 'app',
     host: 'server',
-    targets: [],
     composeFiles: ['compose.yaml'],
     execution: 'ssh',
     remote: { stackDir: '/srv/app' },
@@ -230,8 +229,8 @@ describe('named extension configuration', () => {
         extension.checks(selectedApp, singleHost, [], {}),
       );
       assert.deepStrictEqual(
-        deploymentScript(selectedApp, combined, 'one', []),
-        deploymentScript(selectedApp, singleHost, 'one', []),
+        deploymentScript(selectedApp, combined, {}, []),
+        deploymentScript(selectedApp, singleHost, {}, []),
       );
     }
 

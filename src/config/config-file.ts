@@ -25,6 +25,13 @@ interface ReadConfigOptions {
    * details, which can quote the file's contents. `false` when left out.
    */
   readonly privateInput?: boolean;
+
+  /**
+   * Top-level keys that no longer exist, each with the message that replaces the schema's generic
+   * unknown-field error. The message is shown even for private input, because it quotes no
+   * contents.
+   */
+  readonly removedKeys?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -44,7 +51,7 @@ export const readConfigFile = Effect.fn('readConfigFile')(function* <T>(
   file: string,
   schema: Schema.Decoder<T>,
   missingMessage: string,
-  { privateInput = false }: ReadConfigOptions = {},
+  { privateInput = false, removedKeys = {} }: ReadConfigOptions = {},
 ): Effect.fn.Return<T, DeployError, FileSystem.FileSystem> {
   if (!(yield* fileExists(file))) {
     return yield* new DeployError({ message: missingMessage });
@@ -58,6 +65,11 @@ export const readConfigFile = Effect.fn('readConfigFile')(function* <T>(
     try: () => parseConfig(text),
     catch: (cause) => invalidYaml(file, privateInput ? undefined : String(cause)),
   });
+  const removed = removedKeyMessage(value, removedKeys);
+  if (removed !== undefined) {
+    return yield* invalidConfiguration(file, removed);
+  }
+
   return yield* Schema.decodeUnknownEffect(schema, { onExcessProperty: 'error' })(value).pipe(
     Effect.mapError((error) =>
       invalidConfiguration(file, privateInput ? PRIVATE_DECODING_HINT : error.message),
@@ -102,6 +114,22 @@ export function parseConfigDocument(text: string): Document {
   }
 
   return document;
+}
+
+/**
+ * The replacement message for the first removed key that `value` still has at its top level, or
+ * `undefined` when it has none.
+ */
+function removedKeyMessage(
+  value: unknown,
+  removedKeys: Readonly<Record<string, string>>,
+): string | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const key = Object.keys(removedKeys).find((name) => Object.hasOwn(value, name));
+  return key === undefined ? undefined : removedKeys[key];
 }
 
 /**

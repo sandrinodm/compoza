@@ -2,7 +2,7 @@
 
 [README](../README.md) · [Commands](commands.md) · [Configuration](configuration.md) · [Ingress](ingress.md) · [Secrets](secrets.md) · [SSH deployment](ssh-deployment.md) · [Development](development.md)
 
-Use templates when a shared Caddyfile or an app route needs custom directives. This guide covers file locations, placeholders and overrides; see [Ingress](ingress.md#shared-caddy-proxy) for host setup and provisioning.
+Use templates when a shared Caddyfile or an app route needs custom directives. Host setup and provisioning are in [Ingress](ingress.md#shared-caddy-proxy).
 
 - [Select template sources](#select-template-sources)
 - [Shared Caddyfile template](#shared-caddyfile-template)

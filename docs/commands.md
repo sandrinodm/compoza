@@ -61,7 +61,7 @@ A read-only readiness report. It changes nothing on the host and fetches no secr
 | `--secrets` | Also read the selected secret source and report whether it is accessible, with variable names only.     |
 | `--local`   | Skip the remote checks. With `--secrets`, check the `local.secrets` source instead of the deployment's. |
 
-What is checked depends on the app and host: DNS for the app's domain, the ingress proxy and its network, registry login when images are pushed, and, for `execution: ssh`, the host's Docker, Compose, jq, curl and stack folder (see [host prerequisites](ssh-deployment.md#host-prerequisites)). Each line names the check and what was found. The last line counts the failures, and says how many block a deploy when that is not all of them:
+What is checked depends on the app and host: DNS for the app's domain, the ingress proxy and its network, registry login when images are pushed, the roles (each role is a service in the selected Compose files, and its environment and secrets do not clash), and, for `execution: ssh`, the host's Docker, Compose, jq, curl and stack folder (see [host prerequisites](ssh-deployment.md#host-prerequisites)). Each line names the check and what was found. The last line counts the failures, and says how many block a deploy when that is not all of them:
 
 ```text
 ok   docker: docker ready for SSH execution
@@ -75,34 +75,44 @@ See [Checks](configuration.md#checks) and [Verifying secret access](secrets.md#v
 ## deploy
 
 ```sh
-compoza deploy [<folder>] [--dry-run] [--tag <tag>] [--allow-dirty] [--local]
+compoza deploy [<folder>] [--dry-run] [--tag <tag|role=tag>]... [--allow-dirty] [--local]
 ```
 
 Checks readiness, builds and ships the images, runs Compose, routes traffic, and waits for the app to answer. Progress is printed as numbered phases, each with its duration, and the last line names the deployed tag.
 
-| Flag            | Effect                                                                                                                                                   |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--dry-run`     | Run the read-only checks and print every command and host script instead of running it. Nothing is built, shipped, written or started.                   |
-| `--tag <tag>`   | Reuse images built earlier with this tag, skipping Git and builds. The **current local configuration** is used; there is no saved configuration history. |
-| `--allow-dirty` | Build from a checkout with uncommitted changes and tag the images `<commit>-dirty`. Without it, a build requires a clean checkout.                       |
-| `--local`       | Build into this machine's Docker and start the stack here, with the `local` overrides; no remote checks, transport, routes or wait.                      |
+| Flag            | Effect                                                                                                                                                                               |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--dry-run`     | Run the read-only checks and print every command and host script instead of running it. Nothing is built, shipped, written or started.                                               |
+| `--tag <tag>`   | Reuse images built earlier instead of building, skipping Git. Repeatable: `<tag>` for every role with a `build`, `<role>=<tag>` for one role. See [Reusing images](#reusing-images). |
+| `--allow-dirty` | Build from a checkout with uncommitted changes and tag the images `<commit>-dirty`. Without it, a build requires a clean checkout.                                                   |
+| `--local`       | Build into this machine's Docker and start the stack here, with the `local` overrides; no remote checks, transport, routes or wait.                                                  |
 
 The phases run in this order, and a phase with nothing to do is left out:
 
 1. **Checks**: the same readiness checks as `check`. A blocking failure stops the deploy before anything changes.
 2. **Folders** (client execution): creates the app's `directories` and `content` folders on the host.
-3. **Build**: builds each target and ships it through the host's transport (registry, `ssh-load` or `remote-build`). There is no build with `targets: []` or `--tag`.
+3. **Build**: builds each role that has a `build` and ships it through the host's transport (registry, `ssh-load` or `remote-build`). There is no build when no role has a `build`, or with `--tag`.
 4. **Compose**: `docker compose up --wait` on the host. With `execution: ssh` this one phase also stages and validates the flat stack folder, creates the folders, writes the route and probes `health.url` (or the app's public URL) from the host.
 5. **Route** (client execution, with ingress): writes the app's Caddy site or Cloudflare route.
 6. **Wait** (client execution, with ingress): waits for the app's public URL to answer with a status below 500.
 
-Images are tagged with the commit's first twelve characters, or `third-party` when the app builds nothing. Reuse an earlier image with `--tag`:
+Each role's image is tagged with the first twelve characters of its repository's commit, so roles from one repository share a tag. The deploy is tagged `third-party` when no role has a `build`.
 
 ```sh
 compoza deploy infra --dry-run
 compoza deploy infra
-compoza deploy infra --tag 1a2b3c4d5e6f
 ```
+
+### Reusing images
+
+`--tag <tag>` sets the tag of every role with a `build`, and `--tag <role>=<tag>` overrides it for one role:
+
+```sh
+compoza deploy infra --tag 1a2b3c4d5e6f
+compoza deploy infra --tag 1a2b3c4d5e6f --tag worker=9f8e7d6c5b4a
+```
+
+Every role with a `build` must end up with a tag. Naming an unknown role, a role without `build` or the same role twice fails, and so does a second bare tag. A tag follows Docker's rules: letters, digits, underscores, dots and dashes, at most 128 characters, not starting with a dot or dash. That rejects `--tag web:abc`, a likely typo for `--tag web=abc`. The **current local configuration** is used; there is no saved configuration history.
 
 A failed deploy can leave new containers or routes running: there is no automatic rollback. Inspect `status` and `logs`, then deploy a known tag. See [Images and tags](configuration.md#images-and-tags), [Local runs](configuration.md#local-runs) and, for SSH execution, the [deploy transaction](ssh-deployment.md#deploy-transaction).
 

@@ -49,9 +49,13 @@ compoza logs infra --tail 50
 - Explain the target, image transport, and proposed changes from the preview. An SSH
   dry run does not stage files, build images, lock the stack, or validate the full host
   candidate. Do not present it as proof that deployment will succeed.
-- Built targets normally require a clean committed checkout in the resolved source directory. Do not commit changes or
-  add `--allow-dirty` without authorization. `targets: []` and `--tag` need no source checkout or Dockerfile.
-  Status, logs and lifecycle operations also work without that source directory.
+- Each role with `build` normally requires a clean committed checkout of its source
+  repository, and is tagged with that repository's commit. Do not commit changes or add
+  `--allow-dirty` without authorization. Stacks whose roles build nothing, and `--tag`
+  deploys, need no source checkout or Dockerfile. Status, logs and lifecycle operations
+  also work without that source directory.
+- A config that still has `targets` fails to load. Propose the migration to `roles`
+  (docs/configuration.md, "Migrating from 0.6.0") instead of editing it unasked.
 - Once deployment is authorized, continue through verification; do not request the
   same permission again. Report phase failures rather than retrying blindly.
 - Success requires the final `Deployed` message and expected service state. Only
@@ -94,15 +98,16 @@ Never overwrite operator data to bypass an ownership error.
 
 Upload and validation failure preserve deployed files. Replacement is in place, and
 later failure can leave changed files, containers or routes. Recover using
-`deploy --tag <known-image-tag>` with current local configuration and the current
-credential source. There is no saved release configuration or rollback command.
+`deploy --tag <known-image-tag>`, adding `--tag <role>=<tag>` where roles differ, with
+the current local configuration and credential source. There is no saved release configuration or rollback command.
 Do not promise automatic recovery or reversal of database changes. Lifecycle uses the
 deployed files without fetching a provider. Do not remove a lock without establishing
 that its owner has exited.
 
 ## Handoff
 
-Report the destination, image tag, verification result, and URL when configured.
+Report the destination, image tag (per role when they differ), verification result,
+and URL when configured.
 Identify any remaining action, such as publishing a content section. Do not claim
 success when a phase failed or cleanup is still required.
 

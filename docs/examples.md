@@ -64,7 +64,7 @@ One host file can describe both ingress capabilities on the same physical machin
 ```text
 config/
 ├── hosts.yaml
-├── macmini-server/
+├── linden/
 │   └── host.yaml
 └── devbox/
     └── host.yaml
@@ -73,16 +73,16 @@ config/
 Complete `config/hosts.yaml`:
 
 ```yaml
-macmini-server:
-  $ref: ./macmini-server/host.yaml
+linden:
+  $ref: ./linden/host.yaml
 devbox:
   $ref: ./devbox/host.yaml
 ```
 
-Complete `config/macmini-server/host.yaml`:
+Complete `config/linden/host.yaml`:
 
 ```yaml
-ssh: deploy@macmini.example.com
+ssh: deploy@linden.example.com
 platform: linux/arm64
 transport:
   mode: ssh-load
@@ -118,8 +118,8 @@ These paths and SSH destinations are illustrative; use host paths appropriate to
 Preview each provider separately:
 
 ```sh
-compoza --hosts config/hosts.yaml setup-proxy macmini-server --ingress caddy --dry-run
-compoza --hosts config/hosts.yaml setup-proxy macmini-server --ingress cloudflare-tunnel --dry-run
+compoza --hosts config/hosts.yaml setup-proxy linden --ingress caddy --dry-run
+compoza --hosts config/hosts.yaml setup-proxy linden --ingress cloudflare-tunnel --dry-run
 ```
 
 An ambiguous setup without `--ingress` fails without SSH or credential-provider access. Setup never implicitly recreates both shared services. Single-provider hosts can omit the flag.
@@ -127,7 +127,7 @@ An ambiguous setup without `--ingress` fails without SSH or credential-provider 
 For an app using Caddy, a **partial deploy mapping** selects:
 
 ```yaml
-host: macmini-server
+host: linden
 ingress:
   caddy:
     domain: direct.example.com
@@ -137,7 +137,7 @@ ingress:
 Another app on that same host can select Cloudflare instead:
 
 ```yaml
-host: macmini-server
+host: linden
 ingress:
   cloudflare-tunnel:
     domain: tunnel.example.com
@@ -155,7 +155,6 @@ Complete `static-site/deploy.yaml`:
 ```yaml
 name: static-site
 host: cedar
-targets: []
 execution: ssh
 composeFiles: [compose.yaml]
 assets: [nginx.conf]
@@ -218,7 +217,7 @@ services:
 
 `assets` are explicit, deploy-relative regular files; relative bind mounts must be declared and read-only. Do not put dotenv files or other credentials in assets. Persistent content uses an absolute host path and is not uploaded with the stack. The host overlay remains live and operator-owned; omit `overlayFile` if you do not need one.
 
-`targets: []` needs no Git checkout, Dockerfile or build context. Compose still pulls missing third-party images. `waitTimeoutSeconds` controls Compose readiness; `health` adds a separate HTTP probe executed on the host. Any HTTP status below 500 counts as reachable, including a 404 while the content folder is empty; this is not a content assertion.
+Without a role that has `build`, the stack needs no Git checkout, Dockerfile or build context. Compose still pulls missing third-party images. `waitTimeoutSeconds` controls Compose readiness; `health` adds a separate HTTP probe executed on the host. Any HTTP status below 500 counts as reachable, including a 404 while the content folder is empty; this is not a content assertion.
 
 After creating a local `public/index.html`, the intended flow is:
 
@@ -257,7 +256,13 @@ host: atlas
 workingDirectory: ../../foo
 dockerfile: docker/Dockerfile
 context: .
-targets: [web, worker]
+roles:
+  web:
+    build:
+      target: web
+  worker:
+    build:
+      target: worker
 execution: ssh
 composeFiles: [compose.yaml]
 profiles: [jobs]
@@ -305,7 +310,6 @@ Complete `Repositories/deployments/foo/compose.yaml`:
 ```yaml
 services:
   web:
-    image: ${WEB_IMAGE}
     environment:
       APP_MODE: ${APP_MODE}
       APP_TOKEN: ${APP_TOKEN:-}
@@ -313,7 +317,6 @@ services:
       edge:
         aliases: ['${PUBLIC_ALIAS}']
   worker:
-    image: ${WORKER_IMAGE}
     profiles: [jobs]
     environment:
       APP_MODE: ${APP_MODE}
@@ -325,7 +328,7 @@ networks:
 
 The Caddy setup below creates the external `caddy-edge` network on `atlas`. The staging override below instead gives the private staging stack its own Compose-managed network. The unique alias makes the production route resolve `foo-production-web:80`, even when other apps also have a service named `web`.
 
-Complete `Repositories/foo/docker/Dockerfile`, with both configured build targets:
+Complete `Repositories/foo/docker/Dockerfile`, with the two build targets named by the roles:
 
 ```dockerfile
 FROM nginx:alpine AS web
@@ -335,7 +338,7 @@ FROM nginx:alpine AS worker
 CMD ["sh", "-c", "while :; do sleep 60; done"]
 ```
 
-Add a `public/index.html` in the source repository and commit it with the Dockerfile. This minimal image pair demonstrates target wiring; replace the worker with the application's real job process. `APP_TOKEN` demonstrates explicit container environment mapping; these example images do not consume it. Keep `production.env` private and out of version control; its values are not shown here. Exclude any secrets inside a build context with `.dockerignore`.
+Add a `public/index.html` in the source repository and commit it with the Dockerfile. This minimal image pair demonstrates role wiring; replace the worker with the application's real job process. `APP_TOKEN` demonstrates explicit container environment mapping; these example images do not consume it. Keep `production.env` private and out of version control; its values are not shown here. Exclude any secrets inside a build context with `.dockerignore`. The Compose files declare no `image:` for `web` and `worker`: compoza sets `foo-web:<tag>` and `foo-worker:<tag>` from the roles. To give each image its own Dockerfile, set `build.dockerfile` per role; see [Roles](configuration.md#roles).
 
 `workingDirectory` resolves relative to `deploy.yaml`, accepts absolute and `~/` paths, and defaults to the deploy folder. Git checks and image tags use the repository containing that directory. Relative `dockerfile` and `context` paths resolve there; omitting `context` uses the source Git root. Build commands run in `workingDirectory`.
 
@@ -348,12 +351,10 @@ The previous deploy file defines both variations. Complete `compose.local.yaml`,
 ```yaml
 services:
   web:
-    image: ${WEB_IMAGE}
     ports: ['127.0.0.1:8081:80']
     environment:
       APP_MODE: ${APP_MODE}
   worker:
-    image: ${WORKER_IMAGE}
     profiles: [jobs]
 ```
 
@@ -376,7 +377,7 @@ compoza deploy Repositories/deployments/foo --destination staging --dry-run
 
 `--local` builds and runs on the CLI machine, without remote checks, transport or ingress, even when `execution` is `ssh`. It replaces `composeFiles` and the secret source with the local choices and merges local `environment`. A declared production source requires explicit `local.secrets`; `none` prevents production credential fallback.
 
-A destination replaces the selected arrays and objects rather than merging their contents. For example, staging's `remote` includes its own `stackDir`, and `profiles: []` disables the jobs profile. `environment` alone merges by key. `secrets` replaces the entire source, and `ingress.none` clears the public route selection. Destinations can also replace `execution`, `health`, `directories` and `content`. `name`, `workingDirectory`, build settings, targets and assets remain shared.
+A destination replaces the selected arrays and objects rather than merging their contents. For example, staging's `remote` includes its own `stackDir`, and `profiles: []` disables the jobs profile. `environment` alone merges by key. `secrets` replaces the entire source, and `ingress.none` clears the public route selection. Destinations can also replace `execution`, `health`, `directories` and `content`. `name`, `workingDirectory`, the roles' `build` settings and assets remain shared. A destination or `local` can set `roles.<role>.environment` and `secrets`, merging environment per key and replacing the secret list.
 
 `projectName` changes Compose and route identity; it does not change the `foo-web` and `foo-worker` image prefixes. Keep `--destination staging` on subsequent check, status, logs, lifecycle and publish commands.
 
@@ -384,7 +385,7 @@ A destination replaces the selected arrays and objects rather than merging their
 
 The inventory deliberately shows all three transports:
 
-| Host       | Transport      | Result for built targets                                                       |
+| Host       | Transport      | Result for built roles                                                         |
 | ---------- | -------------- | ------------------------------------------------------------------------------ |
 | `atlas`    | `registry`     | Build locally and push to `registry.example.com`; the host pulls images.       |
 | `cedar`    | `ssh-load`     | Build locally, then stream compressed images into the host daemon.             |
@@ -398,7 +399,13 @@ For a small **client execution** variation, save this complete deploy file in th
 name: foo-client
 host: cedar
 dockerfile: docker/Dockerfile
-targets: [web, worker]
+roles:
+  web:
+    build:
+      target: web
+  worker:
+    build:
+      target: worker
 execution: client
 composeFiles: [compose.local.yaml]
 environment:
@@ -571,7 +578,6 @@ Complete `tunnel-site/deploy.yaml`:
 ```yaml
 name: tunnel-site
 host: relay
-targets: []
 execution: ssh
 composeFiles: [compose.yaml]
 remote:
@@ -691,4 +697,4 @@ compoza deploy Repositories/deployments/foo --destination staging --tag abc123de
 compoza deploy Repositories/deployments/foo --destination staging --tag abc123def456
 ```
 
-`--tag` skips Git and builds; it does not restore earlier configuration, secrets or database state. A missing `workingDirectory` is allowed for `--tag`, `targets: []`, status, logs and lifecycle operations. `stop`, `start` and `delete` operate on the deployed stack; delete retains host files and persistent bind data, and removes named volumes only when `--volumes` is explicitly selected.
+`--tag` skips Git and builds; it does not restore earlier configuration, secrets or database state. A missing `workingDirectory` is allowed for `--tag`, stacks without a `build`, status, logs and lifecycle operations. `stop`, `start` and `delete` operate on the deployed stack; delete retains host files and persistent bind data, and removes named volumes only when `--volumes` is explicitly selected.

@@ -9,6 +9,8 @@ compoza reads three kinds of files: global, linked and repository-local `hosts.y
   - [Linked hosts files](#linked-hosts-files)
 - [Settings](#settings)
 - [Apps](#apps)
+  - [Roles](#roles)
+  - [Images and tags](#images-and-tags)
 - [Destinations](#destinations)
 - [Execution and transport](#execution-and-transport)
 - [Client execution](#client-execution)
@@ -150,15 +152,19 @@ Prefer the commands to editing the file by hand: they validate the result before
 
 ## Apps
 
-An app opts in with a folder holding `deploy.yaml` and its Compose files. Its source and Dockerfile can live there or in a separate `workingDirectory`. A typical deployment folder is `infra/` or `apps/<app>/deploy/`. This example uses the default client execution with two built targets and Caddy routing:
+An app opts in with a folder holding `deploy.yaml` and its Compose files. Its source and Dockerfile can live there or in a separate `workingDirectory`. A typical deployment folder is `infra/` or `apps/<app>/deploy/`. This example uses the default client execution with two built services and Caddy routing:
 
 ```yaml
 name: sample-app
 host: atlas
 dockerfile: Dockerfile
-targets:
-  - worker
-  - web
+roles:
+  web:
+    build:
+      target: web
+  worker:
+    build:
+      target: worker
 composeFiles:
   - compose.yaml
   - compose.production.yaml
@@ -182,26 +188,26 @@ local:
     none: {}
 ```
 
-| Field                   | Description                                                                                                                           |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                  | Compose project name and image prefix.                                                                                                |
-| `host`                  | Host key in `hosts.yaml`.                                                                                                             |
-| `targets`               | Images to build from the Dockerfile, one per target. Use `[]` for third-party-only stacks.                                            |
-| `workingDirectory`      | Source directory for Git and builds; defaults to the deploy folder. Accepts absolute, `~/`, or config-relative paths.                 |
-| `dockerfile`, `context` | Relative to `workingDirectory`. Default to `Dockerfile` there and the source Git root.                                                |
-| `composeFiles`          | Compose files to apply, in order; relative to the YAML folder or explicit absolute source paths.                                      |
-| `profiles`              | Compose profiles to enable.                                                                                                           |
-| `execution`             | `client` (default) or `ssh`; see [Execution and transport](#execution-and-transport).                                                 |
-| `ingress`               | `caddy`, `cloudflare-tunnel` or `none` (default); see [Ingress](#ingress).                                                            |
-| `health`                | SSH execution: optional `url` and `timeoutSeconds`, probed on the host; see [SSH deployment](ssh-deployment.md#health-and-readiness). |
-| `directories`           | Absolute host folders created before Compose runs.                                                                                    |
-| `content`               | Absolute host folders for content sections, created before Compose runs; see [Publishing content](#publishing-content).               |
-| `environment`           | Non-secret variables passed to Compose.                                                                                               |
-| `secrets`               | Exactly one secret source: `env-file`, `1password` or `none`; see [Secrets](secrets.md).                                              |
-| `local`                 | Overrides for `--local` runs; see [Local runs](#local-runs).                                                                          |
-| `assets`                | SSH execution only: declared read-only files uploaded to the stack.                                                                   |
-| `remote`                | SSH execution only: `stackDir`, `overlayFile`, `waitTimeoutSeconds`.                                                                  |
-| `destinations`          | Named alternative deployments of the same app; see [Destinations](#destinations).                                                     |
+| Field                   | Description                                                                                                                                   |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                  | Compose project name and image prefix.                                                                                                        |
+| `host`                  | Host key in `hosts.yaml`.                                                                                                                     |
+| `roles`                 | Per Compose service: what to build, and the container environment and secrets it gets; see [Roles](#roles). Omit for third-party-only stacks. |
+| `workingDirectory`      | Default source directory for Git and builds; defaults to the deploy folder. Accepts absolute, `~/`, or config-relative paths.                 |
+| `dockerfile`, `context` | Defaults for every role with `build`. Relative to `workingDirectory`; default to `Dockerfile` there and the source Git root.                  |
+| `composeFiles`          | Compose files to apply, in order; relative to the YAML folder or explicit absolute source paths.                                              |
+| `profiles`              | Compose profiles to enable.                                                                                                                   |
+| `execution`             | `client` (default) or `ssh`; see [Execution and transport](#execution-and-transport).                                                         |
+| `ingress`               | `caddy`, `cloudflare-tunnel` or `none` (default); see [Ingress](#ingress).                                                                    |
+| `health`                | SSH execution: optional `url` and `timeoutSeconds`, probed on the host; see [SSH deployment](ssh-deployment.md#health-and-readiness).         |
+| `directories`           | Absolute host folders created before Compose runs.                                                                                            |
+| `content`               | Absolute host folders for content sections, created before Compose runs; see [Publishing content](#publishing-content).                       |
+| `environment`           | Non-secret variables passed to Compose for interpolation.                                                                                     |
+| `secrets`               | Exactly one secret source: `env-file`, `1password` or `none`; see [Secrets](secrets.md). Provides Compose interpolation and role secrets.     |
+| `local`                 | Overrides for `--local` runs; see [Local runs](#local-runs).                                                                                  |
+| `assets`                | SSH execution only: declared read-only files uploaded to the stack.                                                                           |
+| `remote`                | SSH execution only: `stackDir`, `overlayFile`, `waitTimeoutSeconds`.                                                                          |
+| `destinations`          | Named alternative deployments of the same app; see [Destinations](#destinations).                                                             |
 
 SSH-specific fields are described in [SSH deployment](ssh-deployment.md).
 
@@ -224,18 +230,21 @@ Repositories/
 name: foo
 host: atlas
 workingDirectory: ../../foo
-targets: [web]
+roles:
+  web:
+    build:
+      target: web
 composeFiles: [compose.yaml]
 secrets:
   env-file:
     path: ./app.env
 ```
 
-Git checks and image tags use the repository containing `workingDirectory`. Build commands run there; relative `dockerfile` and `context` paths resolve there, and the default context remains that repository's root. Absolute build paths remain absolute. `workingDirectory` itself resolves relative to the selected YAML file, including an explicitly named file such as `production.yaml`; it also accepts absolute paths and `~/`.
+Git checks and image tags use the repository containing a role's working directory (here the top-level `workingDirectory`). Build commands run there; relative `dockerfile` and `context` paths resolve there, and the default context remains that repository's root. Absolute build paths remain absolute. `workingDirectory` itself resolves relative to the selected YAML file, including an explicitly named file such as `production.yaml`; it also accepts absolute paths and `~/`.
 
 Relative Compose files and the project directory, assets, dotenv paths and app templates use the deployment YAML folder. Host paths still refer to the remote host. Host inventory discovery continues to use the CLI's current working directory, independently of both folders.
 
-All destinations share `workingDirectory`; it cannot be overridden per destination. A real build requires that directory to exist. `--tag`, `targets: []`, status, logs and lifecycle commands do not require the source checkout.
+All destinations share `workingDirectory` and the roles' `build` settings; they cannot be overridden per destination. A real build requires the working directories to exist. `--tag`, stacks without a `build`, status, logs and lifecycle commands do not require the source checkout.
 
 To use the app repository's Compose files directly, select their absolute workstation paths:
 
@@ -251,12 +260,164 @@ composeFiles:
 
 SSH execution reads those files for each deployment and stages them under their basenames, then merges them in the listed order into the host's flat `compose.yaml`. Selected files must have distinct upload paths: two external files named `compose.yaml`, or an external filename colliding with a relative Compose file or asset, are rejected. Source symlinks, symlinked ancestors and dot traversal are rejected. Assets and any relative file references inside Compose still belong beside `deploy.yaml`; absolute Compose paths do not change that base. Keep persistent data and secret file references as absolute **host** paths. Lifecycle operations use the already deployed stack and do not need the source files.
 
+### Roles
+
+A role configures one Compose service: the image compoza builds for it, and the environment variables and secrets its container receives. The top-level `environment` and `secrets` are Compose interpolation inputs instead: one pool for the whole project, which each service maps by hand (`FOO: ${FOO}`).
+
+```yaml
+name: sample-app
+host: atlas
+workingDirectory: /Users/you/Repositories/sample-app
+dockerfile: infra/Dockerfile
+secrets:
+  1password:
+    environmentId: fictional-atlas-environment-id
+environment:
+  SAMPLE_APP_DATA_DIR: /srv/sample-app/data
+roles:
+  web:
+    build:
+      target: server
+    secrets:
+      - SAMPLE_APP_API_TOKEN
+  worker:
+    build:
+      target: worker
+      dockerfile: infra/worker.Dockerfile
+    environment:
+      MY_API_BASE_URL: https://api.example.com/v1
+  postgres:
+    secrets:
+      - POSTGRES_PASSWORD
+```
+
+Role names are Compose service names, and a role name becomes a component of an image name, so it must match Docker's rule without dots: lowercase letters and digits joined by single or double underscores or runs of dashes (`^[a-z0-9]+(?:(?:_|__|-+)[a-z0-9]+)*$`). `web_` and `a_-b` are rejected. Every role must be a service in at least one selected Compose file.
+
+| Field         | Meaning                                                                                                                                                                       |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build`       | Optional. Present means compoza builds an image for the service. A role without `build` only sets environment and secrets, like the third-party `postgres` above.             |
+| `environment` | Optional map of container environment variables for this service only. Values are literal: nothing is interpolated.                                                           |
+| `secrets`     | Optional list of variable names read from the stack's secret source. Each is delivered to this service under the same name. Secret values never enter the generated override. |
+
+compoza sets each built service's `image:` itself, so the Compose files leave it out. A role's `environment` and `secrets` reach the container without a `${NAME}` mapping in the Compose file; see [How roles reach services](#how-roles-reach-services).
+
+#### Build per role
+
+`build` accepts these fields, all optional:
+
+| Field              | Meaning                                                                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `target`           | Dockerfile stage. Without it no `--target` flag is passed and the final stage is built.                                              |
+| `workingDirectory` | Source directory of the role. Resolved like the top-level field: relative to the deploy YAML file, `~/` and absolute paths accepted. |
+| `dockerfile`       | Relative to the role's working directory; absolute paths are kept. Default `Dockerfile`.                                             |
+| `context`          | Relative to the role's working directory; absolute paths are kept. Default the Git root of the role's working directory.             |
+
+A field that is unset falls back to the top-level field of the same name, then to the default. Build commands for a role run in its working directory.
+
+Two Dockerfiles in one repository, each role building from its own file:
+
+```yaml
+workingDirectory: ../../sample-app
+context: .
+roles:
+  web:
+    build:
+      dockerfile: docker/web.Dockerfile
+  worker:
+    build:
+      dockerfile: docker/worker.Dockerfile
+```
+
+Both roles build from one repository, so it is checked once and both images get the same tag. They also share the context, and BuildKit applies the context's `.dockerignore` to every build. To give one image its own ignore rules, put a file named after its Dockerfile beside it, such as `docker/web.Dockerfile.dockerignore`. BuildKit uses it instead of the context's `.dockerignore` for that build.
+
+A role built from another repository:
+
+```yaml
+workingDirectory: ../../sample-app
+roles:
+  web:
+    build:
+      target: server
+  jobs:
+    build:
+      workingDirectory: ../../sample-jobs
+```
+
+`jobs` builds from the `Dockerfile` at the root of `sample-jobs` and is tagged with that repository's commit, so the two roles usually have different tags. Each repository is checked separately: both need a commit and a clean checkout.
+
+#### Environment and secrets
+
+Names in a role's `environment` and `secrets` must be valid environment identifiers, and `environment` values cannot contain carriage returns, line feeds or NUL. Role secrets also join the interpolation pool, so they follow the same naming rules as any secret.
+
+A role fails validation, before anything is built, when:
+
+- a name is in both its `environment` and its `secrets`;
+- a secret name is reserved, or is also a key of the top-level `environment` (or `local.environment` for `--local`);
+- a name is also set in the service's own `environment:` in a selected Compose file, in map or list form, because Compose's precedence would otherwise pick a winner silently (see below);
+- it takes secrets but the run has no secret source, or `none`;
+- the secret source lacks one of its secrets. This is known only once values are read, so it is checked by a real deploy and `check --secrets`.
+
+The other rules need no secret values, so `check` and `--dry-run` report them too.
+
+The duplicate check follows the selected Compose files the way Compose merges them:
+
+- A later file's `environment: !reset` clears the earlier entries and `!override` replaces them. A per-key `!reset` removes one key. A key removed this way no longer clashes.
+- A service that uses `extends`, in the same file or another one, also carries the base service's keys.
+- Services from `include:` files count, for client execution and `--local` runs. SSH execution rejects `include:`.
+
+Role secrets work with `env-file` and `1password`; see [Secrets](secrets.md#role-secrets).
+
+#### What stays stack-wide
+
+`workingDirectory`, `dockerfile` and `context` are defaults that roles inherit. The top-level `environment` and `secrets` stay stack-wide, because Compose interpolates the whole project from one pool: `${SAMPLE_APP_DATA_DIR}` in a volume path, a published port or a third-party image tag cannot belong to one service. Roles set container environment, which can. A value needed both for interpolation and inside a container is declared in both places.
+
+#### How roles reach services
+
+With roles, compoza generates one extra Compose file, `compoza.roles.yaml`, and applies it as the last file. For each role it contains the `image` of a building role and the role's `environment`: literal values (with `$` written as `$$`) and secrets as `${NAME}` references. It never contains secret values; those stay in the interpolation pool (the stack `.env` for SSH execution, the process environment for client execution) under their own names.
+
+- Client execution and `--local`: written as a `0600` file in a private temporary folder, passed as the last `--file` of `compose up` and removed afterwards.
+- SSH execution: uploaded with the bundle and merged into the flat `compose.yaml`. It is not installed as a separate file on the host. A Compose file or asset that uses the upload name `compoza.roles.yaml` is rejected.
+
+`--dry-run` prints the file in every execution mode.
+
+Without `roles` there is no extra file and nothing changes.
+
+#### Migrating from 0.6.0
+
+`targets` was removed in favor of `roles`. A configuration that still has it fails with a dedicated message that names the replacement.
+
+1. Give each target a role named after the Compose service that runs it, with the target as `build.target`. Delete `targets: []` outright.
+
+   ```yaml
+   # 0.6.0: the server stage ran as the web service
+   targets: [server, worker]
+
+   # now
+   roles:
+     web:
+       build:
+         target: server
+     worker:
+       build:
+         target: worker
+   ```
+
+2. Remove `image: ${SERVER_IMAGE}` and the other `<TARGET>_IMAGE` lines from Compose files. compoza sets each built service's image, and those variables no longer exist. A fallback such as `${WEB_IMAGE:-web:local}` can stay: compoza's image overrides it.
+3. Images are now named `<name>-<role>:<tag>`. Where the role name differs from the old target name (`server` above), the image name changes and earlier tags cannot be reused with `--tag`. Build that role once from Git.
+4. On SSH hosts the next deploy rewrites `.env` without `*_IMAGE` variables and `.compoza.json` with `tags` per role instead of one `tag`.
+
 ### Images and tags
 
-- Each target is named `<name>-<target>:<tag>`, prefixed with the registry for registry transport, and handed to Compose as `<TARGET>_IMAGE`. Compose files read `${WEB_IMAGE}`, `${WORKER_IMAGE}` and so on.
-- A build requires a clean checkout of the source repository with at least one commit and tags images with the commit's first twelve characters. `--allow-dirty` permits a dirty checkout and tags `<commit>-dirty`.
-- `--tag <tag>` reuses images built earlier and skips Git and builds, so it works from a deploy folder outside any checkout. It always uses the **current local configuration**; there is no saved Compose configuration history.
-- With `targets: []` there is no Git, Dockerfile or build-context requirement, and no build or application-registry authentication check. Compose still pulls missing third-party images.
+- The image of a role with `build` is `<name>-<role>:<tag>`, prefixed with the registry for registry transport. compoza sets it as the service's `image`.
+- A build requires a clean checkout with at least one commit in each role's repository. Each repository is checked once, and its roles are tagged with the first twelve characters of its commit. `--allow-dirty` permits a dirty checkout and tags `<commit>-dirty`.
+- `--tag` reuses images built earlier and skips Git and builds, so it works from a deploy folder outside any checkout. `--tag <tag>` applies to every role with `build`, and `--tag <role>=<tag>` overrides it for one role; repeat the flag as needed. Every role with `build` must end up with a tag. `--tag` always uses the **current local configuration**; there is no saved Compose configuration history.
+- Progress messages show the single tag when all roles share it, and `web=abc worker=def` otherwise.
+- Without any role that has `build` there is no Git, Dockerfile or build-context requirement, and no build or application-registry authentication check. Compose still pulls missing third-party images, and the deploy is tagged `third-party`.
+
+```sh
+compoza deploy infra --tag 1a2b3c4d5e6f
+compoza deploy infra --tag 1a2b3c4d5e6f --tag worker=9f8e7d6c5b4a
+```
 
 ### Ingress
 
@@ -270,7 +431,7 @@ Compose resolves relative bind mounts on the host, so host paths must be absolut
 
 ### Local runs
 
-`local` overrides `composeFiles`, `environment` and the complete secret source for `--local` runs. When the app declares a production secret source, an explicit `local.secrets` is required, including `none: {}` when local Compose needs no secrets.
+`local` overrides `composeFiles`, `environment` and the complete secret source for `--local` runs. `local.roles` sets `environment` and `secrets` per role and merges over the app's roles the way [destinations](#destinations) do; `build` cannot be changed. When the app declares a production secret source, an explicit `local.secrets` is required, including `none: {}` when local Compose needs no secrets.
 
 `--local` builds into this machine's Docker and starts the stack here, without remote readiness checks, transport or routes. It keeps this client build-and-run behavior regardless of `execution`.
 
@@ -281,12 +442,14 @@ One `deploy.yaml` can deploy to several hosts or projects. Select one with `--de
 ```yaml
 name: sample-app
 host: atlas
-targets:
-  - web
 composeFiles:
   - compose.yaml
 environment:
   PUBLIC_TITLE: Sample app
+roles:
+  web:
+    build:
+      target: web
 destinations:
   atlas: {}
   cedar:
@@ -301,6 +464,7 @@ destinations:
 
 - When supplied, a destination **replaces** `host`, `projectName`, `composeFiles`, `execution`, the entire `remote` object, `profiles`, `ingress`, `health`, `directories`, `content` and the complete `secrets` source.
 - A destination's `environment` **merges** over the app defaults.
+- A destination's `roles` take `environment` and `secrets` per role, without `build`: destinations share the source. For each role, `environment` merges key by key over the app role's, and `secrets` replaces the app role's list. A role named only in the destination is allowed and sets environment only.
 - `name` remains the image prefix; `projectName` selects the Compose project and the Caddy site-file key.
 - Unknown destination names fail.
 
@@ -323,10 +487,10 @@ Execution and image transport are independent:
 
 Client execution is the default mode. A `deploy`:
 
-1. Resolves the image tag from Git, or uses `--tag`.
+1. Resolves the image tags from Git, or uses `--tag`.
 2. Runs the readiness checks and stops if DNS, the proxy, the network or the registry login is not ready.
 3. Creates the host folders.
-4. Builds each target for the host's platform and ships it by the host's transport.
+4. Builds each role with a `build` for the host's platform and ships it by the host's transport.
 5. Runs `docker --host ssh://<host> compose up --detach --remove-orphans --no-build`, with `--pull always` for a `registry` host and `--pull missing` for `ssh-load` hosts and `--local`. For `ssh-load` and local runs, already-loaded images are reused while missing third-party images such as `postgres` are fetched. The explicit `--host` overrides any active Docker context, so a `DOCKER_CONTEXT` on this machine never redirects a deploy.
 6. For `caddy`, atomically replaces the site file under a shared proxy lock and uses Caddy reload to validate and activate it; a rejected reload restores the file and attempts a recovery reload. Long-lived connections depend on the configured drain and streaming policy. Then waits up to three minutes for the URL to answer.
 
@@ -343,6 +507,7 @@ compoza check infra --secrets --local --json
 ```
 
 - `check` is read-only and fetches no secrets.
+- A blocking `roles` check validates the roles against the selected Compose files: unknown services, clashing environment keys, reserved or colliding secret names and secrets without a secret source. `check --local` checks `local.roles` and `local.composeFiles`. It runs without fetching secrets.
 - `--secrets` explicitly resolves the selected secret source and reports status and variable names only.
 - `--secrets --local` checks only the local source and skips remote readiness. `--local` alone neither resolves secrets nor checks local Docker.
 - A valid hosts configuration is still needed to resolve the app.

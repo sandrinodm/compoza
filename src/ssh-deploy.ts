@@ -4,16 +4,18 @@ import type { App } from './config/deploy.ts';
 import type { HostConfig } from './config/hosts.ts';
 import type { DeployOptions } from './deploy.ts';
 
-import { readBundle } from './bundle.ts';
+import { readBundle, ROLES_OVERRIDE_FILE } from './bundle.ts';
 import { blocking, formatChecks, runChecks } from './checks.ts';
 import { command, shellQuote } from './command.ts';
 import { readSecrets, selectSecretSource } from './config/secrets.ts';
 import { DeployError, tryPlan } from './errors.ts';
 import { planDeployment } from './plan.ts';
 import { DRY_RUN_COMPLETE, phase, runPhases } from './progress.ts';
+import { roleOverride, type RoleSources } from './roles.ts';
 import { Remote } from './services/Remote.ts';
 import { DryRun, Shell } from './services/Shell.ts';
 import { deployedScript, deploymentScript } from './ssh-plan.ts';
+import { tagLabel, tagsOf } from './tags.ts';
 
 /**
  * What the host stack transaction does after staging the bundle, shown in its progress label.
@@ -47,7 +49,7 @@ export const deploySsh = Effect.fn('deploySsh')(function* (
   app: App,
   host: HostConfig,
   options: DeployOptions,
-  source: { readonly tag: string; readonly context: string },
+  sources: RoleSources,
 ): Effect.fn.Return<void, DeployError, FileSystem.FileSystem | Path.Path | Remote | Shell> {
   const shell = yield* Shell;
   const remote = yield* Remote;
@@ -59,7 +61,7 @@ export const deploySsh = Effect.fn('deploySsh')(function* (
   const managed = sourceConfig !== undefined && sourceConfig.provider !== 'none';
 
   const deployment = yield* planned(() =>
-    deploymentScript(app, host, source.tag, bundle, managed ? values : undefined),
+    deploymentScript(app, host, tagsOf(sources), bundle, managed ? values : undefined),
   );
 
   // The plan's last step is the local Compose command; over SSH the host runs Compose itself.
@@ -67,10 +69,9 @@ export const deploySsh = Effect.fn('deploySsh')(function* (
     planDeployment({
       app,
       host,
-      tag: source.tag,
-      context: source.context,
+      sources,
       local: false,
-      reuseImages: options.tag._tag === 'Some',
+      reuseImages: options.tags.length > 0,
       secrets: {},
     }),
   );
@@ -93,7 +94,7 @@ export const deploySsh = Effect.fn('deploySsh')(function* (
 
   const build = phase(
     'build',
-    `Building and shipping ${app.config.targets.length} images (${host.transport.mode})`,
+    `Building and shipping ${Object.keys(sources).length} images (${host.transport.mode})`,
     Effect.forEach(builds, (step) => shell.run(step), { discard: true }),
   );
 
@@ -107,7 +108,13 @@ export const deploySsh = Effect.fn('deploySsh')(function* (
       Effect.flatMap((output) => (output === '' ? Effect.void : Console.log(output.trimEnd()))),
     );
 
-  yield* Console.log(`Deploying ${app.config.name} ${source.tag} to ${app.config.host} over SSH`);
+  const tag = tagLabel(sources);
+  yield* Console.log(`Deploying ${app.config.name} ${tag} to ${app.config.host} over SSH`);
+  const override = yield* planned(() => roleOverride({ app, host, tags: tagsOf(sources) }));
+  if (override !== undefined && (yield* DryRun)) {
+    yield* Console.log(`Roles override ${ROLES_OVERRIDE_FILE}:\n${override.trimEnd()}`);
+  }
+
   yield* runPhases([
     readiness,
     ...(builds.length === 0 ? [] : [build]),
@@ -117,7 +124,7 @@ export const deploySsh = Effect.fn('deploySsh')(function* (
   yield* Console.log(
     (yield* DryRun)
       ? SSH_DRY_RUN_SUMMARY
-      : `Deployed ${app.config.name} ${source.tag} to ${app.config.host}; stack folder updated.`,
+      : `Deployed ${app.config.name} ${tag} to ${app.config.host}; stack folder updated.`,
   );
 });
 

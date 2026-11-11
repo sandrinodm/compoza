@@ -49,7 +49,7 @@ const host: HostConfig = {
 
 const source: BundleFile = {
   path: 'compose.yaml',
-  encoded: Buffer.from('services: {web: {image: "${WEB_IMAGE}"}}').toString('base64'),
+  encoded: Buffer.from('services: {web: {image: nginx}}').toString('base64'),
 };
 
 /**
@@ -105,7 +105,7 @@ esac
     config: {
       name: 'fixture',
       host: 'host',
-      targets: ['web'],
+      roles: { web: { build: { target: 'web' } } },
       composeFiles: ['compose.yaml'],
       execution: 'ssh',
       remote: { stackDir: root },
@@ -126,7 +126,7 @@ esac
     secrets?: Readonly<Record<string, string>>,
     bundle = [source] as ReadonlyArray<BundleFile>,
   ) => {
-    const plan = deploymentScript(app, host, tag, bundle, secrets);
+    const plan = deploymentScript(app, host, { web: tag }, bundle, secrets);
     return run(plan.script, plan.input);
   };
 
@@ -148,7 +148,7 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
         config: {
           name: 'fixture',
           host: 'host',
-          targets: ['web'],
+          roles: { web: { build: { target: 'web' } } },
           composeFiles: ['compose.yaml'],
           secrets: { '1password': { environmentId: 'fictional', variables: ['TOKEN'] } },
         },
@@ -163,7 +163,7 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
             .split('\n')
             .map((line) => line.slice(0, line.indexOf('=')))
             .sort((left, right) => left.localeCompare(right)),
-          ['TOKEN', 'WEB_IMAGE'],
+          ['TOKEN'],
         );
         assert.notInclude(environment, 'excluded-secret');
         assert.strictEqual(statSync(join(root, '.env')).mode & 0o777, 0o600);
@@ -191,19 +191,76 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
       assert.deepStrictEqual(readFileSync(join(root, 'settings.txt')), Buffer.from([0, 1, 255]));
       assert.strictEqual(statSync(join(root, '.env')).mode & 0o777, 0o600);
       assert.strictEqual(statSync(join(root, '.compoza.json')).mode & 0o777, 0o600);
-      assert.include(readFileSync(join(root, '.env'), 'utf8'), 'fixture-web:one');
+      assert.deepStrictEqual(JSON.parse(readFileSync(join(root, '.compoza.json'), 'utf8')).tags, {
+        web: 'one',
+      });
       assert.notInclude(readFileSync(join(root, 'compose.yaml'), 'utf8'), 'private-token');
       assert.notInclude(readFileSync(join(root, '.compoza.json'), 'utf8'), 'private-token');
       assert.include(readFileSync(join(dir, 'environment'), 'utf8'), 'CALLER_SECRET=\n');
 
       succeeded(deploy('older', { TOKEN: 'rotated-token' }, [source, asset]));
 
-      assert.include(readFileSync(join(root, '.env'), 'utf8'), 'fixture-web:older');
+      assert.deepStrictEqual(JSON.parse(readFileSync(join(root, '.compoza.json'), 'utf8')).tags, {
+        web: 'older',
+      });
       assert.notInclude(readFileSync(join(root, '.env'), 'utf8'), 'private-token');
 
       succeeded(run(deployedScript(app, ['stop'], true)));
 
       assert.isFalse(existsSync(join(root, '.deploy-lock')));
+    }));
+
+  it('normalizes the generated roles override last and installs only the flat stack file', () =>
+    fixture(({ app, dir, root, deploy }) => {
+      Object.assign(app.config, {
+        roles: {
+          web: {
+            build: { target: 'web' },
+            environment: { MODE: 'a$b' },
+            secrets: ['TOKEN'],
+          },
+        },
+      });
+      succeeded(deploy('one', { TOKEN: 'private-token' }));
+
+      const normalize = readFileSync(join(dir, 'calls'), 'utf8')
+        .split('\n')
+        .find((call) => call.includes('--no-interpolate'));
+      const files = [...(normalize ?? '').matchAll(/--file (\S+)/g)].map((match) => match[1]);
+      assert.lengthOf(files, 2);
+      assert.match(files[0]!, /\/upload\/compose\.yaml$/);
+      assert.match(files[1]!, /\/upload\/compoza\.roles\.yaml$/);
+      assert.deepStrictEqual(readdirSync(root).sort(), ['.compoza.json', '.env', 'compose.yaml']);
+      assert.isFalse(
+        JSON.parse(readFileSync(join(root, '.compoza.json'), 'utf8')).files.includes(
+          'compoza.roles.yaml',
+        ),
+      );
+      assert.notInclude(readFileSync(join(root, 'compose.yaml'), 'utf8'), 'private-token');
+      assert.include(readFileSync(join(root, '.env'), 'utf8'), 'TOKEN="private-token"');
+    }));
+
+  it('rejects a Compose file or asset that uses the reserved override name', () =>
+    fixture(({ app }) => {
+      Object.assign(app.config, { roles: { web: { build: {} } } });
+      assert.throws(
+        () =>
+          deploymentScript(app, host, { web: 'one' }, [
+            source,
+            { ...source, path: 'compoza.roles.yaml' },
+          ]),
+        'compoza.roles.yaml is reserved for the generated roles override',
+      );
+    }));
+
+  it('sends no override without roles', () =>
+    fixture(({ app, dir, run }) => {
+      const { roles: _roles, ...config } = app.config;
+      const plan = deploymentScript({ ...app, config }, host, {}, [source]);
+      succeeded(run(plan.script, plan.input));
+
+      const calls = readFileSync(join(dir, 'calls'), 'utf8');
+      assert.notInclude(calls, 'compoza.roles.yaml');
     }));
 
   it('validates before replacing stack files and never prints secret-bearing diagnostics', () =>
@@ -307,7 +364,7 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
       succeeded(deploy());
 
       const before = readFileSync(join(root, '.env'), 'utf8');
-      const plan = deploymentScript(app, host, 'bad', [source]);
+      const plan = deploymentScript(app, host, { web: 'bad' }, [source]);
       const result = run(plan.script, plan.input.split('\n')[0] + '\n');
       assert.notStrictEqual(result.status, 0);
       assert.include(String(result.stderr), 'Interrupted stack upload');
@@ -579,7 +636,9 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
       assert.notStrictEqual(result.status, 0);
       assert.include(String(result.stderr), 'known image tag');
       assert.notInclude(String(result.stdout) + String(result.stderr), 'PRIVATE_DIAGNOSTIC');
-      assert.include(readFileSync(join(root, '.env'), 'utf8'), 'fixture-web:bad');
+      assert.deepStrictEqual(JSON.parse(readFileSync(join(root, '.compoza.json'), 'utf8')).tags, {
+        web: 'bad',
+      });
       assert.deepStrictEqual(readdirSync(root).sort(), ['.compoza.json', '.env', 'compose.yaml']);
     }));
 
@@ -594,7 +653,9 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
 
   it('keeps secrets out of script arguments even with inherited xtrace', () =>
     fixture(({ app, run }) => {
-      const plan = deploymentScript(app, host, 'one', [source], { TOKEN: 'SENTINEL_PRIVATE' });
+      const plan = deploymentScript(app, host, { web: 'one' }, [source], {
+        TOKEN: 'SENTINEL_PRIVATE',
+      });
       assert.notInclude(plan.script, 'SENTINEL_PRIVATE');
 
       const result = run('set -x\n' + plan.script, plan.input);
@@ -607,14 +668,13 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
       );
     }));
 
-  it('encodes literal configured values and rejects reserved image variables', () => {
+  it('encodes literal configured values', () => {
     const environment = { DOLLAR: '$HOME ${OTHER}', QUOTE: 'a"b', BACK: 'ends\\', EMPTY: '' };
     const app: App = {
       dir: '/app',
       config: {
         name: 'app',
         host: 'host',
-        targets: [],
         composeFiles: ['compose.yaml'],
         environment,
       },
@@ -629,15 +689,6 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
         .join('=');
       assert.strictEqual(JSON.parse(encoded).replaceAll('$$', '$'), value);
     }
-
-    assert.throws(
-      () =>
-        generatedEnvironment({
-          ...app,
-          config: { ...app.config, targets: ['web'], environment: { WEB_IMAGE: 'bad' } },
-        }),
-      'reserved',
-    );
   });
 
   it('names the first requirement a configured environment variable fails', () => {
@@ -646,7 +697,6 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
       config: {
         name: 'app',
         host: 'host',
-        targets: ['web'],
         composeFiles: ['compose.yaml'],
         environment,
       },
@@ -654,7 +704,6 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
     const cases: ReadonlyArray<readonly [Record<string, string>, string]> = [
       [{ '1TOKEN': 'value' }, 'Environment variable name 1TOKEN is not portable; use a letter'],
       [{ 'BAD-NAME': 'value' }, 'Environment variable name BAD-NAME is not portable'],
-      [{ WEB_IMAGE: 'value' }, "Environment variable WEB_IMAGE is reserved for a target's image"],
       [{ PATH: '/bin' }, 'Environment variable PATH is reserved by Compose, Docker or the shell'],
       [{ COMPOSE_FILE: 'x.yaml' }, 'COMPOSE_FILE is reserved by Compose, Docker or the shell'],
       [{ DOCKER_HOST: 'tcp://x' }, 'DOCKER_HOST is reserved by Compose, Docker or the shell'],
@@ -687,7 +736,6 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
       config: {
         name: 'app',
         host: 'host',
-        targets: [],
         composeFiles: ['compose.yaml'],
         remote: { stackDir },
       },
@@ -711,7 +759,7 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
   it('requires remote.stackDir for SSH execution', () => {
     const app: App = {
       dir: '/app',
-      config: { name: 'app', host: 'host', targets: [], composeFiles: ['compose.yaml'] },
+      config: { name: 'app', host: 'host', composeFiles: ['compose.yaml'] },
     };
 
     assert.throws(() => stackRoot(app), 'SSH execution requires remote.stackDir; set it');

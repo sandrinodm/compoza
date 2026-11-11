@@ -118,7 +118,6 @@ it.effect(
               YAML.stringify({
                 name: 'app',
                 host: 'host',
-                targets: [],
                 execution: 'client',
                 composeFiles: ['compose.yaml'],
                 ingress: { caddy },
@@ -135,7 +134,7 @@ it.effect(
             dryRun: true,
             local: false,
             allowDirty: false,
-            tag: Option.none(),
+            tags: [],
             destination: 'dev',
           });
 

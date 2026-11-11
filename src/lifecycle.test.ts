@@ -10,7 +10,12 @@ import { Shell } from './services/Shell.ts';
 const resolved: Resolved = {
   app: {
     dir: '/repo/infra',
-    config: { name: 'demo', host: 'atlas', targets: ['web'], composeFiles: ['compose.yaml'] },
+    config: {
+      name: 'demo',
+      host: 'atlas',
+      roles: { web: { build: { target: 'web' } } },
+      composeFiles: ['compose.yaml'],
+    },
   },
   host: {
     ssh: 'deploy@atlas.example.com',

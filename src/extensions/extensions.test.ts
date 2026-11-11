@@ -22,7 +22,6 @@ const app: App = {
     name: 'demo',
     projectName: 'demo-staging',
     host: 'atlas',
-    targets: [],
     composeFiles: ['compose.yaml'],
     ingress: {
       caddy: { domain: 'demo.example.com', upstream: 'demo:80', healthPath: '/ready' },

@@ -41,8 +41,8 @@ Each extension validates its required settings. Empty selections, unknown extens
 When a host configures both providers, setup requires an explicit selection:
 
 ```sh
-compoza setup-proxy macmini-server --ingress caddy --dry-run
-compoza setup-proxy macmini-server --ingress cloudflare-tunnel --dry-run
+compoza setup-proxy linden --ingress caddy --dry-run
+compoza setup-proxy linden --ingress cloudflare-tunnel --dry-run
 ```
 
 Remove `--dry-run` only when ready to set up that provider. Omitting `--ingress` on a host with both fails before SSH or credential-provider access. On a single-provider host the flag is optional. Apps select their matching host settings automatically; no app-command selector is needed. See [one host with both providers](examples.md#one-host-with-caddy-and-cloudflare-tunnel).

@@ -25,7 +25,7 @@ const app: App = {
     name: 'app',
     host: 'atlas',
     workingDirectory: '/source-app',
-    targets: ['web'],
+    roles: { web: { build: { target: 'web' } } },
     composeFiles: ['compose.yaml'],
     execution: 'ssh',
     remote: { stackDir: '/srv/app' },
@@ -75,10 +75,9 @@ describe('SSH deployment selection and transports', () => {
       const steps = planDeployment({
         app,
         host: selectedHost,
-        tag: 'abc',
+        sources: { web: { tag: 'abc', context: '/source' } },
         local: false,
         reuseImages: false,
-        context: '/source',
         secrets: {},
       });
       const build = steps[0]!;
@@ -111,10 +110,9 @@ describe('SSH deployment selection and transports', () => {
       const reused = planDeployment({
         app,
         host: selectedHost,
-        tag: 'abc',
+        sources: { web: { tag: 'abc', context: '/source' } },
         local: false,
         reuseImages: true,
-        context: '/source',
         secrets: {},
       });
       assert.lengthOf(reused, 1);
@@ -180,7 +178,6 @@ describe('SSH deployment selection and transports', () => {
                   name: 'third-party',
                   workingDirectory: '/missing/app-checkout',
                   host: 'host',
-                  targets: [],
                   execution: 'ssh',
                   remote: { stackDir: '/srv/third-party' },
                   composeFiles: ['compose.yaml'],
@@ -199,7 +196,7 @@ describe('SSH deployment selection and transports', () => {
               dryRun: true,
               local: false,
               allowDirty: false,
-              tag: Option.none(),
+              tags: [],
             });
 
             assert.lengthOf(writes, 0);
