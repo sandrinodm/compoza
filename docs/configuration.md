@@ -410,7 +410,7 @@ Without `roles` there is no extra file and nothing changes.
 
 - The image of a role with `build` is `<name>-<role>:<tag>`, prefixed with the registry for registry transport. compoza sets it as the service's `image`.
 - A build requires a clean checkout with at least one commit in each role's repository. Each repository is checked once, and its roles are tagged with the first twelve characters of its commit. `--allow-dirty` permits a dirty checkout and tags `<commit>-dirty`.
-- `--tag` reuses images built earlier and skips Git and builds, so it works from a deploy folder outside any checkout. `--tag <tag>` applies to every role with `build`, and `--tag <role>=<tag>` overrides it for one role; repeat the flag as needed. Every role with `build` must end up with a tag. `--tag` always uses the **current local configuration**; there is no saved Compose configuration history.
+- `--tag` reuses images built earlier and skips Git and builds, so it works from a deploy folder outside any checkout. `--tag <tag>` applies to every role with `build`, and `--tag <role>=<tag>` overrides it for one role; repeat the flag as needed. Every role with `build` must end up with a tag. A stack where no role has `build` (after any [role removal](#destinations)) has no images to reuse, so any `--tag` fails. Naming a role that a destination or `local.roles` removed fails and says the role is removed for the run. `--tag` always uses the **current local configuration**; there is no saved Compose configuration history.
 - Progress messages show the single tag when all roles share it, and `web=abc worker=def` otherwise.
 - Without any role that has `build` there is no Git, Dockerfile or build-context requirement, and no build or application-registry authentication check. Compose still pulls missing third-party images, and the deploy is tagged `third-party`.
 
@@ -431,7 +431,7 @@ Compose resolves relative bind mounts on the host, so host paths must be absolut
 
 ### Local runs
 
-`local` overrides `composeFiles`, `environment` and the complete secret source for `--local` runs. `local.roles` sets `environment` and `secrets` per role and merges over the app's roles the way [destinations](#destinations) do; `build` cannot be changed. When the app declares a production secret source, an explicit `local.secrets` is required, including `none: {}` when local Compose needs no secrets.
+`local` overrides `composeFiles`, `environment` and the complete secret source for `--local` runs. `local.roles` sets `environment` and `secrets` per role and merges over the app's roles the way [destinations](#destinations) do; `build` cannot be changed. Setting a role to `null` removes it from local runs (no build, image, environment, secrets or Compose validation), for a stack whose local Compose files leave a service out: `local: { roles: { worker: null } }`. The removal is checked when the config loads (see [Destinations](#destinations)). If the Compose files still declare the service, it runs as they define it, without compoza's image or role settings. When the app declares a production secret source, an explicit `local.secrets` is required, including `none: {}` when local Compose needs no secrets.
 
 `--local` builds into this machine's Docker and starts the stack here, without remote readiness checks, transport or routes. It keeps this client build-and-run behavior regardless of `execution`.
 
@@ -465,6 +465,16 @@ destinations:
 - When supplied, a destination **replaces** `host`, `projectName`, `composeFiles`, `execution`, the entire `remote` object, `profiles`, `ingress`, `health`, `directories`, `content` and the complete `secrets` source.
 - A destination's `environment` **merges** over the app defaults.
 - A destination's `roles` take `environment` and `secrets` per role, without `build`: destinations share the source. For each role, `environment` merges key by key over the app role's, and `secrets` replaces the app role's list. A role named only in the destination is allowed and sets environment only.
+- A destination removes a role with `null`, for a destination whose Compose files have no such service. The role gets no build, image, environment or secrets, is not checked against the Compose files, is not Git-checked or tagged, and its secrets are no longer added to a 1Password `variables` allowlist. If the selected Compose files still declare the service, it runs as they define it, without compoza's image or role settings. Every `null` in every destination and in `local.roles` is checked when the config loads, including destinations you do not select, and must name a role in the top-level `roles`; otherwise loading fails with the file name and a message such as `Destination "staging" removes role "wrker", which is not a role; roles: web, worker`. A role removed by the selected destination stays removed in a `--local` run: `local.roles` entries for it are ignored. `null` is accepted only under `destinations.<name>.roles` and `local.roles`, not in the top-level `roles`.
+
+```yaml
+destinations:
+  staging:
+    composeFiles: [compose.yaml] # has no worker service
+    roles:
+      worker: null
+```
+
 - `name` remains the image prefix; `projectName` selects the Compose project and the Caddy site-file key.
 - Unknown destination names fail.
 

@@ -38,7 +38,7 @@ const allowlisted = (variables: ReadonlyArray<string>): App => ({
 /**
  * The app with `roles` merged over its own, role settings only.
  */
-function withRoles(base: App, roles: Readonly<Record<string, RoleSettings>>): App {
+function withRoles(base: App, roles: Readonly<Record<string, RoleSettings | null>>): App {
   return { ...base, config: { ...base.config, roles: mergeRoles(base.config.roles, roles) } };
 }
 
@@ -165,6 +165,58 @@ describe('secret sources', () => {
       ]),
     ),
   );
+
+  describe('removed roles', () => {
+    const reader = Effect.provideService(OnePasswordReader, async () => [
+      { name: 'TOKEN', value: 'first', masked: true },
+      { name: 'WEB_TOKEN', value: 'second', masked: true },
+      { name: 'WORKER_TOKEN', value: 'SENTINEL_EXCLUDED', masked: true },
+    ]);
+    const twoRoles = (base: App): App =>
+      withRoles(base, { web: { secrets: ['WEB_TOKEN'] }, worker: { secrets: ['WORKER_TOKEN'] } });
+
+    it.effect('leaves the secrets of a role removed by a destination out of the allowlist', () =>
+      Effect.gen(function* () {
+        const base = twoRoles(allowlisted(['TOKEN']));
+        const withDestination: App = {
+          ...base,
+          config: {
+            ...base.config,
+            destinations: { staging: { roles: { worker: null } } },
+          },
+        };
+        assert.deepStrictEqual(yield* readSecrets(selectDestination(withDestination, 'staging')), {
+          TOKEN: 'first',
+          WEB_TOKEN: 'second',
+        });
+        assert.deepStrictEqual(yield* readSecrets(withDestination), {
+          TOKEN: 'first',
+          WEB_TOKEN: 'second',
+          WORKER_TOKEN: 'SENTINEL_EXCLUDED',
+        });
+      }).pipe(Effect.provide(NodeServices.layer), reader),
+    );
+
+    it.effect('leaves the secrets of a role removed by local.roles out of a local run', () =>
+      Effect.gen(function* () {
+        const base = twoRoles(app);
+        const local: App = {
+          ...base,
+          config: {
+            ...base.config,
+            local: {
+              secrets: { '1password': { environmentId: 'e', variables: ['TOKEN'] } },
+              roles: { worker: null },
+            },
+          },
+        };
+        assert.deepStrictEqual(yield* readSecrets(local, { local: true }), {
+          TOKEN: 'first',
+          WEB_TOKEN: 'second',
+        });
+      }).pipe(Effect.provide(NodeServices.layer), reader),
+    );
+  });
 
   it.effect('imports every variable, role secrets included, without an allowlist', () =>
     Effect.gen(function* () {

@@ -490,8 +490,8 @@ const status = Command.make(
     helpText([
       "Lists the app's containers on its host with docker compose ps --all, so a stopped stack " +
         'shows as stopped instead of missing. It changes nothing.',
-      'With execution: ssh and a managed secret source, only the service, state, health and ' +
-        'exit code are shown, with dotenv values redacted.',
+      'With execution: ssh and a managed secret source, only the service, image, state, health ' +
+        'and exit code are shown, with secret values redacted.',
     ]),
   ),
   Command.withExamples([{ command: 'compoza status infra' }]),

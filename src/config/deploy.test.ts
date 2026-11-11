@@ -14,6 +14,8 @@ import {
   environmentOf,
   ingressOf,
   loadApp,
+  removedRolesOf,
+  roleRemovalIssue,
   rolesOf,
   selectDestination,
   workingDirectoryOf,
@@ -306,6 +308,131 @@ describe('roles', () => {
   );
 });
 
+describe('role removal', () => {
+  const decode = (input: unknown) => Schema.decodeUnknownEffect(DeployConfig)(input);
+
+  it.effect('accepts null under destination and local roles only', () =>
+    Effect.gen(function* () {
+      const config = yield* decode({
+        ...valid,
+        destinations: { dev: { roles: { builder: null } } },
+        local: { roles: { web: null } },
+      });
+      assert.strictEqual(config.destinations?.dev?.roles?.builder, null);
+      assert.strictEqual(config.local?.roles?.web, null);
+
+      const error = yield* decode({ ...valid, roles: { web: null } }).pipe(Effect.flip);
+      assert.strictEqual(error._tag, 'SchemaError');
+    }),
+  );
+
+  it.effect('removes a role from the selected destination, including its build', () =>
+    Effect.gen(function* () {
+      const config = yield* decode({
+        ...valid,
+        destinations: { dev: { roles: { builder: null, web: { environment: { X: '1' } } } } },
+      });
+      const { config: selected } = selectDestination({ dir: '/d', config }, 'dev');
+      assert.notProperty(selected.roles ?? {}, 'builder');
+      assert.deepStrictEqual(Object.keys(selected.roles ?? {}), ['web']);
+      assert.deepStrictEqual(buildingRoles(selected), ['web']);
+      assert.deepStrictEqual(buildingRoles(config), ['builder', 'web']);
+    }),
+  );
+
+  it.effect('drops the roles key when a destination removes every role', () =>
+    Effect.gen(function* () {
+      const config = yield* decode({
+        ...valid,
+        destinations: { dev: { roles: { builder: null, web: null } } },
+      });
+      const { config: selected } = selectDestination({ dir: '/d', config }, 'dev');
+      assert.notProperty(selected, 'roles');
+      assert.deepStrictEqual(buildingRoles(selected), []);
+    }),
+  );
+
+  it.effect('keeps a role the destination removed out of a local run with the destination', () =>
+    Effect.gen(function* () {
+      const both = yield* decode({
+        ...valid,
+        destinations: { dev: { roles: { builder: null } } },
+        local: { roles: { builder: null } },
+      });
+      const selectedBoth = selectDestination({ dir: '/d', config: both }, 'dev');
+      assert.deepStrictEqual(Object.keys(rolesOf(selectedBoth.config, { local: true })), ['web']);
+
+      const settings = yield* decode({
+        ...valid,
+        destinations: { dev: { roles: { builder: null } } },
+        local: {
+          roles: { builder: { environment: { X: '1' } }, web: { environment: { Y: '2' } } },
+        },
+      });
+      const selectedSettings = selectDestination({ dir: '/d', config: settings }, 'dev');
+      const local = rolesOf(selectedSettings.config, { local: true });
+      assert.deepStrictEqual(Object.keys(local), ['web']);
+      assert.strictEqual(local.web?.environment?.Y, '2');
+      assert.deepStrictEqual(removedRolesOf(selectedSettings, { local: true }), ['builder']);
+
+      const onlyLocal = yield* decode({
+        ...valid,
+        destinations: { dev: { environment: { A: '1' } } },
+        local: { roles: { builder: null } },
+      });
+      const selectedLocal = selectDestination({ dir: '/d', config: onlyLocal }, 'dev');
+      assert.deepStrictEqual(Object.keys(rolesOf(selectedLocal.config, { local: true })), ['web']);
+      assert.deepStrictEqual(Object.keys(rolesOf(selectedLocal.config)), ['builder', 'web']);
+      assert.deepStrictEqual(removedRolesOf(selectedLocal, { local: true }), ['builder']);
+      assert.deepStrictEqual(removedRolesOf(selectedLocal), []);
+    }),
+  );
+
+  it.effect('names the first removal of a role the app does not define', () =>
+    Effect.gen(function* () {
+      const destination = yield* decode({
+        ...valid,
+        destinations: { dev: { roles: { wrker: null } } },
+      });
+      assert.strictEqual(
+        roleRemovalIssue(destination),
+        'Destination "dev" removes role "wrker", which is not a role; roles: builder, web',
+      );
+
+      const local = yield* decode({ ...valid, local: { roles: { wrker: null } } });
+      assert.strictEqual(
+        roleRemovalIssue(local),
+        'local.roles removes role "wrker", which is not a role; roles: builder, web',
+      );
+
+      const valid2 = yield* decode({
+        ...valid,
+        destinations: { dev: { roles: { builder: null, other: { environment: { A: '1' } } } } },
+        local: { roles: { web: null } },
+      });
+      assert.isUndefined(roleRemovalIssue(valid2));
+
+      const bare = yield* decode({
+        name: 'demo',
+        host: 'atlas',
+        composeFiles: ['c.yaml'],
+        local: { roles: { a: null } },
+      });
+      assert.include(roleRemovalIssue(bare), 'roles: none');
+    }),
+  );
+
+  it.effect('removes a role for local runs only', () =>
+    Effect.gen(function* () {
+      const config = yield* decode({ ...valid, local: { roles: { builder: null } } });
+      assert.deepStrictEqual(Object.keys(rolesOf(config, { local: true })), ['web']);
+      assert.deepStrictEqual(buildingRoles(config, { local: true }), ['web']);
+      assert.deepStrictEqual(Object.keys(rolesOf(config)), ['builder', 'web']);
+      assert.deepStrictEqual(buildingRoles(config), ['builder', 'web']);
+    }),
+  );
+});
+
 describe('loadApp', () => {
   it.effect('reads a folder or the file itself and resolves the folder', () =>
     withTempDir((dir) =>
@@ -348,6 +475,30 @@ describe('loadApp', () => {
         assert.include(invalidConfig.message, join(dir, 'deploy.yaml'));
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    'reports a role removal of an undefined role in any destination as a config error',
+    () =>
+      withTempDir((dir) =>
+        Effect.gen(function* () {
+          const file = join(dir, 'deploy.yml');
+          yield* Effect.promise(() =>
+            writeFile(
+              file,
+              YAML.stringify({ ...valid, destinations: { dev: { roles: { wrker: null } } } }),
+            ),
+          );
+
+          const error = yield* loadApp(dir).pipe(Effect.flip);
+
+          assert.strictEqual(
+            error.message,
+            `${file}: Destination "dev" removes role "wrker", which is not a role; ` +
+              'roles: builder, web',
+          );
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect('fails with the dedicated message when targets is still configured', () =>

@@ -231,7 +231,7 @@ export function deploymentScript(
 
   const ingress = ingressFor(app)?.plan(app, host);
   const url = app.config.health?.url ?? ingress?.healthUrl;
-  const metadata = deploymentMetadata(app, tags, files, ingress, secrets !== undefined);
+  const metadata = deploymentMetadata(app, tags, files, ingress, secrets);
   const environment = generatedEnvironment(app) + secretEnvironment({ ...secrets });
 
   const script = transactionScript({
@@ -438,15 +438,15 @@ function assertOverlaySeparate(app: App, root: string, outputs: ReadonlyArray<st
 
 /**
  * The lifecycle metadata stored as `.compoza.json`: what was deployed (the tag of every building
- * role), which files the tool owns, and the host-side ingress removal script that `down` runs
- * later.
+ * role), which files the tool owns, the names (never the values) of the managed secret variables
+ * that `status` redacts, and the host-side ingress removal script that `down` runs later.
  */
 function deploymentMetadata(
   app: App,
   tags: Readonly<Record<string, string>>,
   files: ReadonlyArray<string>,
   ingress: IngressPlan | undefined,
-  managed: boolean,
+  secrets: Readonly<Record<string, string>> | undefined,
 ): string {
   return JSON.stringify({
     version: 1,
@@ -456,7 +456,8 @@ function deploymentMetadata(
     files,
     ownedFiles: files,
     overlay: app.config.remote?.overlayFile ?? null,
-    managed,
+    managed: secrets !== undefined,
+    secretNames: Object.keys(secrets ?? {}).toSorted(),
     unroute: ingress === undefined ? '' : ingressOperationScript(ingress.unroute),
   });
 }

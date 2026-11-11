@@ -123,7 +123,7 @@ export function planDeployment(options: PlanOptions): ReadonlyArray<Step> {
 
   const steps: Array<Step> = [];
   if (!options.reuseImages) {
-    for (const role of buildingRoles(app.config)) {
+    for (const role of buildingRoles(app.config, { local })) {
       const source = Object.hasOwn(options.sources, role) ? options.sources[role] : undefined;
       if (source === undefined) {
         throw new Error(`No source for role "${role}"`);

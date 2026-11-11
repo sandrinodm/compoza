@@ -66,7 +66,40 @@ describe('parseTagFlags', () => {
   it('names no roles when the app has none', () => {
     const bare: DeployConfig = { name: 'demo', host: 'atlas', composeFiles: ['compose.yaml'] };
     assert.throws(() => parseTagFlags(['web=1'], bare), 'roles: none');
-    assert.deepStrictEqual(parseTagFlags(['abc'], bare), {});
+    assert.deepStrictEqual(parseTagFlags([], bare), {});
+  });
+
+  it('fails any --tag when no role has a build', () => {
+    const bare: DeployConfig = { name: 'demo', host: 'atlas', composeFiles: ['compose.yaml'] };
+    const message = 'No role has a build, so there are no images to reuse; deploy without --tag';
+    assert.throws(() => parseTagFlags(['abc'], bare), message);
+
+    const thirdParty: DeployConfig = { ...bare, roles: { db: { environment: { A: '1' } } } };
+    assert.throws(() => parseTagFlags(['v1'], thirdParty), message);
+    assert.throws(() => parseTagFlags(['db=v1'], thirdParty), 'Role "db" has no build');
+  });
+
+  it('treats a role removed for a local run as unknown', () => {
+    const removed: DeployConfig = { ...config, local: { roles: { worker: null } } };
+    assert.deepStrictEqual(parseTagFlags(['abc'], removed, { local: true }), { web: 'abc' });
+    assert.throws(
+      () => parseTagFlags(['worker=1'], removed, { local: true }),
+      'Unknown role "worker" in --tag; roles: web, postgres',
+    );
+    assert.deepStrictEqual(parseTagFlags(['abc'], removed), { web: 'abc', worker: 'abc' });
+  });
+
+  it('says a role removed for the run is removed instead of unknown', () => {
+    const removed: DeployConfig = { ...config, local: { roles: { worker: null } } };
+    assert.throws(
+      () => parseTagFlags(['worker=1'], removed, { local: true, removed: ['worker'] }),
+      'Role "worker" is removed for this run, so --tag cannot name it',
+    );
+  });
+
+  it('fails --tag when every building role is removed', () => {
+    const removed: DeployConfig = { ...config, local: { roles: { web: null, worker: null } } };
+    assert.throws(() => parseTagFlags(['abc'], removed, { local: true }), 'No role has a build');
   });
 });
 
