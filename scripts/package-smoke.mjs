@@ -181,7 +181,10 @@ writeFileSync(
   `name: external
 host: fixture
 workingDirectory: ../app source
-targets: [web]
+roles:
+  web:
+    build:
+      target: web
 composeFiles: [compose.yaml]
 `,
 );
@@ -204,14 +207,14 @@ const flat = deploymentScript(
     config: {
       name: 'fixture',
       host: 'fixture',
-      targets: [],
+      roles: {},
       composeFiles: ['compose.yaml'],
       execution: 'ssh',
       remote: { stackDir: '/srv/fixture-stack' },
     },
   },
   { ssh: 'fixture', platform: 'linux/arm64', transport: { mode: 'ssh-load' } },
-  'known',
+  {},
   [{ path: 'compose.yaml', encoded: Buffer.from('services: {}').toString('base64') }],
 );
 assert.match(flat.script, /normalized\.yaml/);

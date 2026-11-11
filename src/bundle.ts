@@ -2,7 +2,7 @@ import type { PlatformError } from 'effect/PlatformError';
 
 import { Effect, FileSystem } from 'effect';
 import { basename, isAbsolute, join, parse, resolve } from 'node:path';
-import { parseDocument } from 'yaml';
+import { type Document, parseDocument } from 'yaml';
 
 import type { App } from './config/deploy.ts';
 
@@ -62,6 +62,17 @@ const LINE_BREAK_OR_NUL = /[\r\n\0]/;
  * declared assets.
  */
 const LEADING_DOT_SLASH = /^\.\//;
+
+/**
+ * The upload name reserved for the generated roles override, which the SSH transaction passes to
+ * Compose last. Compose files and assets cannot be uploaded under it.
+ */
+export const ROLES_OVERRIDE_FILE = 'compoza.roles.yaml';
+
+/**
+ * The error for a Compose file or asset uploaded under `ROLES_OVERRIDE_FILE`.
+ */
+export const ROLES_OVERRIDE_RESERVED = `${ROLES_OVERRIDE_FILE} is reserved for the generated roles override`;
 
 /**
  * Keeps explicit external Compose sources inside the upload folder without exposing workstation
@@ -214,7 +225,7 @@ function isRelativeBind(source: unknown): source is string {
 /**
  * Narrows parsed YAML mappings before inspecting their fields.
  */
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
@@ -226,13 +237,29 @@ function assetPath(reference: string): string {
 }
 
 /**
- * Parses one Compose file into a plain mapping, reporting syntax errors, excessive alias expansion
- * and non-mapping documents without exposing the file's contents.
+ * One parsed Compose file: the YAML document, which keeps custom tags such as `!reset`, and its
+ * plain mapping.
  */
-function parseComposeModel(
+export interface ComposeFile {
+  /**
+   * The parsed document, for readers that need node tags.
+   */
+  readonly document: Document.Parsed;
+
+  /**
+   * The document as a plain mapping, with merge keys and aliases expanded.
+   */
+  readonly model: Record<string, unknown>;
+}
+
+/**
+ * Parses one Compose file, reporting syntax errors, excessive alias expansion and non-mapping
+ * documents without exposing the file's contents.
+ */
+export function parseComposeFile(
   text: string,
   file: string,
-): Effect.Effect<Record<string, unknown>, DeployError> {
+): Effect.Effect<ComposeFile, DeployError> {
   return Effect.gen(function* () {
     const document = yield* Effect.try({
       try: () => parseDocument(text, { merge: true, prettyErrors: false }),
@@ -250,8 +277,18 @@ function parseComposeModel(
       return yield* composeFileError(file, 'Compose document must be a mapping');
     }
 
-    return model;
+    return { document, model };
   });
+}
+
+/**
+ * Parses one Compose file into a plain mapping; see `parseComposeFile`.
+ */
+export function parseComposeModel(
+  text: string,
+  file: string,
+): Effect.Effect<Record<string, unknown>, DeployError> {
+  return parseComposeFile(text, file).pipe(Effect.map(({ model }) => model));
 }
 
 /**
@@ -464,6 +501,10 @@ function declaredUploadPaths(
 ): Effect.Effect<ReadonlySet<string>, DeployError> {
   return Effect.gen(function* () {
     const staged = paths.map((path) => uploadPath(path, compose));
+    if (staged.includes(ROLES_OVERRIDE_FILE)) {
+      return yield* new DeployError({ message: ROLES_OVERRIDE_RESERVED });
+    }
+
     const declared = new Set(yield* Effect.forEach(staged, bundlePath));
     if (declared.size !== paths.length) {
       return yield* new DeployError({

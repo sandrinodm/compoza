@@ -5,21 +5,21 @@ import { mkdtempDisposable, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { App } from './deploy.ts';
+import type { App, RoleSettings } from './deploy.ts';
 
 import { OnePasswordReader } from '../extensions/1password/index.ts';
 import { DryRun } from '../services/Shell.ts';
 import { deploymentScript } from '../ssh-plan.ts';
-import { selectDestination } from './deploy.ts';
+import { mergeRoles, selectDestination } from './deploy.ts';
 import { parseEnvFile } from './env-file.ts';
-import { readSecrets, secretSource, validateSecrets } from './secrets.ts';
+import { readSecrets, secretSource, validateSecrets, withRoleSecrets } from './secrets.ts';
 
 const app: App = {
   dir: '/nonexistent',
   config: {
     name: 'app',
     host: 'atlas',
-    targets: ['web'],
+    roles: { web: { build: { target: 'web' } } },
     composeFiles: ['compose.yaml'],
     secrets: { '1password': { environmentId: 'fictional-environment' } },
   },
@@ -34,6 +34,13 @@ const allowlisted = (variables: ReadonlyArray<string>): App => ({
     secrets: { '1password': { environmentId: 'fictional-environment', variables } },
   },
 });
+
+/**
+ * The app with `roles` merged over its own, role settings only.
+ */
+function withRoles(base: App, roles: Readonly<Record<string, RoleSettings>>): App {
+  return { ...base, config: { ...base.config, roles: mergeRoles(base.config.roles, roles) } };
+}
 
 describe('secret sources', () => {
   it('replaces the entire inherited source at destinations', () => {
@@ -87,7 +94,7 @@ describe('secret sources', () => {
       const plan = deploymentScript(
         selected,
         { ssh: 'fixture', platform: 'linux/arm64', transport: { mode: 'ssh-load' } },
-        'one',
+        { web: 'one' },
         [],
         values,
       );
@@ -98,7 +105,7 @@ describe('secret sources', () => {
         .join('\n');
       assert.include(uploaded, String.raw`TOKEN="$$HOME \"literal\""`);
       assert.include(uploaded, 'EMPTY=""');
-      assert.include(uploaded, 'WEB_IMAGE="app-web:one"');
+      assert.include(uploaded, 'image: "app-web:one"');
       for (const excluded of ['OTHER', 'SENTINEL_EXCLUDED', 'PATH', 'WEB_IMAGE_SECRET', 'token']) {
         assert.notInclude(uploaded, excluded);
       }
@@ -140,6 +147,96 @@ describe('secret sources', () => {
         throw new Error('Empty allowlist must not access the SDK');
       }),
     ),
+  );
+
+  it.effect('adds the role secrets to a configured allowlist', () =>
+    Effect.gen(function* () {
+      const selected = withRoles(allowlisted(['TOKEN']), { web: { secrets: ['ROLE_TOKEN'] } });
+      assert.deepStrictEqual(yield* readSecrets(selected), {
+        TOKEN: 'first',
+        ROLE_TOKEN: 'second',
+      });
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(OnePasswordReader, async () => [
+        { name: 'TOKEN', value: 'first', masked: true },
+        { name: 'ROLE_TOKEN', value: 'second', masked: true },
+        { name: 'OTHER', value: 'SENTINEL_EXCLUDED', masked: true },
+      ]),
+    ),
+  );
+
+  it.effect('imports every variable, role secrets included, without an allowlist', () =>
+    Effect.gen(function* () {
+      const selected = withRoles(app, { web: { secrets: ['ROLE_TOKEN'] } });
+      assert.deepStrictEqual(yield* readSecrets(selected), { ROLE_TOKEN: 'second', OTHER: 'x' });
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(OnePasswordReader, async () => [
+        { name: 'ROLE_TOKEN', value: 'second', masked: true },
+        { name: 'OTHER', value: 'x', masked: false },
+      ]),
+    ),
+  );
+
+  it('extends only a configured 1Password allowlist with role secrets', () => {
+    const configured = { provider: '1password', environmentId: 'e', variables: ['A'] } as const;
+    assert.deepStrictEqual(withRoleSecrets(configured, ['B', 'A']), {
+      ...configured,
+      variables: ['A', 'B'],
+    });
+
+    const open = { provider: '1password', environmentId: 'e' } as const;
+    assert.strictEqual(withRoleSecrets(open, ['B']), open);
+
+    const file = { provider: 'env-file', path: 'x.env' } as const;
+    assert.strictEqual(withRoleSecrets(file, ['B']), file);
+  });
+
+  it.effect('fails when the source does not provide a role secret', () =>
+    Effect.gen(function* () {
+      const selected = withRoles(app, { web: { secrets: ['ROLE_TOKEN'] } });
+      const error = yield* readSecrets(selected).pipe(Effect.flip);
+      assert.include(error.message, 'web: ROLE_TOKEN');
+      assert.notInclude(error.message, 'SENTINEL');
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(OnePasswordReader, async () => [
+        { name: 'OTHER', value: 'SENTINEL', masked: true },
+      ]),
+    ),
+  );
+
+  it.effect.each([
+    ['without a source', undefined],
+    ['with source none', { none: {} }],
+  ] as const)('rejects role secrets %s, even on a dry run', ([, secrets]) =>
+    Effect.gen(function* () {
+      const { secrets: _secrets, ...rest } = app.config;
+      const selected = withRoles(
+        { ...app, config: { ...rest, ...(secrets === undefined ? {} : { secrets }) } },
+        { web: { secrets: ['ROLE_TOKEN'] } },
+      );
+      const error = yield* readSecrets(selected).pipe(
+        Effect.provideService(DryRun, true),
+        Effect.flip,
+      );
+      assert.include(error.message, 'Role "web" takes secrets, but the run has no secret source');
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect('reads local role secrets from the local source', () =>
+    Effect.gen(function* () {
+      const selected: App = {
+        ...app,
+        config: {
+          ...app.config,
+          local: { secrets: { none: {} }, roles: { web: { secrets: ['ROLE_TOKEN'] } } },
+        },
+      };
+      const error = yield* readSecrets(selected, { local: true }).pipe(Effect.flip);
+      assert.include(error.message, 'no secret source');
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect('still rejects duplicate selected variables and unsafe selected values', () =>
@@ -242,7 +339,6 @@ describe('secret sources', () => {
   );
 
   it.each([
-    'WEB_IMAGE',
     'COMPOSE_PROJECT_NAME',
     'DOCKER_HOST',
     'BUILDX_BUILDER',

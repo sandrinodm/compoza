@@ -24,7 +24,6 @@ function withBundle(
         config: {
           name: 'app',
           host: 'host',
-          targets: [],
           composeFiles: ['compose.yaml'],
           assets: ['settings.txt'],
         },
@@ -260,6 +259,27 @@ describe('bounded Compose bundle', () => {
     ),
   );
 
+  it.effect('reserves the roles override name for the generated file', () =>
+    withBundle((app) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() => writeFile(join(app.dir, 'compoza.roles.yaml'), 'services: {}'));
+        yield* Effect.promise(() => writeFile(join(app.dir, 'compose.yaml'), 'services: {}'));
+
+        const asset = yield* readBundle({
+          ...app,
+          config: { ...app.config, assets: ['compoza.roles.yaml'] },
+        }).pipe(Effect.flip);
+        assert.include(asset.message, 'compoza.roles.yaml is reserved for the generated roles');
+
+        const compose = yield* readBundle({
+          ...app,
+          config: { ...app.config, composeFiles: ['compose.yaml', 'compoza.roles.yaml'] },
+        }).pipe(Effect.flip);
+        assert.include(compose.message, 'reserved');
+      }),
+    ),
+  );
+
   it.effect('rejects symlinked deploy folders and non-file assets as typed failures', () =>
     withBundle((app) =>
       Effect.gen(function* () {
@@ -352,7 +372,7 @@ describe('bounded Compose bundle', () => {
       const fs = FileSystem.makeNoop({ lstat: () => Effect.die(bug) });
       const app: App = {
         dir: '/unused',
-        config: { name: 'app', host: 'host', targets: [], composeFiles: ['compose.yaml'] },
+        config: { name: 'app', host: 'host', composeFiles: ['compose.yaml'] },
       };
       const filesystem = yield* readBundle(app).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),

@@ -70,6 +70,20 @@ relative to deploy.yaml after destination selection. Credentials stay in Caddy e
 placeholders, never literal template text. Shared config templates apply only during
 provisioning; they do not overwrite operator-managed configuration.
 
+## Roles
+
+Each key under `roles` in deploy.yaml is a Compose service. `targets` and the
+`${<TARGET>_IMAGE}` variables no longer exist: a config that still has `targets` fails
+until it is migrated. A role with `build` is built as `<name>-<role>:<tag>`, and compoza
+sets that service's `image`. Its `target`, `workingDirectory`, `dockerfile` and
+`context` fall back to the top-level fields. A role's `environment` holds literal
+values and its `secrets` names variables from the secret source; both reach only that
+service's container. The top-level `environment` and `secrets` stay Compose
+interpolation inputs. A name set in a role must not also be in the service's Compose
+`environment:`, and role secrets need a secret source other than `none`. `check`
+reports these problems without fetching secrets. The generated override,
+`compoza.roles.yaml`, holds `${NAME}` references, never secret values.
+
 ## Recover with a known image tag
 
 ```sh
@@ -79,13 +93,17 @@ compoza status infra
 ```
 
 `--tag` skips Git/builds and reuses images with the current local configuration and
-currently selected secret source. A missing source checkout is allowed for `--tag`,
-`targets: []`, status, logs and lifecycle commands. There is no release rollback command, saved
-configuration history or backup folder. Check out an earlier app revision separately
-when its configuration is required. Never imply that database changes are reversed.
+currently selected secret source. `--tag <tag>` applies to every role with `build`, and
+`--tag <role>=<tag>` overrides it for one role; repeat the flag as needed. Every role
+with `build` needs a tag. A missing source checkout is allowed for `--tag`, stacks whose
+roles build nothing, status, logs and lifecycle commands. There is no release rollback
+command, saved configuration history or backup folder. Check out an earlier app
+revision separately when its configuration is required. Never imply that database
+changes are reversed.
 
 SSH stacks contain `compose.yaml`, private `.env`, declared assets and one nonsecret
-`.compoza.json` lifecycle metadata file. A live host overlay may also be present.
+`.compoza.json` lifecycle metadata file, which records each role's tag. The roles
+override is merged into the flat `compose.yaml`. A live host overlay may also be present.
 Runtime scripts and filters are sent with each CLI operation, not installed on the host.
 Upload and validation failures leave deployed files unchanged. Later replacement,
 Compose, routing or health failures can leave changed files or containers; recover

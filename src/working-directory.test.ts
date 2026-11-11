@@ -83,7 +83,7 @@ const fixture = Effect.gen(function* () {
   const config: DeployConfig = {
     name: 'foo',
     host: 'host',
-    targets: ['web'],
+    roles: { web: { build: { target: 'web' } } },
     composeFiles: ['compose.yaml'],
     workingDirectory: '../../../foo/app source',
     destinations: { development: { projectName: 'foo-dev' } },
@@ -97,7 +97,7 @@ const fixture = Effect.gen(function* () {
     local: true,
     dryRun: true,
     allowDirty: false,
-    tag: Option.none<string>(),
+    tags: [] as ReadonlyArray<string>,
     destination: 'development',
   };
   return {
@@ -183,7 +183,7 @@ describe('separate working directory', () => {
         Effect.provide(f.services),
         Effect.flip,
       );
-      assert.include(error.message, 'Commit your changes first');
+      assert.include(error.message, 'Commit your changes in');
       assert.lengthOf(f.steps, 0);
 
       yield* deploy(f.options).pipe(Effect.provide(f.services));
@@ -246,11 +246,11 @@ describe('separate working directory', () => {
         const f = yield* fixture;
         yield* f.writeConfig({
           workingDirectory: '/missing/app-checkout',
-          ...(mode === 'third-party' ? { targets: [] } : {}),
+          ...(mode === 'third-party' ? { roles: {} } : {}),
         });
         yield* deploy({
           ...f.options,
-          tag: mode === 'tag' ? Option.some('known') : Option.none(),
+          tags: mode === 'tag' ? ['known'] : [],
         }).pipe(Effect.provide(f.services));
         const resolved = yield* resolve(f.file, Option.some(f.hosts), 'development').pipe(
           Effect.provide(f.services),

@@ -2,7 +2,7 @@
 
 [README](../README.md) · [Commands](commands.md) · [Ingress](ingress.md) · [Caddy templates](caddy-templates.md)
 
-This guide covers a hardened **single-host** Caddy deployment. A host, Docker engine or network outage still interrupts every app on that host. The extension does not provide automatic failover, capacity planning, backups or an external monitoring service.
+These defaults harden Caddy on a **single host**. A host, Docker engine or network outage still interrupts every app on that host. The extension does not provide automatic failover, capacity planning, backups or an external monitoring service.
 
 ## Defaults and their purpose
 

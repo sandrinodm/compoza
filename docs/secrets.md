@@ -63,12 +63,12 @@ secrets:
   1password:
     environmentId: fictional-atlas-environment-id
     variables:
-      - PROMPTSUB_API_KEY
+      - SAMPLE_APP_API_KEY
 ```
 
-`variables` accepts environment identifiers, matched exactly and case-sensitively, with no wildcards or renaming. A missing requested variable fails the secret read before builds or host writes. An empty list imports nothing and skips the SDK read; omitting the field imports every variable. A variable with an empty value is still imported; applications can require a nonempty value in Compose with `${PROMPTSUB_API_KEY:?required}`.
+`variables` accepts environment identifiers, matched exactly and case-sensitively, with no wildcards or renaming. A missing requested variable fails the secret read before builds or host writes. The effective allowlist is `variables` plus every [role secret](#role-secrets) of the run, so a role's secrets are imported without repeating them here. An empty list with no role secrets imports nothing and skips the SDK read; `variables: []` with role secrets reads exactly those secrets. Omitting the field imports every variable. A variable with an empty value is still imported; applications can require a nonempty value in Compose with `${SAMPLE_APP_API_KEY:?required}`.
 
-The SDK still reads the complete Environment into CLI memory. Compoza discards excluded entries before validating deployment variables or producing commands and payloads, so excluded names and values are absent from the generated `.env`, SSH upload and secret-access report. This applies to client and SSH execution, destinations and explicit local sources. Other providers are unchanged. Ordinary nonsecret settings and image references are still written to `.env`.
+The SDK still reads the complete Environment into CLI memory. Compoza discards excluded entries before validating deployment variables or producing commands and payloads, so excluded names and values are absent from the generated `.env`, SSH upload and secret-access report. This applies to client and SSH execution, destinations and explicit local sources. Other providers are unchanged. Ordinary nonsecret settings are still written to `.env`.
 
 ### Authentication
 
@@ -119,7 +119,7 @@ compoza check infra --secrets --local --json
 
 ## Names and dotenv format
 
-Secret names must be valid environment identifiers and unique. Collisions with configured non-secret variables, image variables, Compose/Docker/Buildx controls and process-control variables fail instead of overriding them.
+Secret names must be valid environment identifiers and unique. Collisions with configured non-secret variables, Compose/Docker/Buildx controls and process-control variables fail instead of overriding them.
 
 Dotenv files use simple `KEY=value` lines:
 
@@ -130,7 +130,7 @@ Dotenv files use simple `KEY=value` lines:
 
 ## Using secrets in Compose
 
-Provider variables supply Compose **interpolation** inputs. They are not injected into every container; each service must explicitly map the keys it needs:
+Provider variables supply Compose **interpolation** inputs. They are not injected into every container; each service must explicitly map the keys it needs, or receive them as [role secrets](#role-secrets):
 
 ```yaml
 services:
@@ -139,13 +139,36 @@ services:
       API_TOKEN: '${API_TOKEN:?required}'
 ```
 
+- A role secret needs no Compose mapping. Do not also map the same key in the service's `environment:`: a key set in both places is rejected.
 - With client execution, resolved values are added only to Compose, never to build or transport commands.
 - Explicit sources, including `none`, disable Compose's implicit `.env` discovery, so missing keys cannot fall back to a production dotenv file.
 - Secret-bearing Compose output is suppressed because third-party diagnostics can repeat values. Application logs still stream through `logs`, and redacting them is the application's responsibility.
 
+### Role secrets
+
+A [role](configuration.md#roles) can list variable names from the secret source in `secrets`. compoza delivers each to that service's container under the same name, through the generated roles override, so the Compose file needs no `${NAME}` mapping for it:
+
+```yaml
+secrets:
+  1password:
+    environmentId: fictional-atlas-environment-id
+    variables: []
+roles:
+  web:
+    secrets:
+      - SAMPLE_APP_API_TOKEN
+```
+
+- Only services whose role lists a secret receive it. Any other service that needs the value still maps it in Compose.
+- The override holds a `${NAME}` reference, never the value. The value stays in the interpolation pool: the stack `.env` over SSH, the process environment for client execution.
+- With `variables: []` as above, the 1Password read returns exactly the role secrets.
+- `destinations.<name>.roles.<role>.secrets` replaces that role's list, and `local.roles` does the same for `--local` runs, which read the local source.
+
+A role secret that is missing from the source, reserved, or also set in the service's Compose `environment:` fails validation before anything is built. See [Environment and secrets](configuration.md#environment-and-secrets) for every rule.
+
 ## SSH execution
 
-With a managed source (`env-file` or `1password`), the selected values travel over SSH stdin and are combined with generated nonsecret variables and image references in the stack `.env`, mode `0600`. Compose validates the staged files before replacing the flat stack. No resolved credentials enter `compose.yaml`, `.compoza.json`, process arguments or deployment logs; private validation diagnostics are discarded.
+With a managed source (`env-file` or `1password`), the selected values travel over SSH stdin and are combined with generated nonsecret variables in the stack `.env`, mode `0600`. Compose validates the staged files before replacing the flat stack. No resolved credentials enter `compose.yaml`, `.compoza.json`, process arguments or deployment logs; private validation diagnostics are discarded.
 
 Upload or validation failure preserves the deployed `.env`. Later replacement, Compose or readiness failure may leave updated files or containers; recover by redeploying. No earlier credential copies or deployment backups are retained.
 
@@ -154,6 +177,6 @@ Values that must never leave the host belong in a separate operator-owned dotenv
 ## Recovery and lifecycle
 
 - `status`, `logs`, `stop`, `start` and `delete` read deployed host files without fetching 1Password or client dotenv.
-- `deploy --tag <known-tag>` reuses earlier images with current local configuration and freshly resolves the selected source. It does not restore earlier passwords or archived configuration.
+- `deploy --tag <known-tag>` reuses earlier images with current local configuration and freshly resolves the selected source, including role secrets. It does not restore earlier passwords or archived configuration.
 - Deploying `none` writes the generated `.env` without managed secret values; there is no fallback to an earlier source.
 - Delete retains the stack `.env` and other files; remove sensitive files separately only when that cleanup is explicitly intended.

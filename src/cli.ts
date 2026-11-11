@@ -6,6 +6,7 @@ import type { Resolved } from './deploy.ts';
 
 import { blocking, type Check, formatChecks, runChecks } from './checks.ts';
 import { command } from './command.ts';
+import { rolesOf } from './config/deploy.ts';
 import { hostLinks, linkHosts, unlinkHosts } from './config/host-links.ts';
 import {
   hostNamed,
@@ -30,6 +31,7 @@ import { closestNames, helpText, IgnoredSharedFlags } from './help.ts';
 import { setupOperationInput } from './ingress-setup.ts';
 import { lifecycle, projectArgs, remove, requireProjectService } from './lifecycle.ts';
 import { publish } from './publish.ts';
+import { validateRoles } from './roles.ts';
 import { Remote } from './services/Remote.ts';
 import { DryRun, Shell } from './services/Shell.ts';
 import { type InspectOptions, inspectSsh } from './ssh-deploy.ts';
@@ -188,6 +190,24 @@ function secretsCheck(app: App, local: boolean) {
 }
 
 /**
+ * The `roles` check: whether each role's settings are valid and its service exists in the selected
+ * Compose files without setting the same variables itself. Reads only local files.
+ */
+function rolesCheck(app: App, local: boolean) {
+  return validateRoles(app, { local }).pipe(
+    Effect.map((): Check => ({
+      name: 'roles',
+      ok: true,
+      detail: 'Roles match the Compose files',
+      fix: 'manual',
+    })),
+    Effect.catchTag('DeployError', (error): Effect.Effect<Check> =>
+      Effect.succeed({ name: 'roles', ok: false, detail: error.message, fix: 'manual' }),
+    ),
+  );
+}
+
+/**
  * `check`: the read-only readiness report, ending with a one-line count of failing checks. Exit
  * code 2 when a check other than the route fails.
  */
@@ -201,13 +221,18 @@ const check = Command.make(
     ),
     local: switchFlag(
       'local',
-      'Skip the remote checks; with --secrets, check the local.secrets source instead',
+      'Skip the remote checks and check local.roles and local.composeFiles; ' +
+        'with --secrets, check the local.secrets source instead',
     ),
     json: switchFlag('json', 'Print { app, host, checks } as JSON instead of one line per check'),
   },
   Effect.fn(function* ({ folder, json, secrets, local }) {
     const { app, host } = yield* resolveFolder(folder);
     const checks: Array<Check> = [...(local ? [] : yield* runChecks(app, host))];
+
+    if (Object.keys(rolesOf(app.config, { local })).length > 0) {
+      checks.push(yield* rolesCheck(app, local));
+    }
 
     if (secrets) {
       checks.push(yield* secretsCheck(app, local));
@@ -266,8 +291,11 @@ const deployCommand = Command.make(
       'Build a checkout with uncommitted changes, tagging the images <commit>-dirty',
     ),
     tag: Flag.String('tag').pipe(
-      Flag.withDescription('Reuse the images built earlier with this tag instead of building'),
-      Flag.optional,
+      Flag.withDescription(
+        'Reuse images built earlier instead of building: <tag> for every built role, ' +
+          '<role>=<tag> for one; repeatable',
+      ),
+      Flag.atLeast(0),
     ),
   },
   Effect.fn(function* ({ folder, dryRun, local, allowDirty, tag }) {
@@ -277,7 +305,7 @@ const deployCommand = Command.make(
       dryRun,
       local,
       allowDirty,
-      tag,
+      tags: tag,
       hosts,
       destination: Option.getOrUndefined(destination),
     }).pipe(Effect.provideService(DryRun, dryRun));
@@ -291,8 +319,10 @@ const deployCommand = Command.make(
         '--wait, the route, and a wait until the public URL answers. A blocking check failure ' +
         'stops the deploy before anything changes.',
       'Images are tagged with the first twelve characters of the commit, so a build needs a ' +
-        'clean checkout unless --allow-dirty is given. --tag reuses earlier images instead of ' +
-        'building, with the current local configuration. --local runs the stack in this ' +
+        'clean checkout unless --allow-dirty is given. Each role with a build is tagged with ' +
+        'the commit of its own repository. --tag reuses earlier images instead of building, ' +
+        'with the current local configuration: --tag <tag> names the tag of every built role ' +
+        'and --tag <role>=<tag> overrides it for one role (repeat the flag as needed). --local runs the stack in this ' +
         "machine's Docker with the local overrides, without remote checks, routes or wait.",
       'A failed deploy is not rolled back: inspect "compoza status" and "compoza logs", then ' +
         'deploy a known tag.',
@@ -311,6 +341,10 @@ const deployCommand = Command.make(
     {
       command: 'compoza deploy infra --tag 1a2b3c4d5e6f',
       description: 'Redeploy earlier images with the current local config',
+    },
+    {
+      command: 'compoza deploy infra --tag 1a2b3c4d5e6f --tag worker=9f8e7d6c5b4a',
+      description: 'Redeploy earlier images, with another tag for the worker role',
     },
   ]),
 );

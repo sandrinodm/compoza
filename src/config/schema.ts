@@ -14,6 +14,22 @@ export const Name = Schema.String.pipe(
 );
 
 /**
+ * A role name, which is a Compose service name that also becomes a component of an image name.
+ * Docker accepts lowercase letters and digits joined by single or double underscores or runs of
+ * dashes, so a name may not start or end with a separator or mix separators in a row (`web_`,
+ * `a_-b`).
+ */
+export const RoleName = Schema.String.pipe(
+  Schema.check(
+    Schema.isPattern(/^[a-z0-9]+(?:(?:_|__|-+)[a-z0-9]+)*$/, {
+      message:
+        'expected lowercase letters and digits, joined by underscores or dashes, ' +
+        'starting and ending with a letter or digit',
+    }),
+  ),
+);
+
+/**
  * A Dockerfile build target: like `Name`, but underscores are allowed because Dockerfile stage
  * names may use them.
  */

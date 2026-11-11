@@ -1,43 +1,48 @@
 import type { HttpClient } from 'effect/http';
 
-import { Console, Effect, FileSystem, type Option, Path } from 'effect';
+import { Console, Effect, FileSystem, type Option, Path, type Scope } from 'effect';
+import { tmpdir } from 'node:os';
 
 import type { Step } from './command.ts';
 import type { IngressPlan } from './extensions/ingress.ts';
 import type { Phase } from './progress.ts';
 
+import { ROLES_OVERRIDE_FILE } from './bundle.ts';
 import { blocking, formatChecks, runChecks } from './checks.ts';
 import { mkdirScript, printableStep } from './command.ts';
-import {
-  type App,
-  directoriesOf,
-  loadApp,
-  selectDestination,
-  workingDirectoryOf,
-} from './config/deploy.ts';
+import { type App, directoriesOf, loadApp, selectDestination } from './config/deploy.ts';
 import { dockerHost, type HostConfig, hostFor, loadHostsForRun } from './config/hosts.ts';
 import { readSecrets } from './config/secrets.ts';
-import { DeployError, tryPlan } from './errors.ts';
+import { DeployError, platformFailure, tryPlan } from './errors.ts';
 import { loadAppExtensionFiles } from './extensions/config.ts';
 import { tryIngressFor, tryIngressPlan } from './extensions/ingress.ts';
 import { planDeployment } from './plan.ts';
 import { DRY_RUN_COMPLETE, formatDuration, phase, runPhases } from './progress.ts';
+import {
+  buildingRoles,
+  buildSettingsOf,
+  roleOverride,
+  type RoleSource,
+  type RoleSources,
+  validateRoles,
+} from './roles.ts';
 import { Git } from './services/Git.ts';
 import { Remote } from './services/Remote.ts';
 import { DryRun, Shell } from './services/Shell.ts';
 import { deploySsh } from './ssh-deploy.ts';
+import { parseTagFlags, tagLabel, tagsOf } from './tags.ts';
 import { WAIT_TIMEOUT_MILLIS, waitForUrl } from './wait.ts';
-
-/**
- * The tag of a deploy without targets: nothing is built, so there is no commit to name the images
- * after.
- */
-const THIRD_PARTY_TAG = 'third-party';
 
 /**
  * The message of a failed deployment plan when the planner throws something other than an `Error`.
  */
 const INVALID_DEPLOYMENT_PLAN = 'Invalid deployment plan';
+
+/**
+ * The permissions of the roles override file: readable by this user only, because it names the
+ * variables of role secrets.
+ */
+const PRIVATE_FILE_MODE = 0o600;
 
 /**
  * What the `deploy` command was asked to do.
@@ -65,9 +70,11 @@ export interface DeployOptions {
   readonly allowDirty: boolean;
 
   /**
-   * Reuse images already built under this tag instead of building: a rollback to an earlier deploy.
+   * The values of the repeatable `--tag` flag: `<tag>` for every building role and `<role>=<tag>`
+   * for one. Any value reuses images already built under those tags instead of building, a rollback
+   * to an earlier deploy.
    */
-  readonly tag: Option.Option<string>;
+  readonly tags: ReadonlyArray<string>;
 
   /**
    * The hosts file, when not the default.
@@ -115,70 +122,77 @@ export const resolve = Effect.fn('resolve')(function* (
 });
 
 /**
- * The image tag of a deploy and the build context its images are built from.
- */
-interface Source {
-  /**
-   * The tag the images are built and run under.
-   */
-  readonly tag: string;
-
-  /**
-   * The absolute build context: `context` from `deploy.yaml` resolved against the working
-   * directory, else the Git root. With `--tag` nothing is built, so it falls back to the working
-   * directory instead and is never read.
-   */
-  readonly context: string;
-}
-
-/**
- * Chooses the image tag and build context: the commit, `-dirty` when the checkout has changes, or
- * the tag given to reuse.
+ * Chooses the tag and build context of every building role: the commit of the role's repository,
+ * `-dirty` when its checkout has changes, or the tags given with `--tag` to reuse.
  *
  * A repository without commits cannot be deployed, because there is nothing to tag images with; a
  * dirty checkout is refused unless `--allow-dirty` or `--local`, so that a tag always names the
- * exact source it was built from. With `--tag` Git is not consulted at all: a rollback reuses
- * images, so neither the commit nor a clean checkout matters, and it has to work from a deploy
- * folder that is no longer inside a checkout, where `git rev-parse` exits 128. The context is then
- * only a placeholder for `PlanOptions`, which needs one even though no build step reads it.
+ * exact source it was built from. Roles whose working directories share a Git root share one check
+ * and one tag. With `--tag` Git is not consulted at all: a rollback reuses images, so neither the
+ * commit nor a clean checkout matters, and it has to work from a deploy folder that is no longer
+ * inside a checkout, where `git rev-parse` exits 128. The context is then only a placeholder for
+ * `PlanOptions`, which needs one even though no build step reads it. An app that builds nothing has
+ * no sources and does not consult Git, though `--tag` values are still parsed and validated.
  */
-const chooseSource = Effect.fn('chooseSource')(function* (app: App, options: DeployOptions) {
-  const path = yield* Path.Path;
-  const directory = workingDirectoryOf(app);
-  const configured =
-    app.config.context === undefined ? undefined : path.resolve(directory, app.config.context);
+const chooseSource = Effect.fn('chooseSource')(function* (
+  app: App,
+  options: DeployOptions,
+): Effect.fn.Return<RoleSources, DeployError, FileSystem.FileSystem | Git> {
+  const roles = buildingRoles(app.config).map((role) => buildSettingsOf(app, role));
 
-  if (options.tag._tag === 'Some') {
-    const reused: Source = { tag: options.tag.value, context: configured ?? directory };
+  if (options.tags.length > 0) {
+    const tags = yield* tryPlan(() => parseTagFlags(options.tags, app.config), 'Invalid --tag');
+    const reused: Record<string, RoleSource> = {};
+    for (const settings of roles) {
+      const tag = Object.hasOwn(tags, settings.role) ? tags[settings.role] : undefined;
+      if (tag === undefined) {
+        return yield* new DeployError({ message: `No tag for role "${settings.role}"` });
+      }
+
+      reused[settings.role] = { tag, context: settings.context ?? settings.workingDirectory };
+    }
+
     return reused;
   }
 
-  if (app.config.targets.length === 0) {
-    return { tag: THIRD_PARTY_TAG, context: configured ?? directory };
-  }
-
-  if (app.config.workingDirectory !== undefined) {
-    yield* requireDirectory(directory);
-  }
-
   const git = yield* Git;
-  const root = yield* git.root(directory);
+  const tagsByRoot = new Map<string, string>();
+  const built: Record<string, RoleSource> = {};
+  for (const settings of roles) {
+    if (settings.workingDirectoryConfigured) {
+      yield* requireDirectory(settings.workingDirectory);
+    }
+
+    const root = yield* git.root(settings.workingDirectory);
+    const known = tagsByRoot.get(root);
+    const tag = known ?? (yield* checkedTag(root, options));
+    tagsByRoot.set(root, tag);
+    built[settings.role] = { tag, context: settings.context ?? root };
+  }
+
+  return built;
+});
+
+/**
+ * The tag of one Git repository: its short commit, `-dirty` when the checkout has changes. Fails
+ * when it has no commits, or is dirty without `--allow-dirty` or `--local`.
+ */
+const checkedTag = Effect.fn('checkedTag')(function* (root: string, options: DeployOptions) {
+  const git = yield* Git;
   if (!(yield* git.hasCommits(root))) {
     return yield* new DeployError({
-      message: 'The repository has no commits yet; images are tagged with the commit',
+      message: `The repository ${root} has no commits yet; images are tagged with the commit`,
     });
   }
 
   const dirty = yield* git.isDirty(root);
   if (dirty && !options.allowDirty && !options.local) {
-    return yield* new DeployError({ message: 'Commit your changes first, or pass --allow-dirty' });
+    return yield* new DeployError({
+      message: `Commit your changes in ${root} first, or pass --allow-dirty`,
+    });
   }
 
-  const built: Source = {
-    tag: `${yield* git.shortSha(root)}${dirty ? '-dirty' : ''}`,
-    context: configured ?? root,
-  };
-  return built;
+  return `${yield* git.shortSha(root)}${dirty ? '-dirty' : ''}`;
 });
 
 /**
@@ -242,13 +256,14 @@ const planRun = Effect.fn('planRun')(function* (
   app: App,
   host: HostConfig,
   options: DeployOptions,
-  source: Source,
+  sources: RoleSources,
+  overrideFile: string | undefined,
 ) {
   const shell = yield* Shell;
   const dryRun = yield* DryRun;
 
-  const { tag } = source;
-  const steps = yield* planSteps(app, host, options, source);
+  const tag = tagLabel(sources);
+  const steps = yield* planSteps(app, host, options, sources, overrideFile);
 
   const where = options.local ? 'local Docker' : `${app.config.host} (${dockerHost(host)})`;
   const header = `Deploying ${app.config.name} ${tag} to ${where}`;
@@ -273,7 +288,7 @@ const planRun = Effect.fn('planRun')(function* (
 
   const ingress = options.local ? undefined : yield* tryIngressFor(app);
   const directories = directoriesOf(app.config);
-  const images = imageCount(app.config.targets.length);
+  const images = imageCount(Object.keys(sources).length);
 
   // `planDeployment` puts the Compose command last, after every build and transport step; with
   // `--tag` it is alone.
@@ -351,7 +366,8 @@ const planSteps = Effect.fn('planSteps')(function* (
   app: App,
   host: HostConfig,
   options: DeployOptions,
-  source: Source,
+  sources: RoleSources,
+  overrideFile: string | undefined,
 ) {
   const secrets = yield* readSecrets(app, { local: options.local });
   const steps = yield* tryPlan(
@@ -359,10 +375,10 @@ const planSteps = Effect.fn('planSteps')(function* (
       planDeployment({
         app,
         host,
-        tag: source.tag,
+        sources,
         local: options.local,
-        reuseImages: options.tag._tag === 'Some',
-        context: source.context,
+        reuseImages: options.tags.length > 0,
+        ...(overrideFile === undefined ? {} : { overrideFile }),
         secrets,
       }),
     INVALID_DEPLOYMENT_PLAN,
@@ -472,24 +488,59 @@ export const deploy = Effect.fn('deploy')(function* (
 ): Effect.fn.Return<
   void,
   DeployError,
-  FileSystem.FileSystem | Git | HttpClient.HttpClient | Path.Path | Remote | Shell
+  FileSystem.FileSystem | Git | HttpClient.HttpClient | Path.Path | Remote | Scope.Scope | Shell
 > {
   const { app, host } = yield* resolve(options.target, options.hosts, options.destination);
   if (!options.local && host.transport.mode === 'remote-build' && app.config.execution !== 'ssh') {
     return yield* new DeployError({ message: 'remote-build transport requires execution: ssh' });
   }
 
-  const source = yield* chooseSource(app, options);
+  yield* validateRoles(app, { local: options.local });
 
+  const sources = yield* chooseSource(app, options);
   if (!options.local && app.config.execution === 'ssh') {
-    return yield* deploySsh(app, host, options, source);
+    return yield* deploySsh(app, host, options, sources);
   }
 
-  yield* Effect.logDebug(`tag ${source.tag}, context ${source.context}`);
+  yield* Effect.logDebug(`tags ${tagLabel(sources)}`);
 
-  const run = yield* planRun(app, host, options, source);
+  const override = yield* tryPlan(
+    () => roleOverride({ app, host, tags: tagsOf(sources), local: options.local }),
+    INVALID_DEPLOYMENT_PLAN,
+  );
+  const overrideFile = override === undefined ? undefined : yield* overridePath(override);
+  const run = yield* planRun(app, host, options, sources, overrideFile);
   yield* Console.log(run.header);
+
+  if (override !== undefined && (yield* DryRun)) {
+    yield* Console.log(`Roles override ${overrideFile}:\n${override.trimEnd()}`);
+  }
 
   const total = yield* runPhases(run.phases);
   yield* run.summary(formatDuration(total));
+}, Effect.scoped);
+
+/**
+ * The path Compose reads the roles override from. Outside a dry run the override is written to a
+ * private temporary folder that is removed when the surrounding scope closes; a dry run writes
+ * nothing and only names where the file would go.
+ */
+const overridePath = Effect.fn('overridePath')(function* (
+  override: string,
+): Effect.fn.Return<string, DeployError, FileSystem.FileSystem | Path.Path | Scope.Scope> {
+  const path = yield* Path.Path;
+  if (yield* DryRun) {
+    return path.join(tmpdir(), 'compoza-roles-XXXXXX', ROLES_OVERRIDE_FILE);
+  }
+
+  const fs = yield* FileSystem.FileSystem;
+  const dir = yield* fs
+    .makeTempDirectoryScoped({ prefix: 'compoza-roles-' })
+    .pipe(Effect.mapError(platformFailure('Creating a temporary folder for the roles override')));
+  const file = path.join(dir, ROLES_OVERRIDE_FILE);
+  yield* fs
+    .writeFileString(file, override, { mode: PRIVATE_FILE_MODE })
+    .pipe(Effect.mapError(platformFailure('Writing the roles override')));
+
+  return file;
 });

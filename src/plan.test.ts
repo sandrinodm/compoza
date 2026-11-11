@@ -4,20 +4,15 @@ import type { App } from './config/deploy.ts';
 import type { HostConfig } from './config/hosts.ts';
 
 import { isPipeline, printableStep, REMOTE_PATH, shellQuote } from './command.ts';
-import {
-  composePrefix,
-  dockerfileOf,
-  imageReference,
-  imageVariable,
-  planDeployment,
-} from './plan.ts';
+import { composePrefix, planDeployment } from './plan.ts';
+import { buildSettingsOf, imageReference } from './roles.ts';
 
 const app: App = {
   dir: '/repo/infra',
   config: {
     name: 'demo',
     host: 'atlas',
-    targets: ['builder', 'web'],
+    roles: { builder: { build: { target: 'builder' } }, web: { build: { target: 'web' } } },
     composeFiles: ['compose.yaml', 'compose.production.yaml'],
     environment: { DEMO_PORT: '8090' },
     local: { composeFiles: ['compose.yaml'], environment: { DEMO_SOURCES_PATH: '../sources' } },
@@ -30,6 +25,13 @@ const registryHost: HostConfig = {
   transport: { mode: 'registry', registry: 'registry.example.com' },
 };
 
+/**
+ * A role source under the fixture repository.
+ */
+function source(tag: string, context = '/repo') {
+  return { tag, context };
+}
+
 const sshHost: HostConfig = { ...registryHost, transport: { mode: 'ssh-load' } };
 
 describe('naming', () => {
@@ -40,10 +42,10 @@ describe('naming', () => {
     );
     assert.strictEqual(imageReference(app, registryHost, 'web', 'abc', true), 'demo-web:abc');
     assert.strictEqual(imageReference(app, sshHost, 'web', 'abc', false), 'demo-web:abc');
-    assert.strictEqual(imageVariable('scraper-api'), 'SCRAPER_API_IMAGE');
-    assert.strictEqual(dockerfileOf(app), '/repo/infra/Dockerfile');
+    assert.strictEqual(buildSettingsOf(app, 'web').dockerfile, '/repo/infra/Dockerfile');
     assert.strictEqual(
-      dockerfileOf({ ...app, config: { ...app.config, dockerfile: '../Dockerfile' } }),
+      buildSettingsOf({ ...app, config: { ...app.config, dockerfile: '../Dockerfile' } }, 'web')
+        .dockerfile,
       '/repo/Dockerfile',
     );
   });
@@ -53,15 +55,14 @@ describe('naming', () => {
       ...app,
       config: { ...app.config, dockerfile: '/abs/Dockerfile', composeFiles: ['/abs/compose.yaml'] },
     };
-    assert.strictEqual(dockerfileOf(absolute), '/abs/Dockerfile');
+    assert.strictEqual(buildSettingsOf(absolute, 'web').dockerfile, '/abs/Dockerfile');
 
     const steps = planDeployment({
       app: absolute,
       host: registryHost,
-      tag: 'abc',
+      sources: { builder: source('abc'), web: source('abc') },
       local: false,
       reuseImages: false,
-      context: '/repo',
       secrets: {},
     });
     assert.include(printableStep(steps[0]!), '--file /abs/Dockerfile ');
@@ -91,10 +92,9 @@ describe('naming', () => {
 describe('planDeployment', () => {
   const base = {
     app,
-    tag: 'abc123',
+    sources: { builder: source('abc123'), web: source('abc123') },
     local: false,
     reuseImages: false,
-    context: '/repo',
     secrets: { PG_PASSWORD: 'x' },
   };
 
@@ -103,7 +103,7 @@ describe('planDeployment', () => {
     assert.deepStrictEqual(steps.map(printableStep), [
       'docker buildx build --platform linux/arm64 --push --file /repo/infra/Dockerfile --target builder --tag registry.example.com/demo-builder:abc123 /repo',
       'docker buildx build --platform linux/arm64 --push --file /repo/infra/Dockerfile --target web --tag registry.example.com/demo-web:abc123 /repo',
-      'DEMO_PORT=8090 PG_PASSWORD=*** BUILDER_IMAGE=registry.example.com/demo-builder:abc123 WEB_IMAGE=registry.example.com/demo-web:abc123 docker --host ssh://deploy@atlas.example.com compose --project-name demo --project-directory /repo/infra --env-file /dev/null --file /repo/infra/compose.yaml --file /repo/infra/compose.production.yaml up --detach --remove-orphans --no-build --pull always',
+      'DEMO_PORT=8090 PG_PASSWORD=*** docker --host ssh://deploy@atlas.example.com compose --project-name demo --project-directory /repo/infra --env-file /dev/null --file /repo/infra/compose.yaml --file /repo/infra/compose.production.yaml up --detach --remove-orphans --no-build --pull always',
     ]);
 
     const compose = steps.at(-1);
@@ -136,13 +136,70 @@ describe('planDeployment', () => {
     assert.deepStrictEqual(steps.map(printableStep), [
       'docker buildx build --load --file /repo/infra/Dockerfile --target builder --tag demo-builder:abc123 /repo',
       'docker buildx build --load --file /repo/infra/Dockerfile --target web --tag demo-web:abc123 /repo',
-      'DEMO_PORT=8090 DEMO_SOURCES_PATH=../sources PG_PASSWORD=*** BUILDER_IMAGE=demo-builder:abc123 WEB_IMAGE=demo-web:abc123 docker compose --project-name demo --project-directory /repo/infra --env-file /dev/null --file /repo/infra/compose.yaml up --detach --remove-orphans --no-build --pull missing',
+      'DEMO_PORT=8090 DEMO_SOURCES_PATH=../sources PG_PASSWORD=*** docker compose --project-name demo --project-directory /repo/infra --env-file /dev/null --file /repo/infra/compose.yaml up --detach --remove-orphans --no-build --pull missing',
     ]);
   });
 
   it('skips the build when reusing images', () => {
     const steps = planDeployment({ ...base, host: registryHost, reuseImages: true });
     assert.strictEqual(steps.length, 1);
-    assert.include(printableStep(steps[0]!), 'WEB_IMAGE=registry.example.com/demo-web:abc123');
+    assert.include(printableStep(steps[0]!), 'compose --project-name demo');
+  });
+
+  it('builds a role without a target and with its own dockerfile, context and directory', () => {
+    const roles: App['config']['roles'] = {
+      api: { build: {} },
+      worker: {
+        build: {
+          target: 'worker',
+          workingDirectory: '/other/worker',
+          dockerfile: 'infra/worker.Dockerfile',
+          context: 'src',
+        },
+      },
+    };
+    const steps = planDeployment({
+      ...base,
+      app: { ...app, config: { ...app.config, roles } },
+      host: registryHost,
+      sources: { api: source('abc', '/repo'), worker: source('def', '/other/worker/src') },
+    });
+    const [api, worker] = steps;
+    assert.strictEqual(
+      printableStep(api!),
+      'docker buildx build --platform linux/arm64 --push --file /repo/infra/Dockerfile --tag registry.example.com/demo-api:abc /repo',
+    );
+    assert.strictEqual(
+      printableStep(worker!),
+      'docker buildx build --platform linux/arm64 --push --file /other/worker/infra/worker.Dockerfile --target worker --tag registry.example.com/demo-worker:def /other/worker/src',
+    );
+    assert.strictEqual(isPipeline(api!) ? '' : api!.cwd, '/repo/infra');
+    assert.strictEqual(isPipeline(worker!) ? '' : worker!.cwd, '/other/worker');
+  });
+
+  it('builds nothing for roles without a build', () => {
+    const roles = { postgres: { environment: { POSTGRES_USER: 'demo' } } };
+    const steps = planDeployment({
+      ...base,
+      app: { ...app, config: { ...app.config, roles } },
+      host: registryHost,
+      sources: {},
+    });
+    assert.strictEqual(steps.length, 1);
+  });
+
+  it('passes the roles override to compose as the last file', () => {
+    const overrideFile = '/tmp/compoza-roles-x/compoza.roles.yaml';
+    const client = planDeployment({ ...base, host: registryHost, overrideFile });
+    assert.include(
+      printableStep(client.at(-1)!),
+      '--file /repo/infra/compose.production.yaml --file /tmp/compoza-roles-x/compoza.roles.yaml up',
+    );
+
+    const local = planDeployment({ ...base, host: registryHost, local: true, overrideFile });
+    assert.include(
+      printableStep(local.at(-1)!),
+      '--file /repo/infra/compose.yaml --file /tmp/compoza-roles-x/compoza.roles.yaml up',
+    );
   });
 });

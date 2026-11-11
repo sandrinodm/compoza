@@ -425,7 +425,6 @@ describe('Cloudflare connector provisioning', { timeout: INTEGRATION_TIMEOUT_MIL
         config: {
           name: 'app',
           host: 'fixture',
-          targets: [],
           composeFiles: ['compose.yaml'] as [string],
           ingress: { 'cloudflare-tunnel': { domain: 'app.example.com', service: 'http://app:80' } },
         },
@@ -456,7 +455,6 @@ describe('Cloudflare connector provisioning', { timeout: INTEGRATION_TIMEOUT_MIL
         config: {
           name: 'app',
           host: 'fixture',
-          targets: [],
           composeFiles: ['compose.yaml'] as [string],
           ingress: {
             'cloudflare-tunnel': { domain: 'app.example.com', service: 'https://app:443' },

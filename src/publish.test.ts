@@ -12,7 +12,7 @@ const app: App = {
   config: {
     name: 'demo',
     host: 'atlas',
-    targets: ['web'],
+    roles: { web: { build: { target: 'web' } } },
     composeFiles: ['compose.yaml'],
     content: { demo: '/srv/demo/data/demo' },
   },

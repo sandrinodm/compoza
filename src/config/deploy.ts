@@ -11,7 +11,7 @@ import {
 } from '../extensions/config.ts';
 import { fileExists, readConfigFile } from './config-file.ts';
 import { expandHome } from './hosts.ts';
-import { AbsolutePath, Name, Target } from './schema.ts';
+import { AbsolutePath, Name, RoleName, Target } from './schema.ts';
 
 export { HealthPath, Ingress, SecretsConfig } from '../extensions/config.ts';
 export type { CaddyIngress, NoIngress } from '../extensions/config.ts';
@@ -31,6 +31,14 @@ const ALTERNATE_DEPLOY_FILE = 'deploy.yml';
  * The path probed after a deploy when the ingress names none.
  */
 export const DEFAULT_HEALTH_PATH = '/';
+
+/**
+ * The message for a `deploy.yaml` that still has `targets`, which `roles` replaced.
+ */
+const TARGETS_REMOVED_MESSAGE =
+  'targets was replaced by roles: give each built Compose service a role with build.target, ' +
+  'and remove image: ${<TARGET>_IMAGE} from Compose files; ' +
+  "compoza now sets each built service's image";
 
 /**
  * A target that already names a YAML file rather than a folder.
@@ -60,6 +68,81 @@ const HEALTH_URL_PATTERN = /^https?:\/\/[^\s@]+$/;
 const DIRECTORY_PATH_PATTERN = /^(?=.*\S)[^\p{Cc}]+$/u;
 
 /**
+ * A directory path that is not blank and holds no control characters, as `workingDirectory` takes.
+ */
+const DirectoryPath = Schema.String.pipe(
+  Schema.check(
+    Schema.isPattern(DIRECTORY_PATH_PATTERN, {
+      message: 'expected a nonempty directory path without control characters',
+    }),
+  ),
+);
+
+/**
+ * How one role's image is built; each field left out falls back to the top-level field of the same
+ * name, then to its default.
+ */
+const RoleBuild = Schema.Struct({
+  /**
+   * The Dockerfile stage to build; without it no `--target` flag is passed and the final stage is
+   * built.
+   */
+  target: Schema.optionalKey(Target),
+
+  /**
+   * The source directory for this role's Git checks and build, resolved like the top-level
+   * `workingDirectory`.
+   */
+  workingDirectory: Schema.optionalKey(DirectoryPath),
+
+  /**
+   * The Dockerfile, relative to the role's working directory; defaults to `Dockerfile` there.
+   */
+  dockerfile: Schema.optionalKey(Schema.String),
+
+  /**
+   * The build context, relative to the role's working directory; defaults to the root of the Git
+   * repository containing it.
+   */
+  context: Schema.optionalKey(Schema.String),
+});
+
+/**
+ * What a destination or a local run may change about a role: its container environment and secrets.
+ * Destinations share the source, so they cannot add `build`.
+ */
+export const RoleSettings = Schema.Struct({
+  /**
+   * Container environment of the service, merged over the role's `environment`. Values are literal.
+   */
+  environment: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+
+  /**
+   * Secret variable names from the stack's secret source, delivered to the service under the same
+   * names. Replaces the role's list.
+   */
+  secrets: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
+/**
+ * The settings of one Compose service: what to build for it and which container environment and
+ * secrets it gets.
+ */
+export const Role = Schema.Struct({
+  /**
+   * How to build the service's image; without it Compoza builds nothing for this service.
+   */
+  build: Schema.optionalKey(RoleBuild),
+
+  ...RoleSettings.fields,
+});
+
+/**
+ * Role settings by Compose service name.
+ */
+const RoleSettingsByName = Schema.Record(RoleName, RoleSettings);
+
+/**
  * Settings that replace the deployment's for `--local` runs against this machine's Docker.
  */
 export const LocalOverrides = Schema.Struct({
@@ -78,6 +161,12 @@ export const LocalOverrides = Schema.Struct({
    * Compose variables merged over `environment`, usually relative paths in place of host folders.
    */
   environment: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+
+  /**
+   * Role environment merged over the app's roles for a local run, and secrets replacing a role's
+   * list.
+   */
+  roles: Schema.optionalKey(RoleSettingsByName),
 });
 
 /**
@@ -123,8 +212,8 @@ export const HealthConfig = Schema.Struct({
 /**
  * A named deployment selection merged over the app defaults.
  *
- * Destinations share source and image targets while selecting a host, Compose files and persistent
- * host paths.
+ * Destinations share source and the roles' builds while selecting a host, Compose files and
+ * persistent host paths.
  */
 export const Destination = Schema.Struct({
   /**
@@ -168,6 +257,11 @@ export const Destination = Schema.Struct({
   environment: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 
   /**
+   * Role environment merged over the app's roles, and secrets replacing a role's list.
+   */
+  roles: Schema.optionalKey(RoleSettingsByName),
+
+  /**
    * The ingress replacing the app default, including `none` for private destinations.
    */
   ingress: Schema.optionalKey(Ingress),
@@ -201,7 +295,7 @@ export const DeployConfig = Schema.Struct({
   secrets: Schema.optionalKey(SecretsConfig),
 
   /**
-   * Compose project name and image name prefix (`<name>-<target>`).
+   * Compose project name and image name prefix (`<name>-<role>`).
    */
   name: Name,
 
@@ -211,36 +305,28 @@ export const DeployConfig = Schema.Struct({
   host: Name,
 
   /**
-   * The source directory for Git and builds, relative to this file; absolute and `~/` paths are
-   * also accepted. Defaults to the deploy folder. Compose, assets, secrets and templates remain
+   * The default source directory for Git and builds, relative to this file; absolute and `~/` paths
+   * are also accepted. Defaults to the deploy folder. Compose, assets, secrets and templates remain
    * relative to this file.
    */
-  workingDirectory: Schema.optionalKey(
-    Schema.String.pipe(
-      Schema.check(
-        Schema.isPattern(DIRECTORY_PATH_PATTERN, {
-          message: 'expected a nonempty directory path without control characters',
-        }),
-      ),
-    ),
-  ),
+  workingDirectory: Schema.optionalKey(DirectoryPath),
 
   /**
-   * The Dockerfile, relative to the working directory; defaults to `Dockerfile` there.
+   * The default Dockerfile, relative to the working directory; defaults to `Dockerfile` there.
    */
   dockerfile: Schema.optionalKey(Schema.String),
 
   /**
-   * The build context, relative to the working directory; defaults to the root of the Git
+   * The default build context, relative to the working directory; defaults to the root of the Git
    * repository.
    */
   context: Schema.optionalKey(Schema.String),
 
   /**
-   * Dockerfile targets to build; each becomes an `<TARGET>_IMAGE` Compose variable holding its
-   * image reference.
+   * Settings per Compose service. A role with `build` gets an image built by Compoza, and every
+   * role can set container environment and secrets for its service.
    */
-  targets: Schema.Array(Target),
+  roles: Schema.optionalKey(Schema.Record(RoleName, Role)),
 
   /**
    * Compose files applied in order; relative paths use the deploy folder, and absolute paths select
@@ -338,11 +424,21 @@ export interface App {
 }
 
 /**
- * The source directory used by Git and builds, without requiring a checkout for source-free
- * commands.
+ * The settings of one role after merging destinations and local runs.
  */
-export function workingDirectoryOf(app: App): string {
-  return resolve(app.dir, expandHome(app.config.workingDirectory ?? '.'));
+export type Role = typeof Role.Type;
+
+/**
+ * The container settings a destination or local run may set for a role.
+ */
+export type RoleSettings = typeof RoleSettings.Type;
+
+/**
+ * The source directory used by Git and builds, without requiring a checkout for source-free
+ * commands. A role's own `workingDirectory` takes the place of the top-level one when given.
+ */
+export function workingDirectoryOf(app: App, workingDirectory?: string): string {
+  return resolve(app.dir, expandHome(workingDirectory ?? app.config.workingDirectory ?? '.'));
 }
 
 /**
@@ -400,6 +496,47 @@ export function environmentOf(
 }
 
 /**
+ * Merges role settings from a destination or local run over a base set of roles: per role,
+ * `environment` merges over the base's and `secrets` replaces the base's list when given. A role
+ * named only in `overrides` is kept as an environment-only role.
+ */
+export function mergeRoles(
+  base: Readonly<Record<string, Role>> | undefined,
+  overrides: Readonly<Record<string, RoleSettings>> | undefined,
+): Record<string, Role> {
+  const merged: Record<string, Role> = { ...base };
+  for (const [name, settings] of Object.entries(overrides ?? {})) {
+    const role = Object.hasOwn(merged, name) ? merged[name] : undefined;
+    const environment = { ...role?.environment, ...settings.environment };
+    const secrets = settings.secrets ?? role?.secrets;
+    merged[name] = {
+      ...role,
+      ...(Object.keys(environment).length === 0 ? {} : { environment }),
+      ...(secrets === undefined ? {} : { secrets }),
+    };
+  }
+
+  return merged;
+}
+
+/**
+ * The roles for a run: the app's, with the `local.roles` settings merged over them for a local run.
+ */
+export function rolesOf(
+  config: DeployConfig,
+  { local = false }: RunOptions = {},
+): Readonly<Record<string, Role>> {
+  return local ? mergeRoles(config.roles, config.local?.roles) : (config.roles ?? {});
+}
+
+/**
+ * The variables the roles take from the secret source, without duplicates, in first-use order.
+ */
+export function roleSecretNames(roles: Readonly<Record<string, Role>>): ReadonlyArray<string> {
+  return [...new Set(Object.values(roles).flatMap((role) => role.secrets ?? []))];
+}
+
+/**
  * Reads and validates the `deploy.yaml` at `target`, which may name the folder or the file itself.
  *
  * Relative targets resolve against the working directory, so `compoza deploy infra` works from a
@@ -415,7 +552,7 @@ export const loadApp = Effect.fn('loadApp')(function* (
     file,
     DeployConfig,
     `No ${file}. Point compoza at a folder holding a ${DEPLOY_FILE}.`,
-    { privateInput: true },
+    { privateInput: true, removedKeys: { targets: TARGETS_REMOVED_MESSAGE } },
   );
   return { dir: path.dirname(file), file, config };
 });
@@ -460,10 +597,13 @@ export function selectDestination(app: App, name?: string): App {
     throw new Error(`Unknown destination "${name}"; choices: ${choices}`);
   }
 
+  const { roles: _roles, ...rest } = selected;
+  const roles = mergeRoles(app.config.roles, selected.roles);
   const config = {
     ...app.config,
-    ...selected,
+    ...rest,
     environment: { ...app.config.environment, ...selected.environment },
+    ...(Object.keys(roles).length === 0 ? {} : { roles }),
   };
   return { ...app, config };
 }

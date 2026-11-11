@@ -80,7 +80,6 @@ my-app/
 ```yaml
 name: hello-web # the Compose project name on the server
 host: juniper # a host from hosts.yaml
-targets: [] # images to build; none, because nginx is pulled as is
 execution: ssh # run Compose on the server from a stack folder
 composeFiles:
   - compose.yaml
@@ -146,7 +145,7 @@ Stack deployment complete
 Deployed hello-web third-party to juniper; stack folder updated.
 ```
 
-The deploy writes `compose.yaml`, `.env` and a small metadata file into `stackDir`, runs `docker compose up --wait` on the server, and succeeds only once `health.url` answers. `third-party` is the image tag of an app that builds nothing; apps with `targets` are tagged with the commit.
+The deploy writes `compose.yaml`, `.env` and a small metadata file into `stackDir`, runs `docker compose up --wait` on the server, and succeeds only once `health.url` answers. `third-party` is the image tag of an app that builds nothing; each role with a `build` is tagged with the commit of its repository.
 
 ### 5. Look at it
 
@@ -159,7 +158,7 @@ hello-web-web-1   nginx:alpine   "/docker-entrypoint.…"   web       2 seconds 
 $ compoza logs infra --tail 20 --follow
 $ ssh deploy@juniper.example.com <logs deployed stack>
 web-1  | 2026/11/03 10:06:20 [notice] 1#1: start worker process 40
-web-1  | 192.168.158.1 - - [03/Nov/2026:10:06:21 +0000] "GET / HTTP/1.1" 200 896 "-" "curl/8.7.1" "-"
+web-1  | 192.0.2.1 - - [03/Nov/2026:10:06:21 +0000] "GET / HTTP/1.1" 200 896 "-" "curl/8.7.1" "-"
 ```
 
 `--follow` keeps printing new lines until you press Ctrl-C, each prefixed with the container that wrote it. To see the page itself, ask the server: `ssh deploy@juniper.example.com curl -s http://127.0.0.1:8080/`.
@@ -179,12 +178,12 @@ Deleted hello-web; data, secrets and stack files stay
 ### Next steps
 
 - **Serve it on a domain** through a shared [Caddy proxy or a Cloudflare Tunnel](docs/ingress.md): configure the provider on the host, run `compoza setup-proxy juniper` once, and add `ingress` with the app's domain to `deploy.yaml`.
-- **Build your own images** by listing Dockerfile `targets`; each is built, tagged with the commit and shipped to the server. See [Apps](docs/configuration.md#apps) and [Image transports](docs/configuration.md#image-transports).
+- **Build your own images** by giving a Compose service a [role](docs/configuration.md#roles) with `build`; compoza builds it, tags it with the commit, ships it to the server and sets the service's `image`. Roles also carry per-service environment and secrets. See [Image transports](docs/configuration.md#image-transports).
 - **Add secrets** from a dotenv file or 1Password without putting values in configuration. For 1Password, save your desktop account once with `compoza config set 1password.account "<account>"`. See [Secrets](docs/secrets.md).
 - **Share hosts across machines or teammates** by keeping a `hosts.yaml` in an infrastructure repository and running `compoza hosts link <folder>`. See [Linked hosts files](docs/configuration.md#linked-hosts-files).
 - **Run Compose from your machine instead** by leaving `execution` out: the default, client execution, runs Compose locally against `docker --host ssh://<host>` and needs Docker on your machine. See [Execution and image transport](#execution-and-image-transport).
 - **Keep deployment configuration out of the app repository.** For `Repositories/deployments/foo/deploy.yaml`, set `workingDirectory: ../../foo`; Git checks and builds then use `Repositories/foo`, while Compose files, assets and templates stay beside `deploy.yaml`. See [separate source and deployment folders](docs/configuration.md#separate-source-and-deployment-folders).
-- **Recover** from a bad deploy with `compoza deploy infra --tag <earlier-tag>`.
+- **Recover** from a bad deploy with `compoza deploy infra --tag <earlier-tag>`, or `--tag <role>=<tag>` for one role.
 
 ## Execution and image transport
 
@@ -199,17 +198,17 @@ Two independent settings decide how a deploy runs:
 
 ## Commands
 
-| Task                   | Command                                                                       |
-| ---------------------- | ----------------------------------------------------------------------------- |
-| Check readiness        | `compoza check <folder> [--json] [--secrets]`                                 |
-| Preview / deploy       | `compoza deploy <folder> [--dry-run]`                                         |
-| Reuse an earlier image | `compoza deploy <folder> --tag <image-tag>`                                   |
-| Inspect services       | `compoza status <folder>`                                                     |
-| Read or follow logs    | `compoza logs <folder> [--service <name>] [--tail <lines>] [--follow]`        |
-| Stop / resume          | `compoza stop <folder>` / `compoza start <folder>`                            |
-| Remove a stack         | `compoza delete <folder> [--volumes]`                                         |
-| Mirror content         | `compoza publish <folder> <section> <source>`                                 |
-| Set up host ingress    | `compoza setup-proxy <host> [--ingress caddy\|cloudflare-tunnel] [--dry-run]` |
+| Task                 | Command                                                                       |
+| -------------------- | ----------------------------------------------------------------------------- |
+| Check readiness      | `compoza check <folder> [--json] [--secrets]`                                 |
+| Preview / deploy     | `compoza deploy <folder> [--dry-run]`                                         |
+| Reuse earlier images | `compoza deploy <folder> --tag <tag> [--tag <role>=<tag>]`                    |
+| Inspect services     | `compoza status <folder>`                                                     |
+| Read or follow logs  | `compoza logs <folder> [--service <name>] [--tail <lines>] [--follow]`        |
+| Stop / resume        | `compoza stop <folder>` / `compoza start <folder>`                            |
+| Remove a stack       | `compoza delete <folder> [--volumes]`                                         |
+| Mirror content       | `compoza publish <folder> <section> <source>`                                 |
+| Set up host ingress  | `compoza setup-proxy <host> [--ingress caddy\|cloudflare-tunnel] [--dry-run]` |
 
 `<folder>` holds `deploy.yaml` (or is the file itself) and defaults to the working directory, except for `publish`, which requires it. Every app command accepts `--destination <name>`, and `stop`, `start`, `delete`, `publish` and `setup-proxy` accept `--dry-run`. `delete` is also available as `down`.
 

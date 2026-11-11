@@ -5,12 +5,12 @@ import type { App } from './config/deploy.ts';
 import type { HostConfig } from './config/hosts.ts';
 import type { IngressPlan } from './extensions/ingress.ts';
 
-import { composeBundlePath } from './bundle.ts';
+import { composeBundlePath, ROLES_OVERRIDE_FILE, ROLES_OVERRIDE_RESERVED } from './bundle.ts';
 import { REMOTE_PATH, shellQuote } from './command.ts';
 import { directoriesOf, ingressOf, projectNameOf } from './config/deploy.ts';
 import { secretEnvironment, validateSecrets } from './config/secrets.ts';
 import { ingressFor, ingressOperationScript } from './extensions/ingress.ts';
-import { imageReference, imageVariable } from './plan.ts';
+import { buildingRoles, roleOverride } from './roles.ts';
 import { runtimeSource } from './ssh-runtime.ts';
 
 /**
@@ -87,6 +87,12 @@ interface TransactionScriptParts {
   readonly bundle: ReadonlyArray<BundleFile>;
 
   /**
+   * Whether the generated roles override follows the bundle on standard input. It is staged as
+   * `ROLES_OVERRIDE_FILE` and normalized last, but never installed.
+   */
+  readonly hasOverride: boolean;
+
+  /**
    * Host directories created before Compose starts the stack.
    */
   readonly directories: ReadonlyArray<string>;
@@ -138,19 +144,12 @@ export function stackRoot(app: App): string {
 /**
  * Builds the non-secret dotenv payload using Compose's double-quoted literal escaping.
  *
- * Image variables are reserved and written into the generated dotenv, so a separate host dotenv or
- * inherited shell variables cannot replace them. Configured variables must be explicit non-secret
- * strings.
+ * Configured variables must be explicit non-secret strings.
  */
 export function generatedEnvironment(app: App): string {
-  const imageVariables = new Set(app.config.targets.map(imageVariable));
-  if (imageVariables.size !== app.config.targets.length) {
-    throw new Error('Targets must map to distinct image variables');
-  }
-
   const environment = app.config.environment ?? {};
   for (const [key, value] of Object.entries(environment)) {
-    const issue = environmentVariableIssue(key, value, imageVariables);
+    const issue = environmentVariableIssue(key, value);
     if (issue !== undefined) {
       throw new Error(issue);
     }
@@ -205,7 +204,7 @@ done
 export function deploymentScript(
   app: App,
   host: HostConfig,
-  tag: string,
+  tags: Readonly<Record<string, string>>,
   bundle: ReadonlyArray<BundleFile>,
   secrets?: Readonly<Record<string, string>>,
 ): { readonly script: string; readonly input: string } {
@@ -220,22 +219,27 @@ export function deploymentScript(
     throw new Error('compose.yaml is the generated stack file and cannot be declared as an asset');
   }
 
+  if (bundle.some((file) => file.path === ROLES_OVERRIDE_FILE)) {
+    throw new Error(ROLES_OVERRIDE_RESERVED);
+  }
+
+  const override = roleOverride({ app, host, tags });
+
   const files = ['compose.yaml', ...assets.map((file) => file.path)];
   const outputs = [...files, '.env', '.compoza.json'];
   assertOverlaySeparate(app, root, outputs);
 
   const ingress = ingressFor(app)?.plan(app, host);
   const url = app.config.health?.url ?? ingress?.healthUrl;
-  const metadata = deploymentMetadata(app, tag, files, ingress, secrets !== undefined);
-  const environment =
-    generatedEnvironment(app) +
-    secretEnvironment({ ...secrets, ...imageEnvironment(app, host, tag) });
+  const metadata = deploymentMetadata(app, tags, files, ingress, secrets !== undefined);
+  const environment = generatedEnvironment(app) + secretEnvironment({ ...secrets });
 
   const script = transactionScript({
     root,
     composeFiles,
     outputs,
     bundle,
+    hasOverride: override !== undefined,
     directories: directoriesOf(app.config),
     pull: host.transport.mode === 'registry' ? 'always' : 'missing',
     waitTimeoutSeconds: app.config.remote?.waitTimeoutSeconds ?? DEFAULT_WAIT_TIMEOUT_SECONDS,
@@ -250,6 +254,7 @@ export function deploymentScript(
   const input =
     [
       ...bundle.map((file) => file.encoded),
+      ...(override === undefined ? [] : [Buffer.from(override).toString('base64')]),
       Buffer.from(metadata).toString('base64'),
       Buffer.from(environment).toString('base64'),
     ].join('\n') + '\n';
@@ -318,7 +323,8 @@ export function sshReadinessScript(app: App, host: HostConfig): string {
   const overlayCheck = readableFileCheck(app.config.remote?.overlayFile);
   const probesHttp = app.config.health !== undefined || ingressOf(app.config).mode !== 'none';
   const curlCheck = probesHttp ? 'command -v curl >/dev/null 2>&1' : 'true';
-  const buildsOnHost = host.transport.mode === 'remote-build' && app.config.targets.length > 0;
+  const buildsOnHost =
+    host.transport.mode === 'remote-build' && buildingRoles(app.config).length > 0;
   const buildkitCheck = buildsOnHost ? 'docker buildx version >/dev/null 2>&1' : 'true';
   return `set -eu
 ${REMOTE_PATH}
@@ -363,26 +369,18 @@ function stackRootIssue(root: string): string | undefined {
 
 /**
  * Why a configured variable may not be written into the generated dotenv, or `undefined` when it
- * may: its name must be portable, must not be an image variable, must not be reserved by Compose,
- * Docker or the shell, and its value must be a single line without NUL. The requirements are
- * checked in that order and the first one that fails is reported.
+ * may: its name must be portable, must not be reserved by Compose, Docker or the shell, and its
+ * value must be a single line without NUL. The requirements are checked in that order and the first
+ * one that fails is reported.
  *
  * Messages name the variable but never include its value.
  */
-function environmentVariableIssue(
-  key: string,
-  value: string,
-  imageVariables: ReadonlySet<string>,
-): string | undefined {
+function environmentVariableIssue(key: string, value: string): string | undefined {
   if (!ENVIRONMENT_KEY.test(key)) {
     return (
       `Environment variable name ${key} is not portable; ` +
       'use a letter or underscore, then letters, digits and underscores'
     );
-  }
-
-  if (imageVariables.has(key)) {
-    return `Environment variable ${key} is reserved for a target's image; rename it in environment`;
   }
 
   if (
@@ -439,12 +437,13 @@ function assertOverlaySeparate(app: App, root: string, outputs: ReadonlyArray<st
 }
 
 /**
- * The lifecycle metadata stored as `.compoza.json`: what was deployed, which files the tool owns,
- * and the host-side ingress removal script that `down` runs later.
+ * The lifecycle metadata stored as `.compoza.json`: what was deployed (the tag of every building
+ * role), which files the tool owns, and the host-side ingress removal script that `down` runs
+ * later.
  */
 function deploymentMetadata(
   app: App,
-  tag: string,
+  tags: Readonly<Record<string, string>>,
   files: ReadonlyArray<string>,
   ingress: IngressPlan | undefined,
   managed: boolean,
@@ -452,7 +451,7 @@ function deploymentMetadata(
   return JSON.stringify({
     version: 1,
     project: projectNameOf(app),
-    tag,
+    tags,
     profiles: app.config.profiles ?? [],
     files,
     ownedFiles: files,
@@ -460,18 +459,6 @@ function deploymentMetadata(
     managed,
     unroute: ingress === undefined ? '' : ingressOperationScript(ingress.unroute),
   });
-}
-
-/**
- * The image variable of every target, set to the reference the host runs at `tag`.
- */
-function imageEnvironment(app: App, host: HostConfig, tag: string): Record<string, string> {
-  return Object.fromEntries(
-    app.config.targets.map((target) => [
-      imageVariable(target),
-      imageReference(app, host, target, tag, false),
-    ]),
-  );
 }
 
 /**
@@ -487,7 +474,13 @@ function transactionScript(parts: TransactionScriptParts): string {
       `compoza_receive "$upload"/${shellQuote(file.path)}`,
     ].join('\n'),
   );
-  const uploadedComposeFiles = composeFiles.map((file) => `"$upload"/${shellQuote(file)}`);
+  const stagedOverride = parts.hasOverride
+    ? [`compoza_receive "$upload"/${shellQuote(ROLES_OVERRIDE_FILE)}`]
+    : [];
+  const uploadedComposeFiles = [
+    ...composeFiles,
+    ...(parts.hasOverride ? [ROLES_OVERRIDE_FILE] : []),
+  ].map((file) => `"$upload"/${shellQuote(file)}`);
   const installs = outputs.map((file) =>
     [
       `mkdir -p -- ${shellQuote(posix.dirname(`${root}/${file}`))}`,
@@ -511,7 +504,7 @@ compoza_receive() {
   IFS= read -r encoded || { echo 'Interrupted stack upload' >&2; return 1; }
   printf '%s' "$encoded" | compoza_decode > "$1" || { echo 'Invalid stack upload' >&2; return 1; }
 }
-${staging.join('\n')}
+${[...staging, ...stagedOverride].join('\n')}
 compoza_receive "$upload/.compoza.json"
 compoza_receive "$upload/.env"
 metadata="$upload/.compoza.json"

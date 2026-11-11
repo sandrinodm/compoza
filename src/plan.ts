@@ -2,15 +2,16 @@ import { devNull } from 'node:os';
 import { resolve } from 'node:path';
 
 import { type Command, command, REMOTE_PATH, shellQuote, type Step } from './command.ts';
-import {
-  type App,
-  composeFilesOf,
-  environmentOf,
-  projectNameOf,
-  workingDirectoryOf,
-} from './config/deploy.ts';
+import { type App, composeFilesOf, environmentOf, projectNameOf } from './config/deploy.ts';
 import { dockerHost, type HostConfig } from './config/hosts.ts';
 import { secretSource, validateSecrets } from './config/secrets.ts';
+import {
+  buildingRoles,
+  buildSettingsOf,
+  imageReference,
+  type RoleBuildSettings,
+  type RoleSources,
+} from './roles.ts';
 
 /**
  * Variables cleared for a build on the host's daemon, so a Docker context or Buildx builder
@@ -34,8 +35,8 @@ const REMOTE_BUILD_ENVIRONMENT = {
 };
 
 /**
- * Everything a plan needs decided: the app and host, the tag, where the build context is, and the
- * secrets.
+ * Everything a plan needs decided: the app and host, the tag and build context of every building
+ * role, and the secrets.
  */
 export interface PlanOptions {
   /**
@@ -49,9 +50,10 @@ export interface PlanOptions {
   readonly host: HostConfig;
 
   /**
-   * The image tag, normally the short commit.
+   * The tag and absolute build context of every building role; the tag is normally the short commit
+   * of the role's repository.
    */
-  readonly tag: string;
+  readonly sources: RoleSources;
 
   /**
    * Whether the stack runs on this machine's Docker instead of the host.
@@ -59,55 +61,21 @@ export interface PlanOptions {
   readonly local: boolean;
 
   /**
-   * Whether the build and transport steps are left out because the images already exist under
-   * `tag`.
+   * Whether the build and transport steps are left out because the images already exist under their
+   * tags.
    */
   readonly reuseImages: boolean;
 
   /**
-   * The absolute build context.
+   * The absolute path of the generated roles override, passed to Compose as its last file. Without
+   * it Compose gets only the configured files.
    */
-  readonly context: string;
+  readonly overrideFile?: string;
 
   /**
    * Secret Compose variables, passed to Compose and masked when printed.
    */
   readonly secrets: Readonly<Record<string, string>>;
-}
-
-/**
- * The Compose variable that carries a target's image, e.g. `web` → `WEB_IMAGE`, `scraper-api` →
- * `SCRAPER_API_IMAGE`.
- */
-export function imageVariable(target: string): string {
-  return `${target.toUpperCase().replaceAll('-', '_')}_IMAGE`;
-}
-
-/**
- * The image reference for one target at one tag: prefixed with the registry when the host pulls
- * from one, bare otherwise (local runs and SSH transport, where the image is loaded straight into a
- * daemon).
- */
-export function imageReference(
-  app: App,
-  host: HostConfig,
-  target: string,
-  tag: string,
-  local: boolean,
-): string {
-  const bare = `${app.config.name}-${target}:${tag}`;
-  return !local && host.transport.mode === 'registry' ? `${host.transport.registry}/${bare}` : bare;
-}
-
-/**
- * The absolute Dockerfile path, defaulting to `Dockerfile` in the working directory.
- *
- * A relative `dockerfile` resolves against the working directory and an absolute one is kept as is,
- * the same rule the build context follows in `deploy.ts`; `join` would instead append an absolute
- * path to the folder.
- */
-export function dockerfileOf(app: App): string {
-  return resolve(workingDirectoryOf(app), app.config.dockerfile ?? 'Dockerfile');
 }
 
 /**
@@ -137,8 +105,8 @@ export function composePrefix(app: App, host?: HostConfig): ReadonlyArray<string
 }
 
 /**
- * The ordered steps of a deployment: a build per target, the transport that gets images to the
- * host, and the Compose command that starts the stack. Nothing runs here; `--dry-run` prints
+ * The ordered steps of a deployment: a build per building role, the transport that gets images to
+ * the host, and the Compose command that starts the stack. Nothing runs here; `--dry-run` prints
  * exactly this list.
  *
  * With the registry transport the build pushes directly and Compose pulls `always`, so a stale
@@ -150,43 +118,42 @@ export function composePrefix(app: App, host?: HostConfig): ReadonlyArray<string
  * never replaces them with a pulled copy.
  */
 export function planDeployment(options: PlanOptions): ReadonlyArray<Step> {
-  const { app, host, tag, local } = options;
+  const { app, host, local } = options;
   validateSecrets(app, options.secrets, { local });
 
   const steps: Array<Step> = [];
-  const images: Record<string, string> = {};
-  const dockerfile = dockerfileOf(app);
+  if (!options.reuseImages) {
+    for (const role of buildingRoles(app.config)) {
+      const source = Object.hasOwn(options.sources, role) ? options.sources[role] : undefined;
+      if (source === undefined) {
+        throw new Error(`No source for role "${role}"`);
+      }
 
-  for (const target of app.config.targets) {
-    const reference = imageReference(app, host, target, tag, local);
-    images[imageVariable(target)] = reference;
-    if (options.reuseImages) {
-      continue;
-    }
+      const reference = imageReference(app, host, role, source.tag, local);
+      steps.push(buildCommand(options, buildSettingsOf(app, role), source.context, reference));
 
-    steps.push(buildCommand(options, dockerfile, target, reference));
-
-    if (!local && host.transport.mode === 'ssh-load') {
-      steps.push(loadPipeline(host, reference));
+      if (!local && host.transport.mode === 'ssh-load') {
+        steps.push(loadPipeline(host, reference));
+      }
     }
   }
 
-  steps.push(composeUpCommand(options, images));
+  steps.push(composeUpCommand(options));
 
   return steps;
 }
 
 /**
- * The `docker buildx build` command for one target: pushed to the registry, built on the host's own
+ * The `docker buildx build` command for one role: pushed to the registry, built on the host's own
  * daemon, or loaded into this machine's daemon, depending on the transport and `local`.
  */
 function buildCommand(
   options: PlanOptions,
-  dockerfile: string,
-  target: string,
+  settings: RoleBuildSettings,
+  context: string,
   reference: string,
 ): Command {
-  const { app, host, local } = options;
+  const { host, local } = options;
   const push = !local && host.transport.mode === 'registry';
   const remoteBuild = !local && host.transport.mode === 'remote-build';
   return command(
@@ -199,15 +166,14 @@ function buildCommand(
       ...(local ? [] : ['--platform', host.platform]),
       push ? '--push' : '--load',
       '--file',
-      dockerfile,
-      '--target',
-      target,
+      settings.dockerfile,
+      ...(settings.target === undefined ? [] : ['--target', settings.target]),
       '--tag',
       reference,
-      options.context,
+      context,
     ],
     {
-      cwd: workingDirectoryOf(app),
+      cwd: settings.workingDirectory,
       ...(remoteBuild ? { env: REMOTE_BUILD_ENVIRONMENT } : {}),
     },
   );
@@ -228,12 +194,13 @@ function loadPipeline(host: HostConfig, reference: string): Step {
 }
 
 /**
- * The `docker compose up` command that starts the stack with the built image references.
+ * The `docker compose up` command that starts the stack, with the generated roles override last
+ * when the plan has one.
  *
  * A secret source or secret values replace Compose's automatic `.env` lookup with `/dev/null`, so a
  * stray dotenv file in the project directory cannot add or override variables.
  */
-function composeUpCommand(options: PlanOptions, images: Readonly<Record<string, string>>): Command {
+function composeUpCommand(options: PlanOptions): Command {
   const { app, host, local } = options;
   const pull = !local && host.transport.mode === 'registry' ? 'always' : 'missing';
   const replacesDotenv =
@@ -243,10 +210,10 @@ function composeUpCommand(options: PlanOptions, images: Readonly<Record<string, 
     [
       ...composePrefix(app, local ? undefined : host),
       ...(replacesDotenv ? ['--env-file', devNull] : []),
-      ...composeFilesOf(app.config, { local }).flatMap((file) => [
-        '--file',
-        resolve(app.dir, file),
-      ]),
+      ...[
+        ...composeFilesOf(app.config, { local }).map((file) => resolve(app.dir, file)),
+        ...(options.overrideFile === undefined ? [] : [options.overrideFile]),
+      ].flatMap((file) => ['--file', file]),
       ...(app.config.profiles ?? []).flatMap((profile) => ['--profile', profile]),
       'up',
       '--detach',
@@ -257,7 +224,7 @@ function composeUpCommand(options: PlanOptions, images: Readonly<Record<string, 
     ],
     {
       cwd: app.dir,
-      env: { ...environmentOf(app.config, { local }), ...options.secrets, ...images },
+      env: { ...environmentOf(app.config, { local }), ...options.secrets },
       secret: Object.keys(options.secrets),
       sensitive: true,
     },

@@ -1,13 +1,12 @@
 import { Effect, type FileSystem, type Path, Result } from 'effect';
 
-import type { App, RunOptions } from './deploy.ts';
+import type { App, Role, RunOptions } from './deploy.ts';
 
 import { DeployError } from '../errors.ts';
 import { resolveSecrets, type ResolvedSecretsConfig } from '../extensions/config.ts';
 import { credentialProvider, isCredentialEnvironment } from '../extensions/credentials.ts';
-import { imageVariable } from '../plan.ts';
 import { DryRun } from '../services/Shell.ts';
-import { environmentOf } from './deploy.ts';
+import { environmentOf, roleSecretNames, rolesOf } from './deploy.ts';
 import { VARIABLE_NAME_PATTERN } from './env-file.ts';
 
 /**
@@ -97,19 +96,14 @@ export function validateSecrets(
   values: Readonly<Record<string, string>>,
   { local = false }: RunOptions = {},
 ): void {
-  const imageVariables = new Set(app.config.targets.map(imageVariable));
   const environment = environmentOf(app.config, { local });
-
-  if (imageVariables.size !== app.config.targets.length) {
-    throw new Error('Targets must map to distinct image variables');
-  }
 
   for (const [index, [key, value]] of Object.entries(values).entries()) {
     if (!VARIABLE_NAME_PATTERN.test(key) || typeof value !== 'string') {
       throw new Error(`Invalid secret variable at entry ${index + 1}`);
     }
 
-    if (isReservedVariable(key, imageVariables)) {
+    if (isReservedVariable(key)) {
       throw new Error(`Reserved secret variable: ${key}`);
     }
 
@@ -146,10 +140,19 @@ export const readSecrets = Effect.fn('readSecrets')(function* (
   app: App,
   options: RunOptions = {},
 ): Effect.fn.Return<Record<string, string>, DeployError, FileSystem.FileSystem | Path.Path> {
-  const source = yield* Effect.fromResult(selectSecretSource(app, options));
-  if (source === undefined || source.provider === 'none' || (yield* DryRun)) {
+  const selected = yield* Effect.fromResult(selectSecretSource(app, options));
+  const roles = rolesOf(app.config, options);
+  const wanted = roleSecretNames(roles);
+  const sourceIssue = roleSecretSourceIssue(roles, selected);
+  if (sourceIssue !== undefined) {
+    return yield* new DeployError({ message: sourceIssue });
+  }
+
+  if (selected === undefined || selected.provider === 'none' || (yield* DryRun)) {
     return {} as Record<string, string>;
   }
+
+  const source = withRoleSecrets(selected, wanted);
 
   const provider = yield* Effect.try({
     try: () => credentialProvider(source.provider),
@@ -161,19 +164,63 @@ export const readSecrets = Effect.fn('readSecrets')(function* (
     catch: (cause) => new DeployError({ message: (cause as Error).message }),
   });
 
+  const missing = Object.entries(roles).flatMap(([role, settings]) =>
+    (settings.secrets ?? [])
+      .filter((name) => !Object.hasOwn(values, name))
+      .map((name) => `${role}: ${name}`),
+  );
+  if (missing.length > 0) {
+    return yield* new DeployError({
+      message: `The secret source lacks variables that roles take (${missing.join(', ')})`,
+    });
+  }
+
   return { ...values };
 });
 
 /**
- * Whether a secret named `key` would replace an image variable, a Docker or Compose setting, a
- * secret provider's credential or a process variable the host's shell and runtimes read.
+ * The secret source as it is read for a run: a 1Password `variables` allowlist also lists every
+ * variable the roles take, so a role secret is imported without repeating it there. A source
+ * without an allowlist already imports every variable and is returned as is.
  */
-function isReservedVariable(key: string, imageVariables: ReadonlySet<string>): boolean {
+export function withRoleSecrets(
+  source: ResolvedSecretsConfig,
+  names: ReadonlyArray<string>,
+): ResolvedSecretsConfig {
+  if (source.provider !== '1password' || source.variables === undefined) {
+    return source;
+  }
+
+  return { ...source, variables: [...new Set([...source.variables, ...names])] };
+}
+
+/**
+ * Why the roles cannot get their secrets, or `undefined` when they can: some role takes secrets but
+ * the run has no secret source, or its provider is `none`. The message names the first such role.
+ * Reads no secret values.
+ */
+export function roleSecretSourceIssue(
+  roles: Readonly<Record<string, Role>>,
+  source: ResolvedSecretsConfig | undefined,
+): string | undefined {
+  if (source !== undefined && source.provider !== 'none') {
+    return undefined;
+  }
+
+  const role = Object.entries(roles).find(([, settings]) => (settings.secrets ?? []).length > 0);
+  return role === undefined
+    ? undefined
+    : `Role "${role[0]}" takes secrets, but the run has no secret source; ` +
+        'configure secrets (or local.secrets for --local) with a provider';
+}
+
+/**
+ * Whether a secret named `key` would replace a Docker or Compose setting, a secret provider's
+ * credential or a process variable the host's shell and runtimes read.
+ */
+export function isReservedVariable(key: string): boolean {
   return (
-    imageVariables.has(key) ||
-    RESERVED_PREFIX_PATTERN.test(key) ||
-    isCredentialEnvironment(key) ||
-    RESERVED_VARIABLES.has(key)
+    RESERVED_PREFIX_PATTERN.test(key) || isCredentialEnvironment(key) || RESERVED_VARIABLES.has(key)
   );
 }
 

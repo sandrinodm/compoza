@@ -43,10 +43,12 @@ borealis:
 ```yaml
 name: sample-app
 host: atlas
-targets:
-  - web
 dockerfile: Dockerfile
 context: ..
+roles:
+  web:
+    build:
+      target: web
 execution: ssh
 composeFiles:
   - compose.yaml
@@ -94,7 +96,6 @@ destinations:
 ```yaml
 services:
   web:
-    image: ${WEB_IMAGE:?built image required}
     profiles: [web]
     volumes:
       - ./config/nginx.conf:/etc/nginx/conf.d/default.conf:ro
@@ -144,8 +145,8 @@ A deployed stack contains:
 
 ```text
 <stackDir>/
-  compose.yaml        # selected Compose files merged without interpolation
-  .env                # generated variables, image tags and selected managed secrets (0600)
+  compose.yaml        # selected Compose files and the roles override, merged without interpolation
+  .env                # generated variables and selected managed secrets (0600)
   .compoza.json       # small nonsecret lifecycle metadata file (0600)
   config/nginx.conf   # explicitly declared assets retain their relative paths
   compose.host.yaml   # optional live operator-owned overlay
@@ -153,7 +154,7 @@ A deployed stack contains:
 
 There are no release, activation, current/previous, backup or archived-secret directories. The transient `.deploy-lock` holds upload files and disappears when the operation exits. No runtime shell scripts or jq filters are installed in the stack.
 
-`.compoza.json` records the deployed project, tag, profiles, declared files, owned file paths, the overlay path, credential policy and ingress removal operation. Lifecycle commands use these settings rather than undeployed local edits. It contains no resolved credentials or previous deployment snapshots.
+`.compoza.json` records the deployed project, the image tag of each role (`tags`), profiles, declared files, owned file paths, the overlay path, credential policy and ingress removal operation. Lifecycle commands use these settings rather than undeployed local edits. It contains no resolved credentials or previous deployment snapshots.
 
 The CLI replaces only its own stack files. It refuses symlinked stack ancestors and outputs, invalid deployed metadata, and files it does not own. A `.env` in a stack folder without lifecycle metadata is treated as operator data: move it to a separate host file and reference that file with an absolute `env_file:` path in Compose or the host overlay, or choose a fresh `stackDir`. The overlay path must be separate from generated outputs.
 
@@ -165,7 +166,7 @@ The CLI uploads only the selected `composeFiles` and explicitly declared nonsecr
 
 `composeFiles` may name explicit absolute workstation paths, allowing a central deployment YAML to use the app repository's own Compose files. They are read directly and staged under their basenames before normalization; merge order is preserved, and basename collisions with other sources or assets fail before upload. Symlinks and symlinked source ancestors are rejected. Assets remain deploy-relative, including relative file references from external Compose files; credentials and persistent mounts still use absolute host paths.
 
-Bundle paths must be deploy-relative and contain no dot components or dotfiles. `.env`, `.compoza.json` and `.deploy-lock` are reserved. Symlinked local files and parent directories are rejected. The generated `compose.yaml` cannot also be an asset.
+Bundle paths must be deploy-relative and contain no dot components or dotfiles. `.env`, `.compoza.json`, `.deploy-lock` and `compoza.roles.yaml` are reserved. Symlinked local files and parent directories are rejected. The generated `compose.yaml` cannot also be an asset.
 
 All relative file references resolve from the stack root, including when a selected source Compose file lives in a subdirectory. Relative config files and bind mounts must be declared assets; relative binds must be read-only. Persistent data mounts use absolute host paths. `include` and external `extends.file` are unsupported: select explicit Compose overlays instead.
 
@@ -175,7 +176,7 @@ Service `env_file` and `secrets.file` must use absolute host paths, with optiona
 
 Compose runs with a clean shell environment, retaining only home, path and Docker connection settings. Arbitrary SSH-session values cannot override application settings.
 
-- Compose interpolation reads only the private generated `.env`. It supplies configured `environment`, selected managed secrets and the image references for this deployment.
+- Compose interpolation reads only the private generated `.env`. It supplies configured `environment` and selected managed secrets. Image references are not variables: [roles](configuration.md#roles) set each built service's `image` in the generated roles override.
 - Host-only values reach containers through absolute service `env_file:` paths in Compose or the host overlay. Compose reads those files on the host when it creates the containers; a service's `environment` entries take precedence over them.
 
 An explicit `secrets.none` writes no managed credentials. The CLI never adopts an operator `.env` in the stack root. Managed values are encoded literally, never evaluated as shell code, and stay out of process arguments and lifecycle metadata.
@@ -183,6 +184,8 @@ An explicit `secrets.none` writes no managed credentials. The CLI never adopts a
 ## Validation and privacy
 
 The host normalizes selected Compose files with `--no-interpolate --no-env-resolution --no-path-resolution`. This preserves variable expressions, raw service env-file declarations and relative asset paths. The operator overlay remains separate and live.
+
+With [roles](configuration.md#how-roles-reach-services), the generated `compoza.roles.yaml` is normalized last, so its `image` and `environment` entries end up in the flat `compose.yaml`. It holds `${NAME}` references for role secrets, never their values, and is not installed as a separate stack file.
 
 Before replacing the deployed files or running `up`, Compose validates the normalized file with the selected env and overlay. A private JSON model check rejects undeclared relative files, unsafe writable asset binds and relative secret/env paths. Resolved Compose configuration and third-party diagnostics are suppressed because they can contain secrets; no validation log is left in the stack.
 
@@ -211,7 +214,7 @@ compoza deploy infra --destination borealis --tag <known-image-tag>
 compoza status infra --destination borealis
 ```
 
-`--tag` skips Git and builds and reuses available images. It uses the current local Compose/configuration and resolves the currently selected credential source again. There is no release rollback command or saved configuration history. Check out an earlier application revision yourself when its configuration is also required, and review database changes before redeploying.
+`--tag` skips Git and builds and reuses available images; pass `--tag <role>=<tag>` to name a tag per role (see [Images and tags](configuration.md#images-and-tags)). It uses the current local Compose/configuration and resolves the currently selected credential source again. There is no release rollback command or saved configuration history. Check out an earlier application revision yourself when its configuration is also required, and review database changes before redeploying.
 
 ## Lifecycle on SSH execution
 
@@ -227,4 +230,4 @@ Normal SSH termination releases the stack lock. After power loss or SIGKILL, ins
 
 ## Third-party-only stacks
 
-Use `targets: []` for stacks that run published images. Git, a Dockerfile, a build context and application-registry build authentication are unnecessary. Compose still pulls missing third-party images; the same stack validation and readiness rules apply. The [README quickstart](../README.md#quickstart) is a complete example.
+Omit `roles`, or give roles no `build`, for stacks that run published images. Git, a Dockerfile, a build context and application-registry build authentication are unnecessary. Compose still pulls missing third-party images; the same stack validation and readiness rules apply. The [README quickstart](../README.md#quickstart) is a complete example.
