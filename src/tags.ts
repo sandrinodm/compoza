@@ -1,6 +1,7 @@
-import type { DeployConfig } from './config/deploy.ts';
+import type { DeployConfig, RunOptions } from './config/deploy.ts';
 import type { RoleSources } from './roles.ts';
 
+import { rolesOf } from './config/deploy.ts';
 import { buildingRoles } from './roles.ts';
 
 /**
@@ -15,19 +16,31 @@ const THIRD_PARTY_TAG = 'third-party';
 const TAG_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
 
 /**
+ * What `parseTagFlags` needs to know about the run.
+ */
+export interface TagOptions extends RunOptions {
+  /**
+   * The roles the run removed, so `--tag` can say so instead of calling them unknown.
+   */
+  readonly removed?: ReadonlyArray<string>;
+}
+
+/**
  * Reads the values of the repeatable `--tag` flag into one tag per building role.
  *
  * `--tag <tag>` is the default for every building role and `--tag <role>=<tag>` overrides it for
  * one role. Throws an `Error` naming the problem when a role is unknown or has no `build`, a role
  * or the bare tag is given twice, a tag is empty or not a valid Docker tag, or a building role is
- * left without a tag.
+ * left without a tag. Any `--tag` fails when no role builds, since there are no images to reuse. A
+ * role that a destination or local run removed cannot be named.
  */
 export function parseTagFlags(
   values: ReadonlyArray<string>,
   config: DeployConfig,
+  options: TagOptions = {},
 ): Readonly<Record<string, string>> {
-  const roles = Object.keys(config.roles ?? {});
-  const building = buildingRoles(config);
+  const roles = Object.keys(rolesOf(config, options));
+  const building = buildingRoles(config, options);
   const named = new Map<string, string>();
   const bare: Array<string> = [];
 
@@ -54,6 +67,10 @@ export function parseTagFlags(
       continue;
     }
 
+    if (options.removed?.includes(role) === true && !roles.includes(role)) {
+      throw new Error(`Role "${role}" is removed for this run, so --tag cannot name it`);
+    }
+
     if (!roles.includes(role)) {
       throw new Error(`Unknown role "${role}" in --tag; roles: ${roles.join(', ') || 'none'}`);
     }
@@ -70,6 +87,10 @@ export function parseTagFlags(
     }
 
     named.set(role, tag);
+  }
+
+  if (building.length === 0 && values.length > 0) {
+    throw new Error('No role has a build, so there are no images to reuse; deploy without --tag');
   }
 
   if (bare.length > 1) {

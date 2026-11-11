@@ -44,7 +44,8 @@ compoza_metadata() {
     (.files | file_paths) and
     (.ownedFiles | file_paths) and ((.files - .ownedFiles) | length == 0) and
     (.overlay | . == null or (type == "string" and startswith("/") and (explode | all(. >= 32)))) and
-    (.managed | type == "boolean") and (.unroute | type == "string"))' "$metadata" >/dev/null 2>&1 || { compoza_fail 'Invalid deployed lifecycle metadata; redeploy with the current CLI'; return 1; }
+    (.managed | type == "boolean") and (.unroute | type == "string") and
+    ((has("secretNames") | not) or (.secretNames | type == "array" and all(.[]; type == "string" and test("^[A-Za-z_][A-Za-z0-9_]*$")))))' "$metadata" >/dev/null 2>&1 || { compoza_fail 'Invalid deployed lifecycle metadata; redeploy with the current CLI'; return 1; }
 }
 
 # An existing stack file is overwritten only when the previous metadata identifies it as tool-owned.
@@ -167,7 +168,7 @@ compoza_require_service() {
 compoza_compose_safe() {
   if ! jq -e '.managed' "$metadata" >/dev/null 2>&1; then compoza_compose "$@"; return; fi
   case "${1-}" in
-    ps) compoza_compose "$@" --format json 2>/dev/null | jq -c --rawfile snapshot "$env_file" "$status_filter" 2>/dev/null || { compoza_fail 'Cannot safely read deployed status; diagnostics suppressed'; return 1; };;
+    ps) compoza_compose "$@" --format json 2>/dev/null | jq -c --rawfile snapshot "$env_file" --slurpfile metadata "$metadata" "$status_filter" 2>/dev/null || { compoza_fail 'Cannot safely read deployed status; diagnostics suppressed'; return 1; };;
     logs) compoza_compose "$@" 2>/dev/null;;
     *) if ! compoza_compose "$@" >/dev/null 2>&1; then compoza_fail 'Compose action failed; secret-bearing diagnostics suppressed'; return 1; fi;;
   esac

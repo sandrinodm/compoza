@@ -162,7 +162,7 @@ roles:
 - Only services whose role lists a secret receive it. Any other service that needs the value still maps it in Compose.
 - The override holds a `${NAME}` reference, never the value. The value stays in the interpolation pool: the stack `.env` over SSH, the process environment for client execution.
 - With `variables: []` as above, the 1Password read returns exactly the role secrets.
-- `destinations.<name>.roles.<role>.secrets` replaces that role's list, and `local.roles` does the same for `--local` runs, which read the local source.
+- `destinations.<name>.roles.<role>.secrets` replaces that role's list, and `local.roles` does the same for `--local` runs, which read the local source. A role set to `null` in either place is removed for that run, so its secrets are no longer added to a 1Password `variables` allowlist.
 
 A role secret that is missing from the source, reserved, or also set in the service's Compose `environment:` fails validation before anything is built. See [Environment and secrets](configuration.md#environment-and-secrets) for every rule.
 

@@ -1,8 +1,7 @@
 import { Effect, type FileSystem, Path, Schema } from 'effect';
 import { resolve } from 'node:path';
 
-import type { DeployError } from '../errors.ts';
-
+import { DeployError } from '../errors.ts';
 import {
   Ingress,
   SecretsConfig,
@@ -138,9 +137,10 @@ export const Role = Schema.Struct({
 });
 
 /**
- * Role settings by Compose service name.
+ * Role changes by Compose service name: settings to merge over the role, or `null` to remove the
+ * role for the run.
  */
-const RoleSettingsByName = Schema.Record(RoleName, RoleSettings);
+const RoleChangesByName = Schema.Record(RoleName, Schema.NullOr(RoleSettings));
 
 /**
  * Settings that replace the deployment's for `--local` runs against this machine's Docker.
@@ -164,9 +164,9 @@ export const LocalOverrides = Schema.Struct({
 
   /**
    * Role environment merged over the app's roles for a local run, and secrets replacing a role's
-   * list.
+   * list. A role set to `null` is removed for the local run.
    */
-  roles: Schema.optionalKey(RoleSettingsByName),
+  roles: Schema.optionalKey(RoleChangesByName),
 });
 
 /**
@@ -257,9 +257,10 @@ export const Destination = Schema.Struct({
   environment: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 
   /**
-   * Role environment merged over the app's roles, and secrets replacing a role's list.
+   * Role environment merged over the app's roles, and secrets replacing a role's list. A role set
+   * to `null` is removed for this destination.
    */
-  roles: Schema.optionalKey(RoleSettingsByName),
+  roles: Schema.optionalKey(RoleChangesByName),
 
   /**
    * The ingress replacing the app default, including `none` for private destinations.
@@ -421,6 +422,12 @@ export interface App {
    * The decoded `deploy.yaml`.
    */
   readonly config: DeployConfig;
+
+  /**
+   * The roles the selected destination removed, which `config.roles` no longer lists. Empty when no
+   * destination is selected.
+   */
+  readonly removedRoles?: ReadonlyArray<string>;
 }
 
 /**
@@ -496,17 +503,23 @@ export function environmentOf(
 }
 
 /**
- * Merges role settings from a destination or local run over a base set of roles: per role,
+ * Merges role changes from a destination or local run over a base set of roles: per role,
  * `environment` merges over the base's and `secrets` replaces the base's list when given. A role
- * named only in `overrides` is kept as an environment-only role.
+ * named only in `overrides` is kept as an environment-only role. A role set to `null` is removed
+ * entirely, and removing a role the base does not have changes nothing.
  */
 export function mergeRoles(
   base: Readonly<Record<string, Role>> | undefined,
-  overrides: Readonly<Record<string, RoleSettings>> | undefined,
+  overrides: Readonly<Record<string, RoleSettings | null>> | undefined,
 ): Record<string, Role> {
   const merged: Record<string, Role> = { ...base };
   for (const [name, settings] of Object.entries(overrides ?? {})) {
     const role = Object.hasOwn(merged, name) ? merged[name] : undefined;
+    if (settings === null) {
+      delete merged[name];
+      continue;
+    }
+
     const environment = { ...role?.environment, ...settings.environment };
     const secrets = settings.secrets ?? role?.secrets;
     merged[name] = {
@@ -520,7 +533,34 @@ export function mergeRoles(
 }
 
 /**
- * The roles for a run: the app's, with the `local.roles` settings merged over them for a local run.
+ * The first role removal in `config` that names a role the app's top-level `roles` does not define,
+ * as a message, or `undefined` when every removal is valid. Destinations are checked in
+ * configuration order, then `local.roles`, so a typo in a destination that is not selected is still
+ * found.
+ */
+export function roleRemovalIssue(config: DeployConfig): string | undefined {
+  const defined = Object.keys(config.roles ?? {});
+  const sources = [
+    ...Object.entries(config.destinations ?? {}).map(([name, destination]) => ({
+      subject: `Destination "${name}"`,
+      changes: destination.roles,
+    })),
+    { subject: 'local.roles', changes: config.local?.roles },
+  ];
+  for (const { subject, changes } of sources) {
+    const unknown = removedBy(changes).find((name) => !defined.includes(name));
+    if (unknown !== undefined) {
+      const choices = defined.join(', ') || 'none';
+      return `${subject} removes role "${unknown}", which is not a role; roles: ${choices}`;
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * The roles for a run: the app's (already merged with the selected destination), with the
+ * `local.roles` changes applied over them for a local run.
  */
 export function rolesOf(
   config: DeployConfig,
@@ -554,6 +594,11 @@ export const loadApp = Effect.fn('loadApp')(function* (
     `No ${file}. Point compoza at a folder holding a ${DEPLOY_FILE}.`,
     { privateInput: true, removedKeys: { targets: TARGETS_REMOVED_MESSAGE } },
   );
+  const removalIssue = roleRemovalIssue(config);
+  if (removalIssue !== undefined) {
+    return yield* new DeployError({ message: `${file}: ${removalIssue}` });
+  }
+
   return { dir: path.dirname(file), file, config };
 });
 
@@ -581,6 +626,24 @@ const deployFileFor = Effect.fn('deployFileFor')(function* (target: string) {
 });
 
 /**
+ * The `local` entry for a destination's config, as a spread: `local.roles` without the roles that
+ * the destination removes, so a local run cannot bring one back or fail on removing it twice.
+ * Nothing is added when the app has no `local` block.
+ */
+function localWithoutRemoved(
+  local: typeof LocalOverrides.Type | undefined,
+  destinationRoles: Readonly<Record<string, RoleSettings | null>> | undefined,
+): { readonly local?: typeof LocalOverrides.Type } {
+  if (local?.roles === undefined) {
+    return local === undefined ? {} : { local };
+  }
+
+  const removed = removedBy(destinationRoles);
+  const kept = Object.entries(local.roles).filter(([name]) => !removed.includes(name));
+  return { local: { ...local, roles: Object.fromEntries(kept) } };
+}
+
+/**
  * Selects a destination before host resolution without changing the shared source or image prefix.
  *
  * Unknown selections fail early, and omitted destination fields retain the app defaults.
@@ -598,14 +661,39 @@ export function selectDestination(app: App, name?: string): App {
   }
 
   const { roles: _roles, ...rest } = selected;
+  const { roles: _appRoles, ...base } = app.config;
   const roles = mergeRoles(app.config.roles, selected.roles);
   const config = {
-    ...app.config,
+    ...base,
     ...rest,
     environment: { ...app.config.environment, ...selected.environment },
     ...(Object.keys(roles).length === 0 ? {} : { roles }),
+    ...localWithoutRemoved(app.config.local, selected.roles),
   };
-  return { ...app, config };
+  return { ...app, config, removedRoles: removedBy(selected.roles) };
+}
+
+/**
+ * The roles that `changes` set to `null`.
+ */
+function removedBy(
+  changes: Readonly<Record<string, RoleSettings | null>> | undefined,
+): ReadonlyArray<string> {
+  return Object.entries(changes ?? {})
+    .filter(([, change]) => change === null)
+    .map(([name]) => name);
+}
+
+/**
+ * The roles removed for a run, by the selected destination and, for a local run, by `local.roles`,
+ * in that order and without duplicates.
+ */
+export function removedRolesOf(
+  app: App,
+  { local = false }: RunOptions = {},
+): ReadonlyArray<string> {
+  const names = [...(app.removedRoles ?? []), ...(local ? removedBy(app.config.local?.roles) : [])];
+  return [...new Set(names)];
 }
 
 /**

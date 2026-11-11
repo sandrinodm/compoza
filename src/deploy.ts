@@ -10,7 +10,13 @@ import type { Phase } from './progress.ts';
 import { ROLES_OVERRIDE_FILE } from './bundle.ts';
 import { blocking, formatChecks, runChecks } from './checks.ts';
 import { mkdirScript, printableStep } from './command.ts';
-import { type App, directoriesOf, loadApp, selectDestination } from './config/deploy.ts';
+import {
+  type App,
+  directoriesOf,
+  loadApp,
+  removedRolesOf,
+  selectDestination,
+} from './config/deploy.ts';
 import { dockerHost, type HostConfig, hostFor, loadHostsForRun } from './config/hosts.ts';
 import { readSecrets } from './config/secrets.ts';
 import { DeployError, platformFailure, tryPlan } from './errors.ts';
@@ -132,16 +138,25 @@ export const resolve = Effect.fn('resolve')(function* (
  * commit nor a clean checkout matters, and it has to work from a deploy folder that is no longer
  * inside a checkout, where `git rev-parse` exits 128. The context is then only a placeholder for
  * `PlanOptions`, which needs one even though no build step reads it. An app that builds nothing has
- * no sources and does not consult Git, though `--tag` values are still parsed and validated.
+ * no sources and does not consult Git, and `--tag` fails because there are no images to reuse.
  */
 const chooseSource = Effect.fn('chooseSource')(function* (
   app: App,
   options: DeployOptions,
 ): Effect.fn.Return<RoleSources, DeployError, FileSystem.FileSystem | Git> {
-  const roles = buildingRoles(app.config).map((role) => buildSettingsOf(app, role));
+  const roles = buildingRoles(app.config, { local: options.local }).map((role) =>
+    buildSettingsOf(app, role),
+  );
 
   if (options.tags.length > 0) {
-    const tags = yield* tryPlan(() => parseTagFlags(options.tags, app.config), 'Invalid --tag');
+    const tags = yield* tryPlan(
+      () =>
+        parseTagFlags(options.tags, app.config, {
+          local: options.local,
+          removed: removedRolesOf(app, options),
+        }),
+      'Invalid --tag',
+    );
     const reused: Record<string, RoleSource> = {};
     for (const settings of roles) {
       const tag = Object.hasOwn(tags, settings.role) ? tags[settings.role] : undefined;

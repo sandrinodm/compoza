@@ -189,7 +189,7 @@ With [roles](configuration.md#how-roles-reach-services), the generated `compoza.
 
 Before replacing the deployed files or running `up`, Compose validates the normalized file with the selected env and overlay. A private JSON model check rejects undeclared relative files, unsafe writable asset binds and relative secret/env paths. Resolved Compose configuration and third-party diagnostics are suppressed because they can contain secrets; no validation log is left in the stack.
 
-Managed status projects only service/state/health/exit-code fields and redacts selected dotenv values. Requested application logs can still contain secrets; applications are responsible for their logging policy.
+Managed status projects only service/image/state/health/exit-code fields (the image only when it is a well-formed reference, otherwise `(image)`) and redacts the values of the managed secret variables. `.compoza.json` records those variable names, never their values; a stack deployed by an earlier version has no list, so all dotenv values are redacted until it is redeployed. Requested application logs can still contain secrets; applications are responsible for their logging policy.
 
 ## Deploy transaction
 

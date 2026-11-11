@@ -79,11 +79,15 @@ export interface RoleBuildSettings {
 }
 
 /**
- * The names of the roles that build an image, in configuration order. Only the app's roles can
- * build: destinations and local runs share the source.
+ * The names of the roles that build an image for a run, in configuration order. Only the app's
+ * roles can build, and a role that the selected destination or a local run removes with `null`
+ * builds nothing.
  */
-export function buildingRoles(config: DeployConfig): ReadonlyArray<string> {
-  return Object.entries(config.roles ?? {})
+export function buildingRoles(
+  config: DeployConfig,
+  options: RunOptions = {},
+): ReadonlyArray<string> {
+  return Object.entries(rolesOf(config, options))
     .filter(([, role]) => role.build !== undefined)
     .map(([name]) => name);
 }

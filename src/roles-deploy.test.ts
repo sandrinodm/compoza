@@ -283,6 +283,118 @@ describe('deploying roles', () => {
     }).pipe(Effect.scoped, Effect.provide(TestConsole.layer)),
   );
 
+  it.effect('fails --tag when no role has a build', () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.write({ roles: { db: roles.db } });
+      const error = yield* deploy({ ...f.options, tags: ['v1'] }).pipe(
+        Effect.provide(f.services),
+        Effect.flip,
+      );
+      assert.strictEqual(
+        error.message,
+        'No role has a build, so there are no images to reuse; deploy without --tag',
+      );
+      assert.lengthOf(f.steps, 0);
+    }).pipe(Effect.scoped, Effect.provide(TestConsole.layer)),
+  );
+
+  it.effect('does not build, tag, check or configure a role a destination removes', () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.write({ roles, destinations: { staging: { roles: { worker: null } } } });
+      yield* deploy({ ...f.options, local: false, destination: 'staging' }).pipe(
+        Effect.provide(f.services),
+        Effect.provideService(DryRun, false),
+      );
+      const lines = yield* TestConsole.logLines;
+
+      const builds = f.steps.filter((step) => 'program' in step && step.args.includes('buildx'));
+      assert.lengthOf(builds, 1);
+      assert.deepStrictEqual(
+        f.gitCalls.filter((call) => call.startsWith('hasCommits')),
+        [`hasCommits ${f.webRepo}`],
+      );
+      assert.notInclude(f.overrides[0]!, 'worker');
+      assert.strictEqual(lines[0], 'Deploying demo aaaaaaaaaaaa to host (ssh://fixture)');
+    }).pipe(Effect.scoped, Effect.provide(TestConsole.layer)),
+  );
+
+  it.effect('rejects --tag for a role a destination removes', () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.write({ roles, destinations: { staging: { roles: { worker: null } } } });
+      const error = yield* deploy({
+        ...f.options,
+        local: false,
+        destination: 'staging',
+        tags: ['worker=1'],
+      }).pipe(Effect.provide(f.services), Effect.flip);
+      assert.include(
+        error.message,
+        'Role "worker" is removed for this run, so --tag cannot name it',
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestConsole.layer)),
+  );
+
+  it.effect('does not build, tag, check or configure a role local.roles removes', () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.write({ roles, local: { roles: { worker: null } } });
+      yield* deploy(f.options).pipe(Effect.provide(f.services));
+      const lines = yield* TestConsole.logLines;
+
+      const builds = f.steps.filter((step) => 'program' in step && step.args.includes('buildx'));
+      assert.lengthOf(builds, 1);
+      assert.deepStrictEqual(
+        f.gitCalls.filter((call) => call.startsWith('hasCommits')),
+        [`hasCommits ${f.webRepo}`],
+      );
+      assert.notInclude(f.overrides[0]!, 'worker');
+      assert.strictEqual(lines[0], 'Deploying demo aaaaaaaaaaaa to local Docker');
+    }).pipe(Effect.scoped, Effect.provide(TestConsole.layer)),
+  );
+
+  it.effect('keeps a role removed by the destination out of a --destination --local run', () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.write({
+        roles,
+        destinations: { staging: { roles: { worker: null } } },
+        local: { roles: { worker: { environment: { X: '1' } } } },
+      });
+      yield* deploy({ ...f.options, destination: 'staging' }).pipe(Effect.provide(f.services));
+
+      const builds = f.steps.filter((step) => 'program' in step && step.args.includes('buildx'));
+      assert.lengthOf(builds, 1);
+      assert.notInclude(f.overrides[0]!, 'worker');
+    }).pipe(Effect.scoped, Effect.provide(TestConsole.layer)),
+  );
+
+  it.effect('accepts a role removed by both the destination and local.roles', () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.write({
+        roles,
+        destinations: { staging: { roles: { worker: null } } },
+        local: { roles: { worker: null } },
+      });
+      yield* deploy({ ...f.options, destination: 'staging' }).pipe(Effect.provide(f.services));
+
+      assert.notInclude(f.overrides[0]!, 'worker');
+    }).pipe(Effect.scoped, Effect.provide(TestConsole.layer)),
+  );
+
+  it.effect('reports a local removal of an undefined role without building', () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.write({ roles, local: { roles: { wrker: null } } });
+      const error = yield* deploy(f.options).pipe(Effect.provide(f.services), Effect.flip);
+      assert.include(error.message, 'local.roles removes role "wrker"');
+      assert.lengthOf(f.steps, 0);
+    }).pipe(Effect.scoped, Effect.provide(TestConsole.layer)),
+  );
+
   it.effect('fails before building when a role is not a Compose service', () =>
     Effect.gen(function* () {
       const f = yield* fixture;

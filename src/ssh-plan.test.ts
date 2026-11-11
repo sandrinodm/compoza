@@ -456,6 +456,7 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
         JSON.stringify([
           {
             Service: 'a.b-worker',
+            Image: 'registry.example/app-a.b:1.2.3',
             State: 'running',
             Health: 'healthy',
             ExitCode: 0,
@@ -469,10 +470,32 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
 
       assert.deepStrictEqual(JSON.parse(String(result.stdout)), {
         service: '***-worker',
+        image: 'registry.example/app-***:1.2.3',
         state: 'running',
         health: 'healthy',
         exitCode: 0,
       });
+
+      const imageOf = (image: unknown): unknown => {
+        writeFileSync(
+          join(dir, 'status.json'),
+          JSON.stringify([{ Service: 'web', State: 'running', Health: '', Image: image }]),
+        );
+
+        return JSON.parse(String(run(deployedScript(app, ['ps', '--all'], false)).stdout)).image;
+      };
+
+      assert.strictEqual(
+        imageOf('localhost:5000/team/app-web:v1'),
+        'localhost:5000/team/app-web:v1',
+      );
+      assert.strictEqual(imageOf(`app@sha256:${'a'.repeat(64)}`), `app@sha256:${'a'.repeat(64)}`);
+      assert.strictEqual(imageOf('app-a.b:1'), 'app-***:1');
+      assert.strictEqual(imageOf('bad image\n:1'), '(image)');
+      assert.strictEqual(imageOf('app:1\n'), '(image)');
+      assert.strictEqual(imageOf('app@sha256:abc'), '(image)');
+      assert.strictEqual(imageOf(42), '(image)');
+      assert.strictEqual(imageOf(undefined), '(image)');
       assert.notInclude(
         String(run(deployedScript(app, ['stop'], true)).stdout),
         'PRIVATE_DIAGNOSTIC',
@@ -483,6 +506,95 @@ describe('flat SSH stack transactions', { timeout: FIXTURE_TIMEOUT_MS }, () => {
 
       assert.notStrictEqual(run(deployedScript(app, ['ps', '--all'], false)).status, 0);
     }));
+
+  describe('status redaction', () => {
+    const statusOf = (
+      {
+        dir,
+        run,
+        app,
+      }: { dir: string; run: (script: string) => ReturnType<typeof spawnSync>; app: App },
+      service: string,
+      image: string,
+    ): {
+      service: string;
+      image: string;
+      state: string;
+      health: string;
+      exitCode: number | null;
+    } => {
+      writeFileSync(
+        join(dir, 'status.json'),
+        JSON.stringify([{ Service: service, State: 'running', Health: '', Image: image }]),
+      );
+      const result = run(deployedScript(app, ['ps', '--all'], false));
+      succeeded(result);
+
+      return JSON.parse(String(result.stdout));
+    };
+
+    it('records the sorted secret names and redacts only secret values', () =>
+      fixture((f) => {
+        Object.assign(f.app.config, {
+          environment: { WEB_CONCURRENCY: '2', POSTGRES_USER: 'postgres' },
+        });
+        succeeded(f.deploy('3f2a2b9', { ZED: 'zzz', API_KEY: 'key' }));
+
+        const recorded = JSON.parse(readFileSync(join(f.root, '.compoza.json'), 'utf8'));
+        assert.deepStrictEqual(recorded.secretNames, ['API_KEY', 'ZED']);
+        assert.notInclude(readFileSync(join(f.root, '.compoza.json'), 'utf8'), 'zzz');
+        assert.deepStrictEqual(statusOf(f, 'shop-web', 'postgres:16'), {
+          service: 'shop-web',
+          image: 'postgres:16',
+          state: 'running',
+          health: '',
+          exitCode: null,
+        });
+        assert.strictEqual(statusOf(f, 'shop-web', 'shop-web:3f2a2b9').image, 'shop-web:3f2a2b9');
+        assert.strictEqual(statusOf(f, 'web-key', 'app-zzz:1').service, 'web-***');
+        assert.strictEqual(statusOf(f, 'web', 'app-zzz:1').image, 'app-***:1');
+      }));
+
+    it('redacts every value for metadata that predates the secret name list', () =>
+      fixture((f) => {
+        Object.assign(f.app.config, { environment: { POSTGRES_USER: 'postgres' } });
+        succeeded(f.deploy('one', { TOKEN: 'zzz' }));
+
+        const file = join(f.root, '.compoza.json');
+        const { secretNames: _names, ...legacy } = JSON.parse(readFileSync(file, 'utf8'));
+        writeFileSync(file, JSON.stringify(legacy));
+
+        assert.strictEqual(statusOf(f, 'web', 'postgres:16').image, '***:16');
+        assert.strictEqual(statusOf(f, 'web', 'app-zzz:1').image, 'app-***:1');
+      }));
+
+    it('rejects metadata whose secret names are not variable names', () =>
+      fixture((f) => {
+        succeeded(f.deploy('one', { TOKEN: 'zzz' }));
+
+        const file = join(f.root, '.compoza.json');
+        const metadata = JSON.parse(readFileSync(file, 'utf8'));
+        writeFileSync(file, JSON.stringify({ ...metadata, secretNames: ['a b'] }));
+
+        assert.notStrictEqual(f.run(deployedScript(f.app, ['ps', '--all'], false)).status, 0);
+      }));
+
+    it('redacts the longest value first so overlapping values leave no remainder', () =>
+      fixture((f) => {
+        succeeded(f.deploy('one', { SHORT: 'ab', LONG: 'abc' }));
+
+        assert.strictEqual(statusOf(f, 'web', 'x/abc:1').image, 'x/***:1');
+      }));
+
+    it('rejects a service or image with a trailing newline', () =>
+      fixture((f) => {
+        succeeded(f.deploy('one', { TOKEN: 'zzz' }));
+
+        const status = statusOf(f, 'web\n', 'app:1\n');
+        assert.strictEqual(status.service, '(service)');
+        assert.strictEqual(status.image, '(image)');
+      }));
+  });
 
   it('blocks malformed metadata or live Compose configuration before lifecycle actions', () =>
     fixture(({ app, dir, root, deploy, run }) => {

@@ -82,7 +82,9 @@ service's container. The top-level `environment` and `secrets` stay Compose
 interpolation inputs. A name set in a role must not also be in the service's Compose
 `environment:`, and role secrets need a secret source other than `none`. `check`
 reports these problems without fetching secrets. The generated override,
-`compoza.roles.yaml`, holds `${NAME}` references, never secret values.
+`compoza.roles.yaml`, holds `${NAME}` references, never secret values. A destination
+or `local.roles` can change a role's `environment` and `secrets`, or remove the role
+for that run with `null`; it cannot change `build`.
 
 ## Recover with a known image tag
 
@@ -95,11 +97,11 @@ compoza status infra
 `--tag` skips Git/builds and reuses images with the current local configuration and
 currently selected secret source. `--tag <tag>` applies to every role with `build`, and
 `--tag <role>=<tag>` overrides it for one role; repeat the flag as needed. Every role
-with `build` needs a tag. A missing source checkout is allowed for `--tag`, stacks whose
-roles build nothing, status, logs and lifecycle commands. There is no release rollback
-command, saved configuration history or backup folder. Check out an earlier app
-revision separately when its configuration is required. Never imply that database
-changes are reversed.
+with `build` needs a tag, and `--tag` fails when no role builds. A missing source
+checkout is allowed for `--tag`, stacks whose roles build nothing, status, logs and
+lifecycle commands. There is no release rollback command, saved configuration history
+or backup folder. Check out an earlier app revision separately when its configuration
+is required. Never imply that database changes are reversed.
 
 SSH stacks contain `compose.yaml`, private `.env`, declared assets and one nonsecret
 `.compoza.json` lifecycle metadata file, which records each role's tag. The roles
@@ -141,8 +143,11 @@ authorized before publishing. Do not change section paths to work around a failu
   desktop account may be saved with `compoza config set 1password.account`. Leave changing
   it, and `hosts link`/`unlink`, to the user unless asked: they affect every later run.
   Do not fetch a personal vault just to validate implementation changes.
-- Do not print resolved Compose config, dotenv contents or provider exceptions. Managed status omits command/image/container-name
-  fields; requested application logs can still contain secrets and need care.
+- Do not print resolved Compose config, dotenv contents or provider exceptions. Managed
+  status shows only service, image, state, health and exit code, with secret values redacted
+  (all dotenv values for stacks deployed by an earlier version; `.compoza.json` records
+  the secret variable names); requested application logs can still contain secrets and
+  need care.
 
 ## Diagnose and report
 

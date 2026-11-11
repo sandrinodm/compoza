@@ -112,7 +112,7 @@ compoza deploy infra --tag 1a2b3c4d5e6f
 compoza deploy infra --tag 1a2b3c4d5e6f --tag worker=9f8e7d6c5b4a
 ```
 
-Every role with a `build` must end up with a tag. Naming an unknown role, a role without `build` or the same role twice fails, and so does a second bare tag. A tag follows Docker's rules: letters, digits, underscores, dots and dashes, at most 128 characters, not starting with a dot or dash. That rejects `--tag web:abc`, a likely typo for `--tag web=abc`. The **current local configuration** is used; there is no saved configuration history.
+Every role with a `build` must end up with a tag. Naming an unknown role, a role without `build` or the same role twice fails, and so does a second bare tag. A tag follows Docker's rules: letters, digits, underscores, dots and dashes, at most 128 characters, not starting with a dot or dash. That rejects `--tag web:abc`, a likely typo for `--tag web=abc`. On a stack where no role has a `build`, any `--tag` fails, because there are no images to reuse. The **current local configuration** is used; there is no saved configuration history.
 
 A failed deploy can leave new containers or routes running: there is no automatic rollback. Inspect `status` and `logs`, then deploy a known tag. See [Images and tags](configuration.md#images-and-tags), [Local runs](configuration.md#local-runs) and, for SSH execution, the [deploy transaction](ssh-deployment.md#deploy-transaction).
 
@@ -129,7 +129,7 @@ NAME              IMAGE          COMMAND                  SERVICE   CREATED     
 hello-web-web-1   nginx:alpine   "/docker-entrypoint.…"   web       2 seconds ago   Up 1 second   127.0.0.1:8080->80/tcp
 ```
 
-With `execution: ssh` and a managed secret source, status shows only the service, state, health and exit code, with dotenv values redacted.
+With `execution: ssh` and a managed secret source, status prints one JSON object per container with only its service, image, state, health and exit code, with managed secret values redacted (all dotenv values for a stack deployed by an earlier version). An image that does not look like an image reference shows as `(image)`.
 
 ## logs
 
